@@ -1,0 +1,44 @@
+name: 毎日HP Qty → Chatwork通知
+on:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Pythonセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ライブラリをインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libxshmfence1
+
+      - name: HP Qty取得 & Chatwork通知
+        env:
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          CW_ROOM_ID: ${{ secrets.CW_ROOM_ID }}
+        run: python hp_qty_report.py

@@ -1,0 +1,33 @@
+name: ASINなし商品 ASIN補完
+
+on:
+  schedule:
+    # 日本時間 10:00 / 14:00 / 18:00 に実行（UTC表記）
+    - cron: '0 1 * * *'   # JST 10:00
+    - cron: '0 5 * * *'   # JST 14:00
+    - cron: '0 9 * * *'   # JST 18:00
+  workflow_dispatch:       # 手動実行ボタンも有効化
+
+jobs:
+  asin_finder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: ASINなし商品のASIN補完実行
+        env:
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+        run: python -u rakuten_asin_finder.py

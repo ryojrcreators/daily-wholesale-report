@@ -1,0 +1,34 @@
+name: 楽天赤字チェック
+
+on:
+  schedule:
+    # 日本時間 9:00 / 13:00 / 17:00 に実行（UTC表記）
+    - cron: '0 0 * * *'   # JST 9:00
+    - cron: '0 4 * * *'   # JST 13:00
+    - cron: '0 8 * * *'   # JST 17:00
+  workflow_dispatch:       # 手動実行ボタンも有効化
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: 楽天赤字チェック実行
+        env:
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+          PROFIT_RATE: ${{ secrets.PROFIT_RATE }}
+          COMMISSION_RATE: ${{ secrets.COMMISSION_RATE }}
+        run: python rakuten_price_check.py

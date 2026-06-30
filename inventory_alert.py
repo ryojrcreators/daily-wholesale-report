@@ -57,10 +57,15 @@ def get_inventory_alert_items():
         # ===== 黄色テーブル（class="large-dash bigger yellow"）を狙う =====
         print("対象テーブルを取得しています...")
         target_table = page.locator("table.yellow")
-        target_table.wait_for(state="visible", timeout=10000)
 
-        rows = target_table.locator("tbody tr").all()
-        print(f"取得した行数: {len(rows)}")
+        try:
+            target_table.wait_for(state="visible", timeout=10000)
+            rows = target_table.locator("tbody tr").all()
+            print(f"取得した行数: {len(rows)}")
+        except Exception:
+            print("黄色テーブルが見つかりませんでした（対象0件とみなします）")
+            browser.close()
+            return []
 
         items = []
         for row in rows[:TOP_N]:

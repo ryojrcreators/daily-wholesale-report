@@ -54,7 +54,7 @@ SHOP_CONFIG = {
         },
     },
     "Shop LA!": {
-        "enabled": True,
+        "enabled": False,
         "template_labels": ["Shop LA!"],
         "templates": {
             "home_address":   "24",

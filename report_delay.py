@@ -101,6 +101,32 @@ def parse_eta(description: str):
     return None
 
 
+# ETAの具体的な日付は無いが「入荷予定はある」ことを示す表現。
+# 例：「no specific ETA, but scheduled to be shipped by the end of this week」
+# これらが含まれ、かつ日付が取れない場合は、誤って"未定"を送らず手動対応に回す。
+# 新しい言い回しが出てきたらここに追記すればOK（小文字で書く）。
+INCOMING_SIGNALS = [
+    # 時期（具体的な日付ではない）
+    "this week", "next week", "end of the week", "end of this week",
+    "end of next week", "beginning of next week", "coming week",
+    "few days", "couple of days", "coming days", "within a week", "within days",
+    "by the end of",
+    # 発送・入荷の意思／状態
+    "will ship", "will be ship", "to be ship", "scheduled to ship",
+    "scheduled to be ship", "expected to ship", "ship by", "shipped by",
+    "in transit", "on the way", "en route", "on order",
+    "reserved", "allocated", "restock", "pallet",
+]
+
+
+def has_incoming_signal(description: str) -> bool:
+    """Descriptionに『入荷予定はある』ことを示す表現が含まれるか判定。"""
+    if not description:
+        return False
+    text = description.lower()
+    return any(kw in text for kw in INCOMING_SIGNALS)
+
+
 def parse_edd(edd_text: str):
     if not edd_text:
         return None
@@ -196,6 +222,7 @@ def process_report_delays():
     processed = 0
     skipped   = 0
     errors    = []
+    manual_review = []   # ETA日付なし＋入荷予定あり → 自動送信せず手動対応に回したケース
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -288,6 +315,13 @@ def process_report_delays():
                     description = page.eval_on_selector('#description', 'el => el.value')
                     eta = parse_eta(description)
                     print(f"  ETA: {eta}  (description: {description!r})")
+
+                    # ETAの日付は取れないが「入荷予定はある」文面の場合、
+                    # 誤って"未定"メールを送らず、自動送信せず手動対応に回す（ステータスはNEWのまま）
+                    if eta is None and has_incoming_signal(description):
+                        print(f"  → ETA日付なし＋入荷予定あり → 自動送信せず手動対応（要手動確認）")
+                        manual_review.append(f"Case {case_id}（{shop_name}）: 入荷予定ありだがETA日付なし")
+                        continue
 
                     # Order Numberに一致するsales/viewリンクを選ぶ
                     # （通知ベル等に他注文のsales/viewリンクが混ざるため、先頭を拾わない）
@@ -424,6 +458,10 @@ def process_report_delays():
     print(f"\n{'='*40}")
     print(f"処理完了: {processed}件")
     print(f"スキップ（対象外店舗）: {skipped}件")
+    if manual_review:
+        print(f"★要手動確認（入荷予定ありだがETA日付なし）: {len(manual_review)}件")
+        for m in manual_review:
+            print(f"  - {m}")
     if errors:
         print(f"エラー: {len(errors)}件")
         for e in errors:

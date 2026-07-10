@@ -55,7 +55,12 @@ def get_po_number_from_sheet():
     ws = ss.worksheet(SHEET_NAME) if SHEET_NAME else ss.sheet1
     po = str(ws.acell("D1").value or "").strip()
     print(f"タブ [{ws.title}] の D1 から PO# = {po!r}")
-    return po
+    return po, ws
+
+
+# 二重実行防止：処理済みレポートの message_id を記録するセル
+STATE_CELL = "L1"        # 値（message_id）
+STATE_LABEL_CELL = "K1"  # ラベル
 
 
 # ---------- Chatworkレポート取得 ----------
@@ -73,9 +78,9 @@ def fetch_report():
     # 「[End Shopping Report]」を含む最新メッセージ（末尾側が新しい）
     for m in reversed(messages):
         if "[End Shopping Report]" in m.get("body", ""):
-            return m["body"]
+            return m["body"], str(m.get("message_id", ""))
     print("Chatwork: [End Shopping Report] が見つかりません")
-    return None
+    return None, None
 
 
 # ---------- レポート解析 ----------
@@ -250,16 +255,25 @@ def apply_changes(page, po_number, to_close, to_setqty):
 
 def main():
     print(f"=== Shopping Report Process (DRY_RUN={DRY_RUN}) ===")
-    po_number = get_po_number_from_sheet()
+    po_number, ws = get_po_number_from_sheet()
     if not po_number.isdigit():
         raise SystemExit(f"PO番号が不正です（D1）: {po_number!r}")
 
-    report = fetch_report()
+    report, msg_id = fetch_report()
     if not report:
         raise SystemExit("処理対象のレポートがありません。")
+    print(f"レポート message_id = {msg_id}")
     print("----- 取得レポート -----")
     print(report)
     print("------------------------")
+
+    # 二重実行防止：本番実行時、同じレポートを既に処理済みならスキップ
+    if not DRY_RUN:
+        processed_id = str(ws.acell(STATE_CELL).value or "").strip()
+        if processed_id and processed_id == str(msg_id):
+            print(f"★ このレポート (message_id={msg_id}) は既に処理済みです。二重実行を防ぐためスキップします。")
+            print("=== 完了 ===")
+            return
 
     not_bought, extras = parse_report(report)
     print(f"解析: Not Bought {len(not_bought)}件 / Got Extra {len(extras)}件")
@@ -284,6 +298,13 @@ def main():
             print("実行完了。")
 
         browser.close()
+
+    # 本番実行が完了したら、処理済みマーク（message_id）を記録して二重実行を防ぐ
+    if not DRY_RUN and msg_id:
+        ws.update(STATE_LABEL_CELL, [["processed_report_id"]], value_input_option="RAW")
+        ws.update(STATE_CELL, [[str(msg_id)]], value_input_option="RAW")
+        print(f"処理済みマークを記録しました (message_id={msg_id})")
+
     print("=== 完了 ===")
 
 

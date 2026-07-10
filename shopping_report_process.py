@@ -97,7 +97,8 @@ def parse_report(text):
         if low.startswith("[not bought"):
             section = "nb"
             continue
-        if low.startswith("[got extra"):
+        # 「[Extra]」「[Got Extra]」どちらの見出しにも対応
+        if low.startswith("[extra") or low.startswith("[got extra"):
             section = "ex"
             continue
         if s.startswith("["):  # 他のセクション見出し

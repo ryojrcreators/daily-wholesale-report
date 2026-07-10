@@ -6,6 +6,10 @@ on:
       po_number:
         description: '取り込むPO番号（例: 156441）'
         required: true
+      sheet_name:
+        description: '書き込み先タブ名（空欄なら先頭タブ）'
+        required: false
+        default: ''
 
 jobs:
   import:
@@ -45,4 +49,5 @@ jobs:
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           PO_NUMBER: ${{ github.event.inputs.po_number }}
+          SHEET_NAME: ${{ github.event.inputs.sheet_name }}
         run: python -u po_import.py

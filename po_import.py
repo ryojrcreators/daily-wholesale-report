@@ -90,20 +90,29 @@ def download_po_csv(po_number):
 
 
 def write_to_sheet(po_number, rows):
-    """先頭シートを rows で置き換え、C1/D1 に PO番号を記入する。"""
+    """指定タブ（SHEET_NAME、無ければ先頭シート）を rows で置き換え、C1/D1 に PO番号を記入する。"""
     creds = Credentials.from_service_account_info(
         json.loads(GOOGLE_CREDENTIALS),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     gc = gspread.authorize(creds)
-    ws = gc.open_by_key(SHOPPING_SPREADSHEET_ID).sheet1
+    spreadsheet = gc.open_by_key(SHOPPING_SPREADSHEET_ID)
+
+    sheet_name = os.environ.get("SHEET_NAME", "").strip()
+    if sheet_name:
+        try:
+            ws = spreadsheet.worksheet(sheet_name)
+        except gspread.WorksheetNotFound:
+            raise SystemExit(f"タブ '{sheet_name}' が見つかりません。タブ名を確認してください。")
+    else:
+        ws = spreadsheet.sheet1
 
     ws.clear()
     # 「A1から現在シートを置き換え」。UPCの先頭ゼロを保つため RAW で書き込む。
     ws.update("A1", rows, value_input_option="RAW")
     # PO番号を C1/D1 に記入
     ws.update("C1", [["PO#", str(po_number)]], value_input_option="RAW")
-    print(f"シートに {len(rows)}行を書き込み、C1/D1 に PO#{po_number} を記入しました")
+    print(f"タブ [{ws.title}] に {len(rows)}行を書き込み、C1/D1 に PO#{po_number} を記入しました")
 
 
 def main():

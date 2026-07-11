@@ -33,8 +33,62 @@ SHOPPING_SPREADSHEET_ID = "1L2IKiEjimmXkXfSIt6xT8fbwWjkraDWOM-T62brYVdo"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 
+# shopping-list ページから「!」（緊急）が付いた商品コードを取得するJS
+URGENT_JS = """() => {
+  const tables = [...document.querySelectorAll('table')];
+  for (const t of tables) {
+    const rows = [...t.querySelectorAll('tr')];
+    const hdr = rows.find(r => [...r.querySelectorAll('th,td')].some(c => c.textContent.trim() === 'Code'));
+    if (!hdr) continue;
+    const header = [...hdr.querySelectorAll('th,td')].map(c => c.textContent.trim());
+    const codeCol = header.indexOf('Code');
+    const bangCol = header.indexOf('!');
+    if (codeCol < 0 || bangCol < 0) continue;
+    const hIdx = rows.indexOf(hdr);
+    const out = [];
+    for (let i = hIdx + 1; i < rows.length; i++) {
+      const cells = [...rows[i].querySelectorAll('td')].map(c => c.textContent.trim());
+      if (cells.length > bangCol && cells[bangCol] && cells[codeCol]) out.push(cells[codeCol]);
+    }
+    return out;
+  }
+  return [];
+}"""
+
+
+def build_urgent_column(rows, urgent_set):
+    """CSV行に「Urgent」列（K列）を付与し、緊急コードには「!」を入れる。"""
+    hdr_idx = None
+    for i, r in enumerate(rows):
+        if r and r[0].strip() == "Code":
+            hdr_idx = i
+            break
+    if hdr_idx is None:
+        print("列ヘッダー(Code)が見つからず、Urgent列は付与しませんでした")
+        return rows
+
+    if "Urgent" not in rows[hdr_idx]:
+        while len(rows[hdr_idx]) < 10:
+            rows[hdr_idx].append("")
+        rows[hdr_idx].append("Urgent")
+
+    marked = 0
+    for i in range(hdr_idx + 1, len(rows)):
+        r = rows[i]
+        code = r[0].strip() if r else ""
+        if code and len(r) >= 10:  # 明細行のみ
+            while len(r) < 10:
+                r.append("")
+            is_urgent = code.lower() in urgent_set
+            r.append("!" if is_urgent else "")
+            if is_urgent:
+                marked += 1
+    print(f"Urgent列を付与：{marked}件に「!」を設定")
+    return rows
+
+
 def download_po_csv(po_number):
-    """PO番号のCSVをダウンロードして行リストを返す。"""
+    """PO番号のCSVをダウンロードし、(行リスト, 緊急コード集合) を返す。"""
     import requests
 
     with sync_playwright() as p:
@@ -57,6 +111,20 @@ def download_po_csv(po_number):
         page.click('button[type="submit"], input[type="submit"]')
         page.wait_for_load_state("networkidle")
         print("ログイン完了")
+
+        # 「!」（緊急）列を shopping-list ページから取得
+        urgent_codes = []
+        try:
+            page.goto(
+                f"https://{DOMAIN}/po-heads/shopping-list/{po_number}",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            page.wait_for_timeout(1500)
+            urgent_codes = page.evaluate(URGENT_JS)
+            print(f"緊急(!)商品: {len(urgent_codes)}件")
+        except Exception as e:
+            print(f"緊急(!)列の取得に失敗（Urgentなしで続行）: {e}")
 
         cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
         browser.close()
@@ -86,7 +154,8 @@ def download_po_csv(po_number):
             order_number = r[1]
             break
     print(f"取得: Order Number = {order_number!r} / データ {len(rows)}行")
-    return rows
+    urgent_set = {c.strip().lower() for c in urgent_codes if c and c.strip()}
+    return rows, urgent_set
 
 
 def write_to_sheet(po_number, rows):
@@ -120,9 +189,10 @@ def main():
     if not po_number.isdigit():
         raise SystemExit(f"PO_NUMBER が不正です: {po_number!r}（数字を指定してください）")
     print(f"=== PO Import: PO#{po_number} ===")
-    rows = download_po_csv(po_number)
+    rows, urgent_set = download_po_csv(po_number)
     if not rows:
         raise SystemExit("CSVが空でした。処理を中止します。")
+    rows = build_urgent_column(rows, urgent_set)
     write_to_sheet(po_number, rows)
     print("=== 完了 ===")
 

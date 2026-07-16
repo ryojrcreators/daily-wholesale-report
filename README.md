@@ -15,6 +15,14 @@
 
 これら2つはGitHub Actionsで定期実行され、結果はGoogle Sheetsに書き込まれます（共通の進捗管理は `status_sheet.py` がGoogle SheetsのStatusタブに記録）。
 
+3. **出品データ同期**（`rakuten_listing_sync.py` / ワークフロー: `rakuten_listing_sync.yml`）
+   - 楽天RMS API（items.search）で出品中の全商品（商品管理番号・商品名・価格・在庫状況）を、**楽天2店舗分**まとめて取得
+   - 専用スプレッドシート（`RAKUTEN_LISTING_SPREADSHEET_ID`）の「楽天_出品データ」タブへ、毎日の最新状態としてまるごと上書き（履歴は持たない）。先頭列に「店舗名」を持ち、2店舗分を1つのタブに集約
+   - 取得失敗・0件時はシートを上書きしない（前日データを保護）。いずれか1店舗でも取得失敗した場合は他店舗分も含めて書き込み中止
+   - 在庫は数量ではなく「在庫あり/在庫切れ」の二値（items.searchは数量を返さないため）
+   - Yahoo!ショッピング（ストアクリエイターPro API）連携は次フェーズで追加予定
+   - 将来的には、Purchaser側の「購入不可」報告（`shopping_report_process.py`のNot Bought/Close処理）とこの出品データを突き合わせ、対応する楽天・Yahoo出品を自動的に洗い出す仕組みへ拡張予定
+
 ### 社内システム連携レポート（Playwright）
 
 社内システム（ドメインは Secret `APP_DOMAIN` で管理）にPlaywrightで自動ログインし、CSVダウンロードやデータ抽出を行ってGoogle Sheets / Chatworkに連携するスクリプト群です。
@@ -51,6 +59,13 @@
 | `KEEPA_API_KEY` | Keepa Pro APIキー |
 | `DEEPL_API_KEY` | DeepL APIキー |
 | `GOOGLE_CREDENTIALS_JSON` | GCPサービスアカウントのJSONキー |
+| `RAKUTEN_SHOP_NAME_1` | 楽天出品データ同期・店舗1の表示名 |
+| `RAKUTEN_RMS_SERVICE_SECRET_1` | 楽天出品データ同期・店舗1のRMS serviceSecret |
+| `RAKUTEN_RMS_LICENSE_KEY_1` | 楽天出品データ同期・店舗1のRMSライセンスキー（3か月ごとに要更新） |
+| `RAKUTEN_SHOP_NAME_2` | 楽天出品データ同期・店舗2の表示名 |
+| `RAKUTEN_RMS_SERVICE_SECRET_2` | 楽天出品データ同期・店舗2のRMS serviceSecret |
+| `RAKUTEN_RMS_LICENSE_KEY_2` | 楽天出品データ同期・店舗2のRMSライセンスキー（3か月ごとに要更新） |
+| `RAKUTEN_LISTING_SPREADSHEET_ID` | 出品データ同期専用スプレッドシートのID |
 
 ### ローカル実行
 
@@ -68,6 +83,7 @@ python rakuten_asin_finder.py
 |---|---|
 | 赤字・仕入不可チェック | 9:00 / 13:00 / 17:00 |
 | ASIN補完 | 10:00 / 14:00 / 18:00 |
+| 出品データ同期 | 7:00 |
 
 それぞれ`workflow_dispatch`で手動実行も可能です。
 

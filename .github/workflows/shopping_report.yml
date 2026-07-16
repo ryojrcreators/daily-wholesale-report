@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sheet_name:
-        description: 'PO#(D1)を読むタブ名（空欄なら先頭タブ）'
+        description: '【旧形式レポート用】PO#(D1)を読むタブ名（PO#付きレポートでは不要）'
         required: false
         default: ''
       dry_run:

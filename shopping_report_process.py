@@ -241,12 +241,18 @@ def print_plan(po_number, to_close, to_setqty, not_found):
 
 # ---------- 実際の変更 ----------
 def apply_changes(page, po_number, to_close, to_setqty):
+    """変更を実行し、(closed_ok, reduced_ok, extra_ok, issues) を返す。"""
+    issues = []
+    set_done = []   # (code, reason) 実際に入力できたもの
+    closed_ok = 0
+
     # 1) 数量変更（編集画面で number入力を書き換え → SUBMIT）
     if to_setqty:
         page.goto(f"{BASE_URL}/po-heads/edit/{po_number}", wait_until="networkidle")
         for code, ln, new_qty, reason in to_setqty:
             if new_qty is None:
                 print(f"   ! {code}: 新Qtyを計算できずスキップ")
+                issues.append(f"Could not compute new qty: {code}")
                 continue
             sel = f'input[type=number][name="po_lines[{ln["idx"]}][qty]"]'
             ok = page.evaluate(
@@ -262,6 +268,10 @@ def apply_changes(page, po_number, to_close, to_setqty):
                 {"sel": sel, "val": new_qty},
             )
             print(f"   数量セット {code}: → {new_qty} ({'ok' if ok else '入力欄なし'})")
+            if ok:
+                set_done.append((code, reason))
+            else:
+                issues.append(f"Qty input not found: {code}")
         page.click('button[type="submit"]')
         page.wait_for_load_state("networkidle")
         print("   数量変更を保存しました（SUBMIT）")
@@ -288,8 +298,49 @@ def apply_changes(page, po_number, to_close, to_setqty):
         if clicked:
             page.wait_for_load_state("networkidle")
             print(f"   Close 実行: {code}")
+            closed_ok += 1
         else:
             print(f"   ! Close対象の行/リンクが見つからず: {code}")
+            issues.append(f"Close link not found: {code}")
+
+    reduced_ok = sum(1 for _, r in set_done if r.startswith("部分購入"))
+    extra_ok = sum(1 for _, r in set_done if r.startswith("エクストラ"))
+    return closed_ok, reduced_ok, extra_ok, issues
+
+
+# ---------- Chatwork 完了通知（本番実行時のみ）----------
+def post_chatwork_summary(results):
+    lines = ["✅ PO Edit Completed"]
+    all_not_found = []
+    store_lines = 0
+    for r in results:
+        parts = []
+        if r["closed"]:
+            parts.append(f"Closed Not Bought {r['closed']}")
+        if r["reduced"]:
+            parts.append(f"Reduced {r['reduced']}")
+        if r["extra"]:
+            parts.append(f"Extra {r['extra']}")
+        if parts:
+            lines.append(f"{r['label']} (PO# {r['po']}): " + " / ".join(parts))
+            store_lines += 1
+        all_not_found.extend(r["not_found"])
+        for issue in r["issues"]:
+            lines.append(f"⚠ {r['label']} (PO# {r['po']}): {issue}")
+    if store_lines == 0:
+        lines.append("No changes needed.")
+    lines.append("⚠ Codes not found: " + (", ".join(all_not_found) if all_not_found else "none"))
+    body = "\n".join(lines)
+
+    print("----- Chatwork通知 -----")
+    print(body)
+    print("------------------------")
+    resp = requests.post(
+        f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
+        headers={"X-ChatWorkToken": CW_TOKEN},
+        data={"body": body},
+    )
+    print(f"Chatwork通知送信: status={resp.status_code}")
 
 
 def main():
@@ -329,6 +380,8 @@ def main():
         nb, ex = parse_report(report)
         targets.append(("(タブD1)", po, nb, ex))
 
+    results = []  # 本番実行の結果（Chatwork通知用）
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 1800, "height": 900}, user_agent=USER_AGENT)
@@ -355,7 +408,16 @@ def main():
                 print("★ DRY_RUN のため、実際の変更は行いません。")
             else:
                 print("★ 変更を実行します...")
-                apply_changes(page, po, to_close, to_setqty)
+                closed_ok, reduced_ok, extra_ok, issues = apply_changes(page, po, to_close, to_setqty)
+                results.append({
+                    "label": label,
+                    "po": po,
+                    "closed": closed_ok,
+                    "reduced": reduced_ok,
+                    "extra": extra_ok,
+                    "not_found": not_found,
+                    "issues": issues,
+                })
                 print("実行完了。")
 
         browser.close()
@@ -364,6 +426,13 @@ def main():
     if not DRY_RUN and msg_id:
         state_ws.update("A1", [["processed_report_id", str(msg_id)]], value_input_option="RAW")
         print(f"処理済みマークを記録しました（_stateタブ, message_id={msg_id}）")
+
+    # 完了通知（本番実行時のみ・通知失敗で処理は落とさない）
+    if not DRY_RUN:
+        try:
+            post_chatwork_summary(results)
+        except Exception as e:
+            print(f"Chatwork通知の送信に失敗しました（処理自体は完了しています）: {e}")
 
     print("=== 完了 ===")
 

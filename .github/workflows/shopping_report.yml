@@ -11,6 +11,11 @@ on:
         description: 'ドライラン（true=下見のみ / false=実際に変更）'
         required: false
         default: 'true'
+  schedule:
+    # LA 18:00 に自動実行（本番）。UTC固定のため夏時間・冬時間の両方を登録し、
+    # 二重実行防止（_state）により実際に処理されるのは1回だけ。
+    - cron: '0 1 * * *'   # PDT(夏) 18:00
+    - cron: '0 2 * * *'   # PST(冬) 18:00
 
 jobs:
   process:
@@ -51,5 +56,7 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           SHEET_NAME: ${{ github.event.inputs.sheet_name }}
-          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          # 手動実行は入力値（既定 true=ドライラン）。スケジュール実行は入力が無いので false（本番）。
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: python -u shopping_report_process.py
+

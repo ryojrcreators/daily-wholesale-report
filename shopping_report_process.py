@@ -269,7 +269,7 @@ def apply_changes(page, po_number, to_close, to_setqty):
             )
             print(f"   数量セット {code}: → {new_qty} ({'ok' if ok else '入力欄なし'})")
             if ok:
-                set_done.append((code, reason))
+                set_done.append((code, ln["qty"], new_qty, reason))
             else:
                 issues.append(f"Qty input not found: {code}")
         page.click('button[type="submit"]')
@@ -303,32 +303,36 @@ def apply_changes(page, po_number, to_close, to_setqty):
             print(f"   ! Close対象の行/リンクが見つからず: {code}")
             issues.append(f"Close link not found: {code}")
 
-    reduced_ok = sum(1 for _, r in set_done if r.startswith("部分購入"))
-    extra_ok = sum(1 for _, r in set_done if r.startswith("エクストラ"))
-    return closed_ok, reduced_ok, extra_ok, issues
+    reduced_list = [(c, b, a) for c, b, a, r in set_done if r.startswith("部分購入")]
+    extra_list = [(c, b, a) for c, b, a, r in set_done if r.startswith("エクストラ")]
+    return closed_ok, reduced_list, extra_list, issues
 
 
 # ---------- Chatwork 完了通知（本番実行時のみ）----------
 def post_chatwork_summary(results):
     lines = ["✅ PO Edit Completed"]
     all_not_found = []
-    store_lines = 0
+    any_store = False
     for r in results:
-        parts = []
-        if r["closed"]:
-            parts.append(f"Closed Not Bought {r['closed']}")
-        if r["reduced"]:
-            parts.append(f"Reduced {r['reduced']}")
-        if r["extra"]:
-            parts.append(f"Extra {r['extra']}")
-        if parts:
-            lines.append(f"{r['label']} (PO# {r['po']}): " + " / ".join(parts))
-            store_lines += 1
+        has_change = r["closed"] or r["reduced"] or r["extra"] or r["issues"]
+        if has_change:
+            any_store = True
+            lines.append("")  # 店舗ブロックの前に空行
+            lines.append(f"{r['label']} (PO# {r['po']})")
+            lines.append(f"{BASE_URL}/po-heads/view/{r['po']}")
+            if r["closed"]:
+                lines.append(f"Closed Not Bought: {r['closed']}")
+            if r["reduced"]:
+                lines.append("Reduced: " + " / ".join(f"{c} {b}->{a}" for c, b, a in r["reduced"]))
+            if r["extra"]:
+                lines.append("Extra: " + " / ".join(f"{c} {b}->{a}" for c, b, a in r["extra"]))
+            for issue in r["issues"]:
+                lines.append(f"⚠ {issue}")
         all_not_found.extend(r["not_found"])
-        for issue in r["issues"]:
-            lines.append(f"⚠ {r['label']} (PO# {r['po']}): {issue}")
-    if store_lines == 0:
+    if not any_store:
+        lines.append("")
         lines.append("No changes needed.")
+    lines.append("")
     lines.append("⚠ Codes not found: " + (", ".join(all_not_found) if all_not_found else "none"))
     body = "\n".join(lines)
 
@@ -408,13 +412,13 @@ def main():
                 print("★ DRY_RUN のため、実際の変更は行いません。")
             else:
                 print("★ 変更を実行します...")
-                closed_ok, reduced_ok, extra_ok, issues = apply_changes(page, po, to_close, to_setqty)
+                closed_ok, reduced_list, extra_list, issues = apply_changes(page, po, to_close, to_setqty)
                 results.append({
                     "label": label,
                     "po": po,
                     "closed": closed_ok,
-                    "reduced": reduced_ok,
-                    "extra": extra_ok,
+                    "reduced": reduced_list,
+                    "extra": extra_list,
                     "not_found": not_found,
                     "issues": issues,
                 })

@@ -51,11 +51,29 @@ def change_ship_method(page, shipment_id):
     print(f"検索: {search_url}")
     page.goto(search_url, wait_until="networkidle")
 
-    order_link = page.locator('a[href*="/sales/view/"]').first
-    if order_link.count() == 0:
+    # 「Order Number」列見出しを探し、その列の最初の行にあるリンクをクリックする
+    clicked = page.evaluate(
+        """() => {
+            const tables = [...document.querySelectorAll('table')];
+            for (const t of tables) {
+                const rows = [...t.querySelectorAll('tr')];
+                if (!rows.length) continue;
+                const headerCells = [...rows[0].querySelectorAll('th,td')].map(c => c.textContent.trim());
+                const colIdx = headerCells.indexOf('Order Number');
+                if (colIdx < 0) continue;
+                for (let i = 1; i < rows.length; i++) {
+                    const cells = rows[i].querySelectorAll('td');
+                    if (cells.length <= colIdx) continue;
+                    const link = cells[colIdx].querySelector('a');
+                    if (link) { link.click(); return true; }
+                }
+            }
+            return false;
+        }"""
+    )
+    if not clicked:
         print(f"！Shipment ID {shipment_id} に対応するOrderが見つかりません")
         return False, "Order not found"
-    order_link.click()
     page.wait_for_load_state("networkidle")
 
     print("Edit Shipping Detailsをクリックしています...")

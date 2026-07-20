@@ -76,6 +76,7 @@ def change_ship_method(page, shipment_id):
         debug = page.evaluate(
             """() => {
                 const tables = [...document.querySelectorAll('table')];
+                const resultDiv = document.querySelector('#resultdiv');
                 return {
                     url: location.href,
                     title: document.title,
@@ -88,6 +89,9 @@ def change_ship_method(page, shipment_id):
                             firstDataRowLinks: rows.length > 1 ? [...rows[1].querySelectorAll('a')].map(a => ({text: a.textContent.trim(), href: a.getAttribute('href')})) : [],
                         };
                     }),
+                    resultDivExists: !!resultDiv,
+                    resultDivText: resultDiv ? resultDiv.innerText.slice(0, 1500) : null,
+                    bodyTextSnippet: document.body.innerText.slice(0, 1500),
                 };
             }"""
         )

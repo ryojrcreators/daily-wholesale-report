@@ -74,62 +74,35 @@ def fetch_order_via_csv(cookie_dict, shipment_id):
     return dict(zip(rows[0], rows[1]))
 
 
-def find_internal_order_id(page, order_number, created_time):
-    """created日で日付検索し、order_numberが一致する行の /sales/view/ から内部IDを返す。
+def find_internal_order_id(page, shipment_id):
+    """Shipment IDから内部の注文ID(SO#)を取得する。
 
-    Shipment IDフィルタのHTML検索はbotでは0件になるが、日付検索なら結果が描画される
-    （so_sheets.py で実証済み）ため、created日の前後だけを狭く検索して該当行を探す。
+    /shipping-codes/edit/{Shipment ID} のページに、対応する注文への
+    /sales/view/{内部ID} リンクが含まれているので、そこから内部IDを取り出す。
+    （HTMLのSO検索一覧はbotセッションでは描画されないため、この経路を使う）
     """
-    try:
-        d = datetime.strptime(created_time.split(",")[0].strip(), "%m/%d/%y").date()
-    except Exception:
-        d = date.today()
-    # so_sheets.py の日次実行と同じく「1日だけ（start=end）」で検索する
-    start = d.strftime("%Y-%m-%d")
-    end = d.strftime("%Y-%m-%d")
-    print(f"日付 {start}（1日）で検索し、注文 {order_number} を探します")
-
-    # so_sheets.py と完全に同じ手順で「日付だけ」検索する。
-    # （Basic認証付きURL・待機2秒・日付のみ。フィルタを足すとbotでは0件になる）
-    page.goto(SO_SEARCH_URL, wait_until="networkidle")
-    page.wait_for_timeout(2000)
-    page.locator('input[name="start_date"], input[placeholder*="Start"], input[id*="start"]').first.fill(start)
-    page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first.fill(end)
-
-    page.click('button:has-text("Search"), input[value="Search"]')
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(2000)
+    url = f"{BASE_URL}/shipping-codes/edit/{shipment_id}"
+    print(f"内部ID取得のため {url} を開きます")
+    page.goto(url, wait_until="networkidle")
+    page.wait_for_timeout(500)
 
     href = page.evaluate(
-        """(orderNum) => {
-            const links = [...document.querySelectorAll('a[href*="/sales/view/"]')];
-            for (const a of links) {
-                if (a.textContent.trim() === orderNum) return a.getAttribute('href');
-            }
-            return null;
-        }""",
-        order_number,
+        """() => {
+            const a = document.querySelector('a[href*="/sales/view/"]');
+            return a ? a.getAttribute('href') : null;
+        }"""
     )
     if not href:
         info = page.evaluate(
-            """(orderNum) => {
-                const links = [...document.querySelectorAll('a[href*="/sales/view/"]')];
-                const resultDiv = document.querySelector('#resultdiv');
-                const dl = [...document.querySelectorAll('a')].find(a => a.textContent.trim() === 'Download');
-                return {
-                    url: location.href,
-                    resultDivExists: !!resultDiv,
-                    viewLinkCount: links.length,
-                    downloadLinkHref: dl ? dl.getAttribute('href') : null,
-                    sampleOrderNumbers: links.slice(0, 15).map(a => a.textContent.trim()),
-                    targetInHtml: document.documentElement.outerHTML.includes(orderNum),
-                };
-            }""",
-            order_number,
+            """() => ({
+                url: location.href,
+                title: document.title,
+                bodySnippet: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 400),
+            })"""
         )
         print(f"内部ID未検出のデバッグ: {info}")
         try:
-            page.screenshot(path="debug_soheads.png", full_page=True)
+            page.screenshot(path="debug_shipping_code.png", full_page=True)
         except Exception:
             pass
         return None
@@ -154,8 +127,8 @@ def change_ship_method(page, shipment_id):
         print("既に Yamato Nekopos のため変更不要")
         return True, "already Yamato Nekopos"
 
-    # 2) created日で日付検索して内部ID(/sales/view/{id})を取得
-    so_id = find_internal_order_id(page, order_number, created_time)
+    # 2) /shipping-codes/edit/{Shipment ID} から内部ID(/sales/view/{id})を取得
+    so_id = find_internal_order_id(page, shipment_id)
     if not so_id:
         print("！内部ID(/sales/view/)が見つかりません")
         try:

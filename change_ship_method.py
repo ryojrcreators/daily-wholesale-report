@@ -187,17 +187,70 @@ def post_chatwork(shipment_id, success, error_reason):
     print(f"Chatwork通知送信: status={resp.status_code}")
 
 
+def diagnose_csv(cookie_dict, shipment_id):
+    """botセッションでSO CSVを直接ダウンロードし、列構成と該当行を調べる（診断用）。"""
+    import csv
+
+    today = date.today()
+    start = (today - timedelta(days=90)).strftime("%Y-%m-%d")
+    end = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+    auth = (LOGIN_ID_1, LOGIN_PASS_1)
+    headers = {"User-Agent": USER_AGENT}
+
+    def fetch(url):
+        r = requests.get(url, cookies=cookie_dict, headers=headers, auth=auth)
+        text = r.content.decode("utf-8-sig", errors="replace")
+        rows = list(csv.reader(text.splitlines()))
+        return r.status_code, len(r.content), rows
+
+    # A) Shipment IDフィルタ付きダウンロード
+    urlA = f"{BASE_URL}/sales/download?ShippingCodes%5Bid%5D={shipment_id}"
+    print(f"\n[A] Shipment IDフィルタ付き: {urlA}")
+    sa, ba, rowsA = fetch(urlA)
+    print(f"[A] status={sa} bytes={ba} rows={len(rowsA)}")
+    if rowsA:
+        print(f"[A] header={rowsA[0]}")
+        for r in rowsA[1:5]:
+            print(f"[A] row={r}")
+
+    # B) 日付範囲のみ（so_sheets方式・確実に動く）
+    urlB = f"{BASE_URL}/sales/download?start_date={start}&end_date={end}"
+    print(f"\n[B] 日付範囲のみ: {urlB}")
+    sb, bb, rowsB = fetch(urlB)
+    print(f"[B] status={sb} bytes={bb} rows={len(rowsB)}")
+    if rowsB:
+        print(f"[B] header={rowsB[0]}")
+        matches = 0
+        for i, r in enumerate(rowsB[1:], start=1):
+            joined = "\t".join(r)
+            if shipment_id in joined or "4938929" in joined:
+                print(f"[B] MATCH 行{i}: {r}")
+                matches += 1
+                if matches >= 5:
+                    break
+        if matches == 0:
+            print(f"[B] {shipment_id} も 4938929 も含む行は見つかりませんでした")
+
+
 def main():
     shipment_id = os.environ.get("SHIPMENT_ID", "").strip()
     if not shipment_id.isdigit():
         raise SystemExit(f"SHIPMENT_ID が不正です: {shipment_id!r}（数字を指定してください）")
     print(f"=== Ship Method変更: Shipment ID {shipment_id} ===")
 
+    diagnose = os.environ.get("DIAGNOSE", "").strip() == "1"
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 1800, "height": 900}, user_agent=USER_AGENT)
         page = context.new_page()
         login(page)
+        if diagnose:
+            cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
+            browser.close()
+            diagnose_csv(cookie_dict, shipment_id)
+            print("=== 診断完了 ===")
+            return
         success, error_reason = change_ship_method(page, shipment_id)
         browser.close()
 

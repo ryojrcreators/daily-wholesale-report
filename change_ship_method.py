@@ -268,6 +268,40 @@ def diagnose_csv(cookie_dict, shipment_id):
             print(f"[B] {shipment_id} も 4938929 も含む行は見つかりませんでした")
 
 
+def probe_endpoints(page, shipment_id):
+    """shipping_code_id(=Shipment ID)を使って、直接アクセスできる編集/詳細ページを探す。"""
+    candidates = [
+        f"{BASE_URL}/shipping-codes/view/{shipment_id}",
+        f"{BASE_URL}/shipping-codes/edit/{shipment_id}",
+        f"{BASE_URL}/shipping-codes/{shipment_id}",
+        f"{BASE_URL}/sales/shipping-details/{shipment_id}",
+    ]
+    for url in candidates:
+        try:
+            page.goto(url, wait_until="networkidle")
+            page.wait_for_timeout(800)
+        except Exception as e:
+            print(f"[probe] {url}\n  → 例外: {e}")
+            continue
+        info = page.evaluate(
+            """() => {
+                const hasYamato = [...document.querySelectorAll('select')].some(s =>
+                    [...s.options].some(o => o.textContent.trim() === 'Yamato Nekopos'));
+                const uniq = arr => [...new Set(arr)].slice(0, 5);
+                return {
+                    finalUrl: location.href,
+                    title: document.title,
+                    hasYamatoSelect: hasYamato,
+                    salesViewLinks: uniq([...document.querySelectorAll('a[href*="/sales/view/"]')].map(a => a.getAttribute('href'))),
+                    shipDetailLinks: uniq([...document.querySelectorAll('a[href*="/sales/shipping-details/"]')].map(a => a.getAttribute('href'))),
+                    bodyLen: document.body.innerText.length,
+                    bodySnippet: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 400),
+                };
+            }"""
+        )
+        print(f"[probe] {url}\n  → {info}")
+
+
 def main():
     shipment_id = os.environ.get("SHIPMENT_ID", "").strip()
     if not shipment_id.isdigit():
@@ -275,6 +309,7 @@ def main():
     print(f"=== Ship Method変更: Shipment ID {shipment_id} ===")
 
     diagnose = os.environ.get("DIAGNOSE", "").strip() == "1"
+    probe = os.environ.get("PROBE", "").strip() == "1"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -286,6 +321,11 @@ def main():
             browser.close()
             diagnose_csv(cookie_dict, shipment_id)
             print("=== 診断完了 ===")
+            return
+        if probe:
+            probe_endpoints(page, shipment_id)
+            browser.close()
+            print("=== プローブ完了 ===")
             return
         success, error_reason = change_ship_method(page, shipment_id)
         browser.close()

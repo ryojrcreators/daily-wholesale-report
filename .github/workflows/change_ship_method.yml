@@ -45,6 +45,7 @@ jobs:
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           SHIPMENT_ID: ${{ github.event.inputs.shipment_id }}
+          PROBE: '1'
         run: python -u change_ship_method.py
 
       - name: デバッグ用スクリーンショット保存

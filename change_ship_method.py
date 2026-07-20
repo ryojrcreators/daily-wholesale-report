@@ -92,11 +92,20 @@ def change_ship_method(page, shipment_id):
         )
         print(f"ログイン中のユーザー: {debug.get('loginUser')!r}")
         print(f"デバッグ情報: {debug}")
+        # サーバーが返した生HTMLの中身を直接調べる（DOM上には無くても、生HTMLにあるかを確認）
+        html = page.content()
+        print(f"生HTML 長さ: {len(html)} 文字")
+        print(f"  '/sales/view/' を含む: {'/sales/view/' in html}")
+        print(f"  'Sales Orders' を含む: {'Sales Orders' in html}")
+        print(f"  'resultdiv' を含む: {'resultdiv' in html}")
+        print(f"  'soHeads index' を含む: {'soHeads index' in html}")
         try:
             page.screenshot(path="debug_soheads.png", full_page=True)
-            print("スクリーンショットを debug_soheads.png に保存しました")
+            with open("debug_soheads.html", "w", encoding="utf-8") as f:
+                f.write(html)
+            print("スクリーンショットとHTMLを保存しました")
         except Exception as e:
-            print(f"スクリーンショット保存に失敗: {e}")
+            print(f"デバッグファイル保存に失敗: {e}")
         return False, "Order not found"
     page.wait_for_load_state("networkidle")
 

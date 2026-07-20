@@ -126,6 +126,25 @@ def find_internal_order_id(page, order_number, created_time):
         order_number,
     )
     if not href:
+        info = page.evaluate(
+            """(orderNum) => {
+                const links = [...document.querySelectorAll('a[href*="/sales/view/"]')];
+                const resultDiv = document.querySelector('#resultdiv');
+                return {
+                    url: location.href,
+                    resultDivExists: !!resultDiv,
+                    viewLinkCount: links.length,
+                    sampleOrderNumbers: links.slice(0, 15).map(a => a.textContent.trim()),
+                    targetInHtml: document.documentElement.outerHTML.includes(orderNum),
+                };
+            }""",
+            order_number,
+        )
+        print(f"内部ID未検出のデバッグ: {info}")
+        try:
+            page.screenshot(path="debug_soheads.png", full_page=True)
+        except Exception:
+            pass
         return None
     tail = href.rstrip("/").split("/")[-1]
     return tail if tail.isdigit() else None

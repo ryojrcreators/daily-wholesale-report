@@ -12,6 +12,7 @@ ChatworkにShipment ID（Package id）が届いたら、社内システムの
 
 import os
 import requests
+from datetime import date, timedelta
 from playwright.sync_api import sync_playwright
 from urllib.parse import quote
 
@@ -47,22 +48,24 @@ def login(page):
 
 def change_ship_method(page, shipment_id):
     """指定Shipment IDのShip MethodをYamato Nekoposに変更する。成功したらTrueを返す。"""
-    # 人間と同じ流れで検索する：SoHeadsを開く → 検索フォームにShipment IDを入力 → Search
+    # so_sheets.py と同じ流れで検索する：SoHeadsを開く → 日付範囲＋Shipment IDを入力 → Search
+    # （日付範囲を入れないとサーバーが結果を返さないため、広めの範囲を指定する）
     print("SoHeads を開いています...")
     page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")
+    page.wait_for_timeout(2000)
 
-    # 検索フォーム（初期状態は display:none）を虫眼鏡アイコンで表示
-    try:
-        page.click(".search-toggle", timeout=5000)
-        page.wait_for_timeout(800)
-    except Exception as e:
-        print(f"検索トグルのクリックに失敗（続行）: {e}")
-
-    print(f"Shipment Id={shipment_id} をフォームに入力して検索します")
+    today = date.today()
+    start_date = "2020-01-01"
+    end_date = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+    page.locator('input[name="start_date"]').first.fill(start_date)
+    page.locator('input[name="end_date"]').first.fill(end_date)
     page.fill("#shippingcodes-id", str(shipment_id))
+    print(f"Shipment Id={shipment_id} / 期間 {start_date}〜{end_date} で検索します")
+
     # 「Search」ボタン（同フォーム内のClearボタンと混同しないようテキストで指定）
-    page.click('#searchform button:has-text("Search")')
+    page.click('button:has-text("Search")')
     page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(1500)
 
     # 「Order Number」列見出しを探し、その列の最初の行にあるリンクをクリックする
     clicked = page.evaluate(

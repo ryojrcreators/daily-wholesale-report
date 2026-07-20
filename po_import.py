@@ -194,8 +194,12 @@ def write_to_sheet(po_number, rows):
 
 
 def notify_tgwm_ready():
-    """TG&WMタブへのImport完了をChatworkへ通知する（日付は当日のLA日付）。"""
+    """TG&WMタブへのImport完了をChatworkへ通知する（日付は当日のLA日付）。水曜日は送信しない。"""
     now_la = datetime.now(ZoneInfo("America/Los_Angeles"))
+    if now_la.weekday() == 2:  # 0=月,...,2=水
+        print("水曜日（LA時間）のため、TG&WM Chatwork通知をスキップします")
+        return
+
     date_str = f"{now_la.month}/{now_la.day}"
     message = f"[To:{NOTIFY_TO_ID}]{NOTIFY_TO_NAME}\n{date_str} TG/WM list is ready"
 

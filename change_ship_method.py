@@ -77,25 +77,26 @@ def change_ship_method(page, shipment_id):
             """() => {
                 const tables = [...document.querySelectorAll('table')];
                 const resultDiv = document.querySelector('#resultdiv');
+                const userEl = document.querySelector('.glyphicon-user');
+                const loginUser = userEl && userEl.parentElement ? userEl.parentElement.textContent.trim() : null;
                 return {
                     url: location.href,
                     title: document.title,
+                    loginUser: loginUser,
                     tableCount: tables.length,
-                    tables: tables.map(t => {
-                        const rows = [...t.querySelectorAll('tr')];
-                        return {
-                            rowCount: rows.length,
-                            headerCells: rows.length ? [...rows[0].querySelectorAll('th,td')].map(c => c.textContent.trim()) : [],
-                            firstDataRowLinks: rows.length > 1 ? [...rows[1].querySelectorAll('a')].map(a => ({text: a.textContent.trim(), href: a.getAttribute('href')})) : [],
-                        };
-                    }),
                     resultDivExists: !!resultDiv,
                     resultDivText: resultDiv ? resultDiv.innerText.slice(0, 1500) : null,
                     bodyTextSnippet: document.body.innerText.slice(0, 1500),
                 };
             }"""
         )
+        print(f"ログイン中のユーザー: {debug.get('loginUser')!r}")
         print(f"デバッグ情報: {debug}")
+        try:
+            page.screenshot(path="debug_soheads.png", full_page=True)
+            print("スクリーンショットを debug_soheads.png に保存しました")
+        except Exception as e:
+            print(f"スクリーンショット保存に失敗: {e}")
         return False, "Order not found"
     page.wait_for_load_state("networkidle")
 

@@ -46,3 +46,11 @@ jobs:
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           SHIPMENT_ID: ${{ github.event.inputs.shipment_id }}
         run: python -u change_ship_method.py
+
+      - name: デバッグ用スクリーンショット保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: "*.png"
+          if-no-files-found: ignore

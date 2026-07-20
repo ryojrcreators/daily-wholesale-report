@@ -51,29 +51,6 @@ def login(page):
     print("ログイン完了")
 
 
-def fetch_order_via_csv(cookie_dict, shipment_id):
-    """Shipment IDでSO CSVを取得し、該当注文の情報dictを返す。
-
-    HTML検索ではbotセッションで0件になるが、CSVダウンロードならフィルタが効くため
-    こちらで order_number / created_time / 現在の ship_method を取得する。
-    """
-    url = f"{BASE_URL}/sales/download?ShippingCodes%5Bid%5D={shipment_id}"
-    r = requests.get(
-        url,
-        cookies=cookie_dict,
-        headers={"User-Agent": USER_AGENT},
-        auth=(LOGIN_ID_1, LOGIN_PASS_1),
-    )
-    if r.status_code != 200:
-        print(f"CSVダウンロード失敗: status={r.status_code}")
-        return None
-    rows = list(csv.reader(r.content.decode("utf-8-sig", errors="replace").splitlines()))
-    if len(rows) < 2:
-        print("CSVに該当データがありません（0件）")
-        return None
-    return dict(zip(rows[0], rows[1]))
-
-
 def find_internal_order_id(page, shipment_id):
     """Shipment IDから内部の注文ID(SO#)を取得する。
 
@@ -112,38 +89,20 @@ def find_internal_order_id(page, shipment_id):
 
 def change_ship_method(page, shipment_id):
     """指定Shipment IDのShip MethodをYamato Nekoposに変更する。成功したらTrueを返す。"""
-    # 1) Shipment IDでCSVを取得（HTML検索は0件でもCSVは効く）
-    cookie_dict = {c["name"]: c["value"] for c in page.context.cookies()}
-    rec = fetch_order_via_csv(cookie_dict, shipment_id)
-    if not rec:
-        return False, "Order not found (CSV empty)"
-    order_number = (rec.get("order_number") or "").strip()
-    created_time = (rec.get("created_time") or "").strip()
-    current_method = (rec.get("ship_method") or "").strip()
-    print(f"CSV取得: order_number={order_number!r} created={created_time!r} 現ship_method={current_method!r}")
-    if not order_number:
-        return False, "order_number missing in CSV"
-    if current_method == TARGET_SHIP_METHOD:
-        print("既に Yamato Nekopos のため変更不要")
-        return True, "already Yamato Nekopos"
-
-    # 2) /shipping-codes/edit/{Shipment ID} から内部ID(/sales/view/{id})を取得
+    # 1) /shipping-codes/edit/{Shipment ID} から内部ID(/sales/view/{id})を取得
     so_id = find_internal_order_id(page, shipment_id)
     if not so_id:
         print("！内部ID(/sales/view/)が見つかりません")
-        try:
-            page.screenshot(path="debug_soheads.png", full_page=True)
-        except Exception:
-            pass
         return False, "Internal order id not found"
     print(f"内部ID = {so_id}")
 
-    # 3) shipping-detailsページを開き、Package idが一致する行のShip Methodを変更
+    # 2) shipping-detailsページを開き、Package idが一致する行のShip Methodを変更
     page.goto(f"{BASE_URL}/sales/shipping-details/{so_id}", wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    # Package id が一致する行の Ship Method セレクトを操作
-    ok = page.evaluate(
+    # Package id が一致する行の Ship Method セレクトを操作。
+    # 既に目的の値なら 'already'、変更したら 'changed'、見つからなければ理由を返す。
+    result = page.evaluate(
         """({shipmentId, target}) => {
             const rows = [...document.querySelectorAll('table tr')];
             for (const tr of rows) {
@@ -152,25 +111,30 @@ def change_ship_method(page, shipment_id):
                 const pkgId = cells[0].textContent.trim();
                 if (pkgId !== String(shipmentId)) continue;
                 const select = tr.querySelector('select');
-                if (!select) return false;
+                if (!select) return 'no-select';
+                const cur = select.options[select.selectedIndex];
+                if (cur && cur.textContent.trim() === target) return 'already';
                 const opt = [...select.options].find(o => o.textContent.trim() === target);
-                if (!opt) return false;
+                if (!opt) return 'no-option';
                 select.value = opt.value;
                 select.dispatchEvent(new Event('input', {bubbles:true}));
                 select.dispatchEvent(new Event('change', {bubbles:true}));
-                return true;
+                return 'changed';
             }
-            return false;
+            return 'no-row';
         }""",
         {"shipmentId": shipment_id, "target": TARGET_SHIP_METHOD},
     )
-    if not ok:
-        print(f"！Package id {shipment_id} の行、またはShip Method欄が見つかりません")
+    if result == "already":
+        print("既に Yamato Nekopos のため変更不要")
+        return True, "already Yamato Nekopos"
+    if result != "changed":
+        print(f"！変更できませんでした（{result}）: Package id {shipment_id}")
         try:
             page.screenshot(path="debug_shipping.png", full_page=True)
         except Exception:
             pass
-        return False, "Package row or Ship Method select not found"
+        return False, f"Ship method not changed ({result})"
 
     print("Ship Methodを変更しました。Saveをクリックします...")
     save_btn = page.locator('button:has-text("Save"), input[type="submit"][value="Save"]').first

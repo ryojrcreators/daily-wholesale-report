@@ -73,6 +73,25 @@ def change_ship_method(page, shipment_id):
     )
     if not clicked:
         print(f"！Shipment ID {shipment_id} に対応するOrderが見つかりません")
+        debug = page.evaluate(
+            """() => {
+                const tables = [...document.querySelectorAll('table')];
+                return {
+                    url: location.href,
+                    title: document.title,
+                    tableCount: tables.length,
+                    tables: tables.map(t => {
+                        const rows = [...t.querySelectorAll('tr')];
+                        return {
+                            rowCount: rows.length,
+                            headerCells: rows.length ? [...rows[0].querySelectorAll('th,td')].map(c => c.textContent.trim()) : [],
+                            firstDataRowLinks: rows.length > 1 ? [...rows[1].querySelectorAll('a')].map(a => ({text: a.textContent.trim(), href: a.getAttribute('href')})) : [],
+                        };
+                    }),
+                };
+            }"""
+        )
+        print(f"デバッグ情報: {debug}")
         return False, "Order not found"
     page.wait_for_load_state("networkidle")
 

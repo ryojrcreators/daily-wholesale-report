@@ -86,30 +86,12 @@ def find_internal_order_id(page, order_number, created_time):
     end = (d + timedelta(days=3)).strftime("%Y-%m-%d")
     print(f"日付 {start}〜{end} で検索し、注文 {order_number} を探します")
 
+    # so_sheets.py と同じく「日付だけ」で検索する。
+    # （日付以外のフィルタを足すとbotセッションでは0件になるため、日付のみにする）
     page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")
     page.wait_for_timeout(1500)
     page.locator('input[name="start_date"]').first.fill(start)
     page.locator('input[name="end_date"]').first.fill(end)
-
-    # Line Status=Hold などが既定フィルタで一覧から除外される可能性があるため、
-    # SO/Line の全ステータスを明示的に選択して、Hold注文も結果に含める。
-    page.evaluate(
-        """() => {
-            // SO Status（複数選択）を全選択
-            const cb = document.querySelector('#so-heads-select-all');
-            if (cb) {
-                cb.checked = true;
-                const container = cb.closest('.input.checkbox');
-                const sel = container && container.previousElementSibling
-                    ? container.previousElementSibling.querySelector('select') : null;
-                if (sel) {
-                    [...sel.options].forEach(o => o.selected = true);
-                    sel.dispatchEvent(new Event('change', {bubbles:true}));
-                }
-            }
-            // Line Status（単一選択）は空＝全件のままにする
-        }"""
-    )
 
     page.click('button:has-text("Search")')
     page.wait_for_load_state("networkidle")

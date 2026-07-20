@@ -28,6 +28,8 @@ LOGIN_ID_1_ENC = quote(LOGIN_ID_1, safe="")
 LOGIN_PASS_1_ENC = quote(LOGIN_PASS_1, safe="")
 LOGIN_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/"
 BASE_URL = f"https://{DOMAIN}"
+# so_sheets.py と同様、SO検索ページは Basic認証をURLに埋め込んでアクセスする
+SO_SEARCH_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/so-heads"
 
 CW_TOKEN = os.environ["CW_TOKEN"]
 CW_ROOM_ID = "442638900"
@@ -86,16 +88,16 @@ def find_internal_order_id(page, order_number, created_time):
     end = (d + timedelta(days=3)).strftime("%Y-%m-%d")
     print(f"日付 {start}〜{end} で検索し、注文 {order_number} を探します")
 
-    # so_sheets.py と同じく「日付だけ」で検索する。
-    # （日付以外のフィルタを足すとbotセッションでは0件になるため、日付のみにする）
-    page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")
-    page.wait_for_timeout(1500)
-    page.locator('input[name="start_date"]').first.fill(start)
-    page.locator('input[name="end_date"]').first.fill(end)
+    # so_sheets.py と完全に同じ手順で「日付だけ」検索する。
+    # （Basic認証付きURL・待機2秒・日付のみ。フィルタを足すとbotでは0件になる）
+    page.goto(SO_SEARCH_URL, wait_until="networkidle")
+    page.wait_for_timeout(2000)
+    page.locator('input[name="start_date"], input[placeholder*="Start"], input[id*="start"]').first.fill(start)
+    page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first.fill(end)
 
-    page.click('button:has-text("Search")')
+    page.click('button:has-text("Search"), input[value="Search"]')
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2000)
 
     href = page.evaluate(
         """(orderNum) => {

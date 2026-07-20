@@ -47,9 +47,22 @@ def login(page):
 
 def change_ship_method(page, shipment_id):
     """指定Shipment IDのShip MethodをYamato Nekoposに変更する。成功したらTrueを返す。"""
-    search_url = f"{BASE_URL}/so-heads?ShippingCodes%5Bid%5D={shipment_id}"
-    print(f"検索: {search_url}")
-    page.goto(search_url, wait_until="networkidle")
+    # 人間と同じ流れで検索する：SoHeadsを開く → 検索フォームにShipment IDを入力 → Search
+    print("SoHeads を開いています...")
+    page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")
+
+    # 検索フォーム（初期状態は display:none）を虫眼鏡アイコンで表示
+    try:
+        page.click(".search-toggle", timeout=5000)
+        page.wait_for_timeout(800)
+    except Exception as e:
+        print(f"検索トグルのクリックに失敗（続行）: {e}")
+
+    print(f"Shipment Id={shipment_id} をフォームに入力して検索します")
+    page.fill("#shippingcodes-id", str(shipment_id))
+    # 「Search」ボタン（同フォーム内のClearボタンと混同しないようテキストで指定）
+    page.click('#searchform button:has-text("Search")')
+    page.wait_for_load_state("networkidle")
 
     # 「Order Number」列見出しを探し、その列の最初の行にあるリンクをクリックする
     clicked = page.evaluate(

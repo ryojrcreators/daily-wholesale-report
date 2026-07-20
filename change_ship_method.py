@@ -55,7 +55,7 @@ def change_ship_method(page, shipment_id):
     page.wait_for_timeout(2000)
 
     today = date.today()
-    start_date = "2020-01-01"
+    start_date = (today - timedelta(days=90)).strftime("%Y-%m-%d")
     end_date = (today + timedelta(days=2)).strftime("%Y-%m-%d")
     page.locator('input[name="start_date"]').first.fill(start_date)
     page.locator('input[name="end_date"]').first.fill(end_date)

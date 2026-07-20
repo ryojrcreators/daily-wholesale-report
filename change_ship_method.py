@@ -2,20 +2,17 @@
 ChatworkにShipment ID（Package id）が届いたら、社内システムの
 「Edit Shipping Details」からShip Methodを Yamato Nekopos に変更する。
 
-処理の流れ（HTMLのShipment ID検索はbotセッションでは0件になるため、CSVを併用する）:
+処理の流れ:
 - ログインは他のPlaywright系スクリプトと同じ2段階（Basic認証 + フォームログイン）
-- Shipment IDでCSV（/sales/download?ShippingCodes[id]=...）を取得し、order_number・created日・
-  現在のship_methodを得る（CSVならフィルタが効く）
-- created日で日付検索（日付検索なら結果が描画される）し、order_numberが一致する行の
-  /sales/view/{内部ID} から内部IDを取得
+- /shipping-codes/edit/{Shipment ID} を開き、対応注文への /sales/view/{内部ID} リンクから
+  内部の注文ID(SO#)を取得する（SoHeadsのShipment ID検索はbotセッションでは一覧が
+  描画されないため、この経路で内部IDを得る）
 - /sales/shipping-details/{内部ID} を開き、Package id が一致する行の Ship Method を変更してSave
 - 完了後、Chatworkルーム(442638900)へ結果を通知
 """
 
 import os
-import csv
 import requests
-from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright
 from urllib.parse import quote
 
@@ -28,8 +25,6 @@ LOGIN_ID_1_ENC = quote(LOGIN_ID_1, safe="")
 LOGIN_PASS_1_ENC = quote(LOGIN_PASS_1, safe="")
 LOGIN_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/"
 BASE_URL = f"https://{DOMAIN}"
-# so_sheets.py と同様、SO検索ページは Basic認証をURLに埋め込んでアクセスする
-SO_SEARCH_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/so-heads"
 
 CW_TOKEN = os.environ["CW_TOKEN"]
 CW_ROOM_ID = "442638900"
@@ -160,110 +155,17 @@ def post_chatwork(shipment_id, success, error_reason):
     print(f"Chatwork通知送信: status={resp.status_code}")
 
 
-def diagnose_csv(cookie_dict, shipment_id):
-    """botセッションでSO CSVを直接ダウンロードし、列構成と該当行を調べる（診断用）。"""
-    import csv
-
-    today = date.today()
-    start = (today - timedelta(days=90)).strftime("%Y-%m-%d")
-    end = (today + timedelta(days=2)).strftime("%Y-%m-%d")
-    auth = (LOGIN_ID_1, LOGIN_PASS_1)
-    headers = {"User-Agent": USER_AGENT}
-
-    def fetch(url):
-        r = requests.get(url, cookies=cookie_dict, headers=headers, auth=auth)
-        text = r.content.decode("utf-8-sig", errors="replace")
-        rows = list(csv.reader(text.splitlines()))
-        return r.status_code, len(r.content), rows
-
-    # A) Shipment IDフィルタ付きダウンロード
-    urlA = f"{BASE_URL}/sales/download?ShippingCodes%5Bid%5D={shipment_id}"
-    print(f"\n[A] Shipment IDフィルタ付き: {urlA}")
-    sa, ba, rowsA = fetch(urlA)
-    print(f"[A] status={sa} bytes={ba} rows={len(rowsA)}")
-    if rowsA:
-        print(f"[A] header={rowsA[0]}")
-        for r in rowsA[1:5]:
-            print(f"[A] row={r}")
-
-    # B) 日付範囲のみ（so_sheets方式・確実に動く）
-    urlB = f"{BASE_URL}/sales/download?start_date={start}&end_date={end}"
-    print(f"\n[B] 日付範囲のみ: {urlB}")
-    sb, bb, rowsB = fetch(urlB)
-    print(f"[B] status={sb} bytes={bb} rows={len(rowsB)}")
-    if rowsB:
-        print(f"[B] header={rowsB[0]}")
-        matches = 0
-        for i, r in enumerate(rowsB[1:], start=1):
-            joined = "\t".join(r)
-            if shipment_id in joined or "4938929" in joined:
-                print(f"[B] MATCH 行{i}: {r}")
-                matches += 1
-                if matches >= 5:
-                    break
-        if matches == 0:
-            print(f"[B] {shipment_id} も 4938929 も含む行は見つかりませんでした")
-
-
-def probe_endpoints(page, shipment_id):
-    """shipping_code_id(=Shipment ID)を使って、直接アクセスできる編集/詳細ページを探す。"""
-    candidates = [
-        f"{BASE_URL}/shipping-codes/view/{shipment_id}",
-        f"{BASE_URL}/shipping-codes/edit/{shipment_id}",
-        f"{BASE_URL}/shipping-codes/{shipment_id}",
-        f"{BASE_URL}/sales/shipping-details/{shipment_id}",
-    ]
-    for url in candidates:
-        try:
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(800)
-        except Exception as e:
-            print(f"[probe] {url}\n  → 例外: {e}")
-            continue
-        info = page.evaluate(
-            """() => {
-                const hasYamato = [...document.querySelectorAll('select')].some(s =>
-                    [...s.options].some(o => o.textContent.trim() === 'Yamato Nekopos'));
-                const uniq = arr => [...new Set(arr)].slice(0, 5);
-                return {
-                    finalUrl: location.href,
-                    title: document.title,
-                    hasYamatoSelect: hasYamato,
-                    salesViewLinks: uniq([...document.querySelectorAll('a[href*="/sales/view/"]')].map(a => a.getAttribute('href'))),
-                    shipDetailLinks: uniq([...document.querySelectorAll('a[href*="/sales/shipping-details/"]')].map(a => a.getAttribute('href'))),
-                    bodyLen: document.body.innerText.length,
-                    bodySnippet: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 400),
-                };
-            }"""
-        )
-        print(f"[probe] {url}\n  → {info}")
-
-
 def main():
     shipment_id = os.environ.get("SHIPMENT_ID", "").strip()
     if not shipment_id.isdigit():
         raise SystemExit(f"SHIPMENT_ID が不正です: {shipment_id!r}（数字を指定してください）")
     print(f"=== Ship Method変更: Shipment ID {shipment_id} ===")
 
-    diagnose = os.environ.get("DIAGNOSE", "").strip() == "1"
-    probe = os.environ.get("PROBE", "").strip() == "1"
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 1800, "height": 900}, user_agent=USER_AGENT)
         page = context.new_page()
         login(page)
-        if diagnose:
-            cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
-            browser.close()
-            diagnose_csv(cookie_dict, shipment_id)
-            print("=== 診断完了 ===")
-            return
-        if probe:
-            probe_endpoints(page, shipment_id)
-            browser.close()
-            print("=== プローブ完了 ===")
-            return
         success, error_reason = change_ship_method(page, shipment_id)
         browser.close()
 

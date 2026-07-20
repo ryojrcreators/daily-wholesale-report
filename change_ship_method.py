@@ -82,8 +82,8 @@ def find_internal_order_id(page, order_number, created_time):
         d = datetime.strptime(created_time.split(",")[0].strip(), "%m/%d/%y").date()
     except Exception:
         d = date.today()
-    start = (d - timedelta(days=1)).strftime("%Y-%m-%d")
-    end = (d + timedelta(days=2)).strftime("%Y-%m-%d")
+    start = (d - timedelta(days=7)).strftime("%Y-%m-%d")
+    end = (d + timedelta(days=3)).strftime("%Y-%m-%d")
     print(f"日付 {start}〜{end} で検索し、注文 {order_number} を探します")
 
     page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")

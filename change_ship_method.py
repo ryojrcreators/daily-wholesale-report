@@ -48,19 +48,13 @@ def login(page):
 
 def change_ship_method(page, shipment_id):
     """指定Shipment IDのShip MethodをYamato Nekoposに変更する。成功したらTrueを返す。"""
-    # so_sheets.py と同じ流れで検索する：SoHeadsを開く → 日付範囲＋Shipment IDを入力 → Search
-    # （日付範囲を入れないとサーバーが結果を返さないため、広めの範囲を指定する）
+    # SoHeadsを開く → Shipment IDだけ入力 → Search（人間がブラウザでやるのと同じ形）
     print("SoHeads を開いています...")
     page.goto(f"{BASE_URL}/so-heads", wait_until="networkidle")
     page.wait_for_timeout(2000)
 
-    today = date.today()
-    start_date = (today - timedelta(days=90)).strftime("%Y-%m-%d")
-    end_date = (today + timedelta(days=2)).strftime("%Y-%m-%d")
-    page.locator('input[name="start_date"]').first.fill(start_date)
-    page.locator('input[name="end_date"]').first.fill(end_date)
     page.fill("#shippingcodes-id", str(shipment_id))
-    print(f"Shipment Id={shipment_id} / 期間 {start_date}〜{end_date} で検索します")
+    print(f"Shipment Id={shipment_id} で検索します")
 
     # 「Search」ボタン（同フォーム内のClearボタンと混同しないようテキストで指定）
     page.click('button:has-text("Search")')

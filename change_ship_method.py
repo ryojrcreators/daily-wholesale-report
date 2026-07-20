@@ -54,7 +54,25 @@ def change_ship_method(page, shipment_id):
     page.wait_for_timeout(2000)
 
     page.fill("#shippingcodes-id", str(shipment_id))
-    print(f"Shipment Id={shipment_id} で検索します")
+
+    # Line Status=Hold などが既定フィルタで一覧から除外される可能性があるため、
+    # SO Status（複数選択）を全選択してから検索する。
+    page.evaluate(
+        """() => {
+            const cb = document.querySelector('#so-heads-select-all');
+            if (cb) {
+                cb.checked = true;
+                const container = cb.closest('.input.checkbox');
+                const sel = container && container.previousElementSibling
+                    ? container.previousElementSibling.querySelector('select') : null;
+                if (sel) {
+                    [...sel.options].forEach(o => o.selected = true);
+                    sel.dispatchEvent(new Event('change', {bubbles:true}));
+                }
+            }
+        }"""
+    )
+    print(f"Shipment Id={shipment_id} / 全ステータス選択 で検索します")
 
     # 「Search」ボタン（同フォーム内のClearボタンと混同しないようテキストで指定）
     page.click('button:has-text("Search")')

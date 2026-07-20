@@ -84,9 +84,10 @@ def find_internal_order_id(page, order_number, created_time):
         d = datetime.strptime(created_time.split(",")[0].strip(), "%m/%d/%y").date()
     except Exception:
         d = date.today()
-    start = (d - timedelta(days=7)).strftime("%Y-%m-%d")
-    end = (d + timedelta(days=3)).strftime("%Y-%m-%d")
-    print(f"日付 {start}〜{end} で検索し、注文 {order_number} を探します")
+    # so_sheets.py の日次実行と同じく「1日だけ（start=end）」で検索する
+    start = d.strftime("%Y-%m-%d")
+    end = d.strftime("%Y-%m-%d")
+    print(f"日付 {start}（1日）で検索し、注文 {order_number} を探します")
 
     # so_sheets.py と完全に同じ手順で「日付だけ」検索する。
     # （Basic認証付きURL・待機2秒・日付のみ。フィルタを足すとbotでは0件になる）
@@ -114,10 +115,12 @@ def find_internal_order_id(page, order_number, created_time):
             """(orderNum) => {
                 const links = [...document.querySelectorAll('a[href*="/sales/view/"]')];
                 const resultDiv = document.querySelector('#resultdiv');
+                const dl = [...document.querySelectorAll('a')].find(a => a.textContent.trim() === 'Download');
                 return {
                     url: location.href,
                     resultDivExists: !!resultDiv,
                     viewLinkCount: links.length,
+                    downloadLinkHref: dl ? dl.getAttribute('href') : null,
                     sampleOrderNumbers: links.slice(0, 15).map(a => a.textContent.trim()),
                     targetInHtml: document.documentElement.outerHTML.includes(orderNum),
                 };

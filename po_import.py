@@ -11,7 +11,10 @@ PO番号を指定して、サーバーのPO CSV（Download csv）を取得し、
 import os
 import csv
 import json
+import requests
 import gspread
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from urllib.parse import quote
@@ -26,9 +29,16 @@ LOGIN_ID_1_ENC = quote(LOGIN_ID_1, safe="")
 LOGIN_PASS_1_ENC = quote(LOGIN_PASS_1, safe="")
 LOGIN_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/"
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
+CW_TOKEN = os.environ.get("CW_TOKEN", "")
 
 # ショッピングリストのスプレッドシート（固定）
 SHOPPING_SPREADSHEET_ID = "1L2IKiEjimmXkXfSIt6xT8fbwWjkraDWOM-T62brYVdo"
+
+# TG&WMタブへのImport完了時、ショッピングレポートと同じルームへ通知
+CW_ROOM_ID = "296236026"
+TG_WM_SHEET_NAME = "TG&WM"
+NOTIFY_TO_ID = "10892606"
+NOTIFY_TO_NAME = "Jill S Vinales"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -89,8 +99,6 @@ def build_urgent_column(rows, urgent_set):
 
 def download_po_csv(po_number):
     """PO番号のCSVをダウンロードし、(行リスト, 緊急コード集合) を返す。"""
-    import requests
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -182,6 +190,25 @@ def write_to_sheet(po_number, rows):
     # PO番号を C1/D1 に記入
     ws.update("C1", [["PO#", str(po_number)]], value_input_option="RAW")
     print(f"タブ [{ws.title}] に {len(rows)}行を書き込み、C1/D1 に PO#{po_number} を記入しました")
+    return ws.title
+
+
+def notify_tgwm_ready():
+    """TG&WMタブへのImport完了をChatworkへ通知する（日付は当日のLA日付）。"""
+    now_la = datetime.now(ZoneInfo("America/Los_Angeles"))
+    date_str = f"{now_la.month}/{now_la.day}"
+    message = f"[To:{NOTIFY_TO_ID}]{NOTIFY_TO_NAME}\n{date_str} TG/WM list is ready"
+
+    if not CW_TOKEN:
+        print("CW_TOKENが未設定のため、TG&WM Chatwork通知をスキップします")
+        return
+
+    resp = requests.post(
+        f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
+        headers={"X-ChatWorkToken": CW_TOKEN},
+        data={"body": message},
+    )
+    print(f"TG&WM Chatwork通知送信: status={resp.status_code} body={message!r}")
 
 
 def main():
@@ -193,7 +220,9 @@ def main():
     if not rows:
         raise SystemExit("CSVが空でした。処理を中止します。")
     rows = build_urgent_column(rows, urgent_set)
-    write_to_sheet(po_number, rows)
+    sheet_title = write_to_sheet(po_number, rows)
+    if sheet_title == TG_WM_SHEET_NAME:
+        notify_tgwm_ready()
     print("=== 完了 ===")
 
 

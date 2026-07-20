@@ -48,6 +48,7 @@ jobs:
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
           PO_NUMBER: ${{ github.event.inputs.po_number }}
           SHEET_NAME: ${{ github.event.inputs.sheet_name }}
         run: python -u po_import.py

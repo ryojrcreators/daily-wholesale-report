@@ -84,22 +84,29 @@ def group_consecutive(sorted_nums):
     return [(s, e) for s, e in ranges]
 
 
-def _get_spreadsheet():
+def _get_spreadsheet(spreadsheet_id: str = None):
     credentials_info = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     credentials = Credentials.from_service_account_info(credentials_info, scopes=scopes)
     gc = gspread.authorize(credentials)
-    return gc.open_by_key(SPREADSHEET_ID)
+    return gc.open_by_key(spreadsheet_id or SPREADSHEET_ID)
 
 
-def update_status(tab_name: str):
-    """Statusタブの該当行にJST・PST更新日時を書き込む"""
+def update_status(tab_name: str, spreadsheet_id: str = None):
+    """Statusタブの該当行にJST・PST更新日時を書き込む
+
+    spreadsheet_id を指定すると、そのスプレッドシートの「Status」タブに書き込む
+    （無ければ自動作成）。省略時は従来どおり SPREADSHEET_ID（メインシート）。
+    """
     now_utc = datetime.now(timezone.utc)
     jst_str = now_utc.astimezone(JST).strftime("%Y/%m/%d %H:%M")
     pst_str = now_utc.astimezone(PST).strftime("%Y/%m/%d %H:%M")
 
-    spreadsheet = _get_spreadsheet()
-    ws = spreadsheet.worksheet(STATUS_SHEET_NAME)
+    spreadsheet = _get_spreadsheet(spreadsheet_id)
+    try:
+        ws = spreadsheet.worksheet(STATUS_SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=STATUS_SHEET_NAME, rows=10, cols=3)
 
     data = ws.get_all_values()
 

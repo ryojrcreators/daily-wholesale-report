@@ -244,6 +244,7 @@ def update_po_sheet(csv_path, backfill=False):
         write_rows_in_batches(worksheet, [new_headers] + clean_data)
         print(f"★バックフィル：ヘッダー + {len(clean_data)}行 で入れ替えました")
         update_status("PO")
+        update_status("PO", spreadsheet_id=PO_SO_SPREADSHEET_ID)
         return
 
     try:
@@ -332,6 +333,7 @@ def update_po_sheet(csv_path, backfill=False):
         print(f"6ヶ月超の古いデータを {len(old_rownums)}行 削除しました（{len(ranges)}区間）")
 
     update_status("PO")
+    update_status("PO", spreadsheet_id=PO_SO_SPREADSHEET_ID)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@ ChatworkにShipment ID（Package id）が届いたら、社内システムの
 - /shipping-codes/edit/{Shipment ID} を開き、対応注文への /sales/view/{内部ID} リンクから
   内部の注文ID(SO#)を取得する（SoHeadsのShipment ID検索はbotセッションでは一覧が
   描画されないため、この経路で内部IDを得る）
-- /sales/shipping-details/{内部ID} を開き、Package id が一致する行の Ship Method を変更してSave
+- /sales/shipping-details/{内部ID} を開き、Shipping Country が JP であることを確認してから
+  Package id が一致する行の Ship Method を変更してSave（JP以外や取得不可の場合は変更せずエラー報告）
 - 完了後、Chatworkルーム(442638900)へ結果を通知
 """
 
@@ -94,6 +95,34 @@ def change_ship_method(page, shipment_id):
     # 2) shipping-detailsページを開き、Package idが一致する行のShip Methodを変更
     page.goto(f"{BASE_URL}/sales/shipping-details/{so_id}", wait_until="networkidle")
     page.wait_for_timeout(1000)
+
+    # Shipping Country が JP 以外なら、Yamato Nekopos（国内配送）に変更せずエラー報告する
+    shipping_country = page.evaluate(
+        """() => {
+            const label = [...document.querySelectorAll('label')]
+                .find(l => l.textContent.trim().startsWith('Shipping Country'));
+            if (!label) return null;
+            let input = null;
+            const forId = label.getAttribute('for');
+            if (forId) input = document.getElementById(forId);
+            if (!input) {
+                const container = label.closest('div');
+                input = container ? container.querySelector('input') : null;
+            }
+            return input ? input.value.trim() : null;
+        }"""
+    )
+    if shipping_country is None:
+        print("！Shipping Country欄が見つかりません。安全のため変更を中止します")
+        try:
+            page.screenshot(path="debug_shipping.png", full_page=True)
+        except Exception:
+            pass
+        return False, "Shipping Country field not found"
+    if shipping_country.upper() != "JP":
+        print(f"！Shipping Country={shipping_country!r}（JP以外）のため変更を中止します")
+        return False, f"Shipping Country is {shipping_country} (not JP) — Ship Method not changed"
+    print(f"Shipping Country={shipping_country!r} を確認。変更を続行します")
 
     # Package id が一致する行の Ship Method セレクトを操作。
     # 既に目的の値なら 'already'、変更したら 'changed'、見つからなければ理由を返す。

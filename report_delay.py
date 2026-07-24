@@ -322,7 +322,7 @@ def process_report_delays():
     processed = 0
     skipped   = 0
     errors    = []
-    manual_review = []   # ETA日付なし＋入荷予定あり → 自動送信せず手動対応に回したケース
+    manual_review = []   # ETA日付を確定できない → 自動送信せず手動対応に回したケース
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -418,9 +418,11 @@ def process_report_delays():
 
                     # ETAの日付は取れないが「入荷予定はある」文面の場合、
                     # 誤って"未定"メールを送らず、自動送信せず手動対応に回す（ステータスはNEWのまま）
-                    if eta is None and (has_incoming_signal(description) or looks_like_has_date(description)):
-                        print(f"  → ETA日付を確定できず（入荷予定/日付らしき記述あり）→ 自動送信せず手動対応")
-                        manual_review.append(f"Case {case_id}（{shop_name}）: ETA日付を確定できず要手動確認")
+                    # ETA日付を確定できない場合は、店舗を問わず自動送信せず手動対応に回す。
+                    # （161「未定」テンプレートやプレースホルダー未置換メールの誤送信を防ぐ）
+                    if eta is None:
+                        print(f"  → ETA日付を確定できず → 自動送信せず手動対応（161は使わない）")
+                        manual_review.append(f"Case {case_id}（{shop_name}）: ETA日付なし → 要手動確認")
                         continue
 
                     # Order Numberに一致するsales/viewリンクを選ぶ

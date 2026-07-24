@@ -19,25 +19,30 @@ def get_auth_header(service_secret, license_key):
     token = base64.b64encode(f"{service_secret}:{license_key}".encode()).decode()
     return {"Authorization": f"ESA {token}"}
 
-def search_item_by_manage_number(service_secret, license_key, shop_name, manage_number: str):
-    """商品管理番号で検索して manageNumber / itemNumber を確認"""
+def find_item_by_manage_number(service_secret, license_key, target: str):
+    """全件スキャンして manageNumber が一致する商品を探す"""
     url = "https://api.rms.rakuten.co.jp/es/2.0/items/search"
     headers = get_auth_header(service_secret, license_key)
-    params = {"hits": 10, "offset": 1, "manageNumberLike": manage_number}
-    res = requests.get(url, headers=headers, params=params, timeout=15)
-    print(f"  ステータス: {res.status_code}")
-    data = res.json()
-    results = data.get("results", [])
-    if not results:
-        print("  → 見つかりませんでした")
-        return
-    for r in results:
-        item = r.get("item", {})
-        mn = item.get("manageNumber", "")
-        if manage_number in mn:
-            print(f"  manageNumber: {mn}")
-            print(f"  itemNumber:   {item.get('itemNumber')}")
-            print(f"  hideItem:     {item.get('hideItem')}")
+    cursor = "*"
+    while True:
+        params = {"hits": 100, "cursorMark": cursor}
+        res = requests.get(url, headers=headers, params=params, timeout=30)
+        data = res.json()
+        results = data.get("results", [])
+        for r in results:
+            item = r.get("item", {})
+            mn = item.get("manageNumber", "")
+            if target.lower() in mn.lower():
+                print(f"  見つかりました！")
+                print(f"  manageNumber: {mn}")
+                print(f"  itemNumber:   {item.get('itemNumber')}")
+                print(f"  hideItem:     {item.get('hideItem')}")
+                return
+        next_cursor = data.get("nextCursorMark")
+        if not next_cursor or next_cursor == cursor:
+            print(f"  → 全件スキャン完了。{target} は見つかりませんでした。")
+            return
+        cursor = next_cursor
 
 def hide_item(item_number: str):
     """商品をhideItem:trueにして倉庫（販売停止）にする"""
@@ -53,8 +58,8 @@ def hide_item(item_number: str):
 
 if __name__ == "__main__":
     TARGET = "capt06"
-    print(f"\n=== 店舗1（{SHOP_NAME_1}）で {TARGET} を検索 ===")
-    search_item_by_manage_number(SERVICE_SECRET_1, LICENSE_KEY_1, SHOP_NAME_1, TARGET)
+    print(f"\n=== 店舗1（{SHOP_NAME_1}）で {TARGET} を全件スキャン ===")
+    find_item_by_manage_number(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)
 
-    print(f"\n=== 店舗2（{SHOP_NAME_2}）で {TARGET} を検索 ===")
-    search_item_by_manage_number(SERVICE_SECRET_2, LICENSE_KEY_2, SHOP_NAME_2, TARGET)
+    print(f"\n=== 店舗2（{SHOP_NAME_2}）で {TARGET} を全件スキャン ===")
+    find_item_by_manage_number(SERVICE_SECRET_2, LICENSE_KEY_2, TARGET)

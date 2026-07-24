@@ -20,8 +20,14 @@
    - 専用スプレッドシート（`RAKUTEN_LISTING_SPREADSHEET_ID`）の「楽天_出品データ」タブへ、毎日の最新状態としてまるごと上書き（履歴は持たない）。先頭列に「店舗名」を持ち、2店舗分を1つのタブに集約
    - 取得失敗・0件時はシートを上書きしない（前日データを保護）。いずれか1店舗でも取得失敗した場合は他店舗分も含めて書き込み中止
    - 在庫は数量ではなく「在庫あり/在庫切れ」の二値（items.searchは数量を返さないため）
-   - Yahoo!ショッピング（ストアクリエイターPro API）連携は次フェーズで追加予定
    - 将来的には、Purchaser側の「購入不可」報告（`shopping_report_process.py`のNot Bought/Close処理）とこの出品データを突き合わせ、対応する楽天・Yahoo出品を自動的に洗い出す仕組みへ拡張予定
+
+4. **出品データ同期（Yahoo）**（`yahoo_listing_sync.py` / ワークフロー: `yahoo_listing_sync.yml`）
+   - Yahoo!ショッピング商品リストAPI（myItemList）で出品中の全商品（商品コード・商品名・価格・在庫数）を取得
+   - 2店舗とも同一アカウントで管理されているため、OAuth連携は1組のみ。API呼び出し時に`seller_id`を店舗ごとに切り替えて2回取得
+   - 楽天と同じ専用スプレッドシート（`RAKUTEN_LISTING_SPREADSHEET_ID`）の「Yahoo_出品データ」タブへ、毎日の最新状態としてまるごと上書き
+   - 在庫は実際の数量が取得できる（楽天のitems.searchと違い、myItemListは`stock=true`で数量を返す）
+   - リフレッシュトークンは使うたびにローテーションされるため、GitHub Secretsではなく同スプレッドシートの非公開タブ「Yahoo_Config」に保存・毎回書き戻す方式
 
 ### 社内システム連携レポート（Playwright）
 
@@ -102,6 +108,11 @@ Chatworkに投稿される「[End Shopping Report]」を自動で読み取り、
 | `RAKUTEN_SHOP_NAME_1` / `RAKUTEN_SHOP_NAME_2` | 楽天出品データ同期・各店舗の表示名 |
 | `RAKUTEN_RMS_SERVICE_SECRET_1` / `_2` | 楽天RMS serviceSecret（店舗ごと） |
 | `RAKUTEN_RMS_LICENSE_KEY_1` / `_2` | 楽天RMSライセンスキー（店舗ごと・3か月ごとに要更新） |
+| `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` | Yahoo出品データ同期用OAuthアプリのClient ID／Secret |
+| `YAHOO_SHOP_NAME_1` / `YAHOO_SELLER_ID_1` | Yahoo出品データ同期・店舗1の表示名／seller_id |
+| `YAHOO_SHOP_NAME_2` / `YAHOO_SELLER_ID_2` | Yahoo出品データ同期・店舗2の表示名／seller_id |
+
+> YahooのリフレッシュトークンはローテーションされるためGitHub Secretsでは管理せず、`RAKUTEN_LISTING_SPREADSHEET_ID`スプレッドシートの非公開タブ「Yahoo_Config」に保存する（初回のみ手動で値を入力）。
 
 > GAS（スプレッドシート側）からワークフローを起動する `po_import` では、GAS内のスクリプトプロパティに GitHub PAT（fine-grained / Actions: Read and write）を保存して使用します（リポジトリのSecretsとは別管理）。
 
@@ -121,7 +132,8 @@ python rakuten_asin_finder.py
 |---|---|---|
 | 赤字・仕入不可チェック | JST 9:00 / 13:00 / 17:00 | GitHub cron |
 | ASIN補完 | JST 10:00 / 14:00 / 18:00 | GitHub cron |
-| 出品データ同期 | JST 7:00 | GitHub cron |
+| 出品データ同期（楽天） | JST 7:00 | GitHub cron |
+| 出品データ同期（Yahoo） | JST 7:30 | GitHub cron |
 | POデータ反映 | JST 20:00 | GitHub cron |
 | SOデータ反映 | サーバー準備完了時 | `repository_dispatch`（server-is-ready） |
 | Report Delay 自動処理 | LA 9:00 / 17:00（1日2回） | GitHub cron |

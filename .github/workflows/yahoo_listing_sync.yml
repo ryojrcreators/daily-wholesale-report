@@ -1,0 +1,36 @@
+name: Yahoo出品データ同期
+
+on:
+  schedule:
+    # 日本時間 7:30 に実行（UTC表記）。楽天の出品データ同期（7:00）の後
+    - cron: '30 22 * * *'   # JST 7:30（前日UTC）
+  workflow_dispatch:       # 手動実行ボタンも有効化
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: Yahoo出品データ同期実行
+        env:
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
+          YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
+          YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}
+          YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+        run: python yahoo_listing_sync.py

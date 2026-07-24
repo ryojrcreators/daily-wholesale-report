@@ -22,6 +22,10 @@ STATUS_NEW             = "1"
 STATUS_IN_PROGRESS     = "2"
 CASE_TYPE_REPORT_DELAY = "25"
 
+# 環境変数 SUBJECT_PREFIX があれば件名の先頭に付ける（誤送信の訂正再送などの一時利用）。
+# 通常の定期実行では設定しないので、件名は今まで通り変化しない。
+SUBJECT_PREFIX = os.environ.get("SUBJECT_PREFIX", "")
+
 TEMPLATE_170 = "170"
 TEMPLATE_108 = "108"
 TEMPLATE_107 = "107"
@@ -441,6 +445,17 @@ def process_report_delays():
                         else:
                             new_body = replace_date_simple(body, eta, shop_config)
                         page.eval_on_selector('#body', '(el, val) => el.value = val', new_body)
+
+                    # 件名プレフィックス（SUBJECT_PREFIX 指定時のみ）
+                    if SUBJECT_PREFIX:
+                        subj_el = page.query_selector('#subject') or page.query_selector('input[name="subject"]')
+                        if subj_el:
+                            cur_subject = subj_el.input_value()
+                            if not cur_subject.startswith(SUBJECT_PREFIX):
+                                subj_el.fill(SUBJECT_PREFIX + cur_subject)
+                                print(f"  件名プレフィックス付与: {SUBJECT_PREFIX!r}")
+                        else:
+                            print("  → ⚠️ 件名欄が見つからずプレフィックス未付与")
 
                     page.click('button[type="submit"]')
                     page.wait_for_load_state("networkidle")

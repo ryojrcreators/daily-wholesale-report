@@ -1,18 +1,10 @@
-name: Report Delay 自動処理
+name: 【使い捨て】誤未定ケースをNewに戻す
 
 on:
   workflow_dispatch:
-    inputs:
-      subject_prefix:
-        description: '件名の先頭に付ける文字（訂正再送用。通常は空欄）'
-        required: false
-        default: ''
-  schedule:
-    - cron: '0 16 * * *'   # 毎日UTC 16:00 = PDT 9:00
-    - cron: '0 0 * * *'    # 毎日UTC 0:00  = PDT 17:00
 
 jobs:
-  report_delay:
+  revert:
     runs-on: ubuntu-latest
     steps:
       - name: リポジトリをチェックアウト
@@ -41,12 +33,11 @@ jobs:
             libxrandr2 \
             libxshmfence1
 
-      - name: Report Delay 自動処理
+      - name: ケースをNewに戻す
         env:
           APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
-          LOGIN_ID_1:   ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
-          LOGIN_ID_2:   ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
-          SUBJECT_PREFIX: ${{ inputs.subject_prefix }}
-        run: python report_delay.py
+        run: python -u revert_cases.py

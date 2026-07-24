@@ -94,11 +94,16 @@ def try_patch(service_secret, license_key, url: str):
         "Accept": "application/json",
         "Content-Type": "application/json; charset=utf-8",
     }
-    body = {"item": {"hideItem": True}}
+    body = {"hideItem": True}
     res = requests.patch(url, headers=headers, json=body, timeout=15)
     print(f"\n  PATCH {url.split('rms.rakuten.co.jp')[1]}")
     print(f"  → ステータス: {res.status_code}")
     print(res.text[:1500])
+
+    # 反映確認
+    check = requests.get(url, headers=headers, timeout=15)
+    if check.status_code == 200:
+        print(f"  → 確認: hideItem = {check.json().get('hideItem')}")
 
 
 if __name__ == "__main__":

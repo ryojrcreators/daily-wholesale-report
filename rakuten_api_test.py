@@ -10,6 +10,7 @@ import json
 
 SERVICE_SECRET_1 = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
 LICENSE_KEY_1    = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
+SHOP_NAME_1      = os.environ["RAKUTEN_SHOP_NAME_1"]
 
 def get_auth_header(service_secret, license_key):
     token = base64.b64encode(f"{service_secret}:{license_key}".encode()).decode()
@@ -24,7 +25,13 @@ def test_get_item(item_id: str):
     print(json.dumps(res.json(), ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":
-    # テスト用に商品管理番号を1つ入れてください
+    # 店舗名-商品管理番号の形式で試す
     TEST_ITEM_ID = "kraft3030-02"
-    print(f"=== 商品取得テスト: {TEST_ITEM_ID} ===")
+    combined_id = f"{SHOP_NAME_1}-{TEST_ITEM_ID}"
+    print(f"店舗名: {SHOP_NAME_1}")
+
+    print(f"\n=== パターン1: {TEST_ITEM_ID} ===")
     test_get_item(TEST_ITEM_ID)
+
+    print(f"\n=== パターン2: {combined_id} ===")
+    test_get_item(combined_id)

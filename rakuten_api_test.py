@@ -66,10 +66,11 @@ def try_update(service_secret, license_key, manage_number: str):
     body = {"item": {"hideItem": True}}
 
     patterns = [
-        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}"),
-        ("PUT",   f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}"),
-        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
-        ("POST",  f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+        ("GET",    f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+        ("PUT",    f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+        ("PATCH",  f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+        ("POST",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit"),
+        ("PUT",    f"https://api.rms.rakuten.co.jp/es/2.0/items/edit"),
     ]
 
     for method, url in patterns:

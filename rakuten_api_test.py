@@ -56,10 +56,28 @@ def hide_item(item_number: str):
     print(f"ステータス: {res.status_code}")
     print(json.dumps(res.json(), ensure_ascii=False, indent=2))
 
+def hide_item(service_secret, license_key, shop_name, manage_number: str):
+    """商品をhideItem:trueにして倉庫（販売停止）にする"""
+    # パターン1: manageNumber そのまま
+    # パターン2: shop_name:manageNumber
+    for url_id in [manage_number, f"{shop_name}:{manage_number}"]:
+        url = f"https://api.rms.rakuten.co.jp/es/2.0/items/{url_id}"
+        headers = {
+            **get_auth_header(service_secret, license_key),
+            "Content-Type": "application/json",
+        }
+        body = {"item": {"hideItem": True}}
+        res = requests.patch(url, headers=headers, json=body, timeout=15)
+        print(f"  URL: {url}")
+        print(f"  ステータス: {res.status_code}")
+        if res.status_code == 200:
+            print("  → 成功！")
+            print(json.dumps(res.json(), ensure_ascii=False, indent=2))
+            return
+        else:
+            print(f"  → {res.json()}")
+
 if __name__ == "__main__":
     TARGET = "capt06"
-    print(f"\n=== 店舗1（{SHOP_NAME_1}）で {TARGET} を全件スキャン ===")
-    find_item_by_manage_number(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)
-
-    print(f"\n=== 店舗2（{SHOP_NAME_2}）で {TARGET} を全件スキャン ===")
-    find_item_by_manage_number(SERVICE_SECRET_2, LICENSE_KEY_2, TARGET)
+    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} を倉庫入れ ===")
+    hide_item(SERVICE_SECRET_1, LICENSE_KEY_1, SHOP_NAME_1, TARGET)

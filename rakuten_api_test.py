@@ -108,10 +108,13 @@ def try_patch(service_secret, license_key, url: str):
 
 if __name__ == "__main__":
     TARGET = "capt06"
-    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} のURLパターンを探す（GETのみ・変更なし） ===")
-    hit = try_get(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)
-    if hit:
-        print("\n=== 見つかったURLに hideItem:true をPATCH ===")
-        try_patch(SERVICE_SECRET_1, LICENSE_KEY_1, hit)
-    else:
-        print("\n→ どのURLも当たりませんでした。")
+    URL = f"https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers/{TARGET}"
+
+    stores = [
+        (SHOP_NAME_1, SERVICE_SECRET_1, LICENSE_KEY_1),
+        (SHOP_NAME_2, SERVICE_SECRET_2, LICENSE_KEY_2),
+    ]
+
+    for shop_name, secret, key in stores:
+        print(f"\n=== 店舗（{shop_name}）: {TARGET} を倉庫に入れる ===")
+        try_patch(secret, key, URL)

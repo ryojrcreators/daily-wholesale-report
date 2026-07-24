@@ -56,28 +56,33 @@ def hide_item(item_number: str):
     print(f"ステータス: {res.status_code}")
     print(json.dumps(res.json(), ensure_ascii=False, indent=2))
 
-def hide_item(service_secret, license_key, shop_name, manage_number: str):
-    """商品をhideItem:trueにして倉庫（販売停止）にする"""
-    # パターン1: manageNumber そのまま
-    # パターン2: shop_name:manageNumber
-    for url_id in [manage_number, f"{shop_name}:{manage_number}"]:
-        url = f"https://api.rms.rakuten.co.jp/es/2.0/items/{url_id}"
-        headers = {
-            **get_auth_header(service_secret, license_key),
-            "Content-Type": "application/json",
-        }
-        body = {"item": {"hideItem": True}}
-        res = requests.patch(url, headers=headers, json=body, timeout=15)
-        print(f"  URL: {url}")
-        print(f"  ステータス: {res.status_code}")
+def try_update(service_secret, license_key, manage_number: str):
+    """色々なメソッド・パスで更新を試みる"""
+    base_headers = {
+        **get_auth_header(service_secret, license_key),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    body = {"item": {"hideItem": True}}
+
+    patterns = [
+        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}"),
+        ("PUT",   f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}"),
+        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+        ("POST",  f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
+    ]
+
+    for method, url in patterns:
+        res = requests.request(method, url, headers=base_headers, json=body, timeout=15)
+        print(f"  {method} {url.split('rms.rakuten.co.jp')[1]}")
+        print(f"  → ステータス: {res.status_code}")
         if res.status_code == 200:
             print("  → 成功！")
             print(json.dumps(res.json(), ensure_ascii=False, indent=2))
             return
-        else:
-            print(f"  → {res.json()}")
+        print()
 
 if __name__ == "__main__":
     TARGET = "capt06"
-    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} を倉庫入れ ===")
-    hide_item(SERVICE_SECRET_1, LICENSE_KEY_1, SHOP_NAME_1, TARGET)
+    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} の更新パターンを試す ===")
+    try_update(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)

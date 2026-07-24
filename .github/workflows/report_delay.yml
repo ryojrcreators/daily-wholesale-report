@@ -7,6 +7,10 @@ on:
         description: '件名の先頭に付ける文字（訂正再送用。通常は空欄）'
         required: false
         default: ''
+      body_prefix:
+        description: '本文の先頭に付ける文（訂正のお詫び文など。通常は空欄）'
+        required: false
+        default: ''
   schedule:
     - cron: '0 16 * * *'   # 毎日UTC 16:00 = PDT 9:00
     - cron: '0 0 * * *'    # 毎日UTC 0:00  = PDT 17:00
@@ -49,4 +53,5 @@ jobs:
           LOGIN_ID_2:   ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           SUBJECT_PREFIX: ${{ inputs.subject_prefix }}
+          BODY_PREFIX: ${{ inputs.body_prefix }}
         run: python report_delay.py

@@ -26,6 +26,10 @@ CASE_TYPE_REPORT_DELAY = "25"
 # 通常の定期実行では設定しないので、件名は今まで通り変化しない。
 SUBJECT_PREFIX = os.environ.get("SUBJECT_PREFIX", "")
 
+# 環境変数 BODY_PREFIX があれば本文の先頭に付ける（訂正のお詫び文など）。
+# プレフィックスの後に空行を1つ入れて既存本文につなげる。通常運用では設定しない。
+BODY_PREFIX = os.environ.get("BODY_PREFIX", "")
+
 TEMPLATE_170 = "170"
 TEMPLATE_108 = "108"
 TEMPLATE_107 = "107"
@@ -449,6 +453,16 @@ def process_report_delays():
                         else:
                             new_body = replace_date_simple(body, eta, shop_config)
                         page.eval_on_selector('#body', '(el, val) => el.value = val', new_body)
+
+                    # 本文プレフィックス（BODY_PREFIX 指定時のみ）：先頭に付けて空行で本文につなげる
+                    if BODY_PREFIX:
+                        cur_body = page.eval_on_selector('#body', 'el => el.value')
+                        if not cur_body.startswith(BODY_PREFIX):
+                            page.eval_on_selector(
+                                '#body', '(el, val) => el.value = val',
+                                BODY_PREFIX + "\n\n" + cur_body
+                            )
+                            print("  本文プレフィックス付与")
 
                     # 件名プレフィックス（SUBJECT_PREFIX 指定時のみ）
                     if SUBJECT_PREFIX:

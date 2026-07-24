@@ -16,9 +16,24 @@ def get_auth_header(service_secret, license_key):
     token = base64.b64encode(f"{service_secret}:{license_key}".encode()).decode()
     return {"Authorization": f"ESA {token}"}
 
-def hide_item(manage_number: str):
+def search_item(keyword: str):
+    """キーワードで商品検索して manageNumber / itemNumber を確認"""
+    url = "https://api.rms.rakuten.co.jp/es/2.0/items/search"
+    headers = get_auth_header(SERVICE_SECRET_1, LICENSE_KEY_1)
+    params = {"hits": 5, "offset": 1, "keyword": keyword}
+    res = requests.get(url, headers=headers, params=params, timeout=15)
+    print(f"ステータス: {res.status_code}")
+    data = res.json()
+    for r in data.get("results", []):
+        item = r.get("item", {})
+        print(f"  manageNumber: {item.get('manageNumber')}")
+        print(f"  itemNumber:   {item.get('itemNumber')}")
+        print(f"  hideItem:     {item.get('hideItem')}")
+        print()
+
+def hide_item(item_number: str):
     """商品をhideItem:trueにして倉庫（販売停止）にする"""
-    url = f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}"
+    url = f"https://api.rms.rakuten.co.jp/es/2.0/items/{item_number}"
     headers = {
         **get_auth_header(SERVICE_SECRET_1, LICENSE_KEY_1),
         "Content-Type": "application/json",
@@ -29,7 +44,6 @@ def hide_item(manage_number: str):
     print(json.dumps(res.json(), ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":
-    TEST_ITEM_ID = "capt06"
     print(f"店舗名: {SHOP_NAME_1}")
-    print(f"\n=== 倉庫入れテスト: {TEST_ITEM_ID} ===")
-    hide_item(TEST_ITEM_ID)
+    print("\n=== capt06 検索 ===")
+    search_item("capt06")

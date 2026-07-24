@@ -201,7 +201,11 @@ def replace_date_rakuten(body: str, eta: date, template_id: str) -> str:
     if template_id == TEMPLATE_170:
         body = re.sub(r'今週半ばから今週末頃', japanese_expr, body)
     elif template_id in (TEMPLATE_108, TEMPLATE_107):
+        # 108（遅延7日以内）：「来週始めから半ば頃」
+        # 107（大幅遅延）：「〇月中旬から下旬頃」
+        # どちらの言い回しでも具体的な日付（ETA+1）に置換する。
         body = re.sub(r'来週始めから半ば頃', japanese_expr, body)
+        body = re.sub(r'[〇○0]月中旬から下旬頃', japanese_expr, body)
     return body
 
 

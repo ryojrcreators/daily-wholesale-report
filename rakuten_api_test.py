@@ -56,38 +56,57 @@ def hide_item(item_number: str):
     print(f"ステータス: {res.status_code}")
     print(json.dumps(res.json(), ensure_ascii=False, indent=2))
 
-def try_update(service_secret, license_key, manage_number: str):
-    """色々なメソッド・パスで更新を試みる"""
-    auth_headers = {
+def try_get(service_secret, license_key, manage_number: str):
+    """まずGET（読み取りのみ・商品は変更されない）で正しいURLパターンを探す"""
+    headers = {
         **get_auth_header(service_secret, license_key),
         "Accept": "application/json",
+        "Content-Type": "application/json; charset=utf-8",
     }
-    body = {"item": {"hideItem": True}}
 
-    patterns = [
-        # /items/edit エンドポイント（URLは存在が確認済み）
-        ("GET",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
-        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
-        ("PUT",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
-        # Content-Type を merge-patch+json に変えて試す
-        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}", "application/merge-patch+json"),
-        # v1.0 エンドポイントを試す
-        ("PATCH", f"https://api.rms.rakuten.co.jp/es/1.0/items/{manage_number}", "application/json"),
-        ("PUT",   f"https://api.rms.rakuten.co.jp/es/1.0/items/{manage_number}", "application/json"),
+    base = "https://api.rms.rakuten.co.jp/es/2.0/items"
+    urls = [
+        f"{base}/manage-numbers/{manage_number}",
+        f"{base}/manage-number/{manage_number}",
+        f"{base}/item-numbers/{manage_number}",
+        f"{base}/get?manageNumber={manage_number}",
+        f"{base}/edit?manageNumber={manage_number}",
     ]
 
-    for method, url, content_type in patterns:
-        headers = {**auth_headers, "Content-Type": content_type}
-        res = requests.request(method, url, headers=headers, json=body, timeout=15)
-        print(f"  {method} {url.split('rms.rakuten.co.jp')[1]}")
+    found = None
+    for url in urls:
+        res = requests.get(url, headers=headers, timeout=15)
+        print(f"  GET {url.split('rms.rakuten.co.jp')[1]}")
         print(f"  → ステータス: {res.status_code}")
         if res.status_code == 200:
-            print("  → 成功！")
-            print(json.dumps(res.json(), ensure_ascii=False, indent=2))
-            return
+            print("  → 成功！このURLが正解です")
+            print(res.text[:1500])
+            found = url
+            break
         print()
+    return found
+
+
+def try_patch(service_secret, license_key, url: str):
+    """GETで当たったURLに対して hideItem:true をPATCHする（実際に倉庫に入る）"""
+    headers = {
+        **get_auth_header(service_secret, license_key),
+        "Accept": "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    body = {"item": {"hideItem": True}}
+    res = requests.patch(url, headers=headers, json=body, timeout=15)
+    print(f"\n  PATCH {url.split('rms.rakuten.co.jp')[1]}")
+    print(f"  → ステータス: {res.status_code}")
+    print(res.text[:1500])
+
 
 if __name__ == "__main__":
     TARGET = "capt06"
-    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} の更新パターンを試す ===")
-    try_update(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)
+    print(f"\n=== 店舗1（{SHOP_NAME_1}）: {TARGET} のURLパターンを探す（GETのみ・変更なし） ===")
+    hit = try_get(SERVICE_SECRET_1, LICENSE_KEY_1, TARGET)
+    if hit:
+        print("\n=== 見つかったURLに hideItem:true をPATCH ===")
+        try_patch(SERVICE_SECRET_1, LICENSE_KEY_1, hit)
+    else:
+        print("\n→ どのURLも当たりませんでした。")

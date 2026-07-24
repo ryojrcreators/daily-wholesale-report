@@ -98,6 +98,28 @@ def parse_eta(description: str):
             return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
         except ValueError:
             return None
+
+    # 「Estimated Delivery by 07/29 - 07/30」等：ETA表記も年もないMM/DD形式。
+    # 配送予定を示す文脈のときだけMM/DDを日付として拾い、範囲なら遅い方を採用する。
+    if re.search(r'estimated delivery|delivery by|deliver by|arriv', description, re.IGNORECASE):
+        today = date.today()
+        found = []
+        # MM/DD（後ろに /数字 が続くMM/DD/YYYYは上で処理済みなので除外）
+        for mm, dd in re.findall(r'\b(\d{1,2})/(\d{1,2})(?!/?\d)', description):
+            month, day = int(mm), int(dd)
+            try:
+                d = date(today.year, month, day)
+            except ValueError:
+                continue
+            # 年末年始の取り違え防止：30日以上過去なら翌年扱い
+            if (today - d).days > 30:
+                try:
+                    d = date(today.year + 1, month, day)
+                except ValueError:
+                    continue
+            found.append(d)
+        if found:
+            return max(found)  # 範囲の場合は遅い方
     return None
 
 

@@ -86,49 +86,115 @@ def mask_order(s: str) -> str:
     return s[:6] + "-****" if len(s) > 6 else "******"
 
 
+# 月名（英語・省略形）→月番号
+_MONTH_NAMES = {
+    'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
+    'apr': 4, 'april': 4, 'may': 5, 'jun': 6, 'june': 6, 'jul': 7, 'july': 7,
+    'aug': 8, 'august': 8, 'sep': 9, 'sept': 9, 'september': 9,
+    'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
+}
+
+# 配送予定を示す文脈（日付の文脈判定・英語/日本語）
+_DELIVERY_CONTEXT = re.compile(
+    r'estimated delivery|delivery by|deliver by|arriv|ship|dispatch|'
+    r'入荷|発送|お届け|到着|出荷',
+    re.IGNORECASE,
+)
+
+
+def _mk_date(month, day, year, today):
+    """年補完・年末ロールオーバー付きで date を作る。失敗時 None。
+    年なしで30日以上過去の日付は翌年扱い（年末年始の取り違え防止）。"""
+    try:
+        if year is not None:
+            if year < 100:
+                year += 2000
+            return date(year, month, day)
+        d = date(today.year, month, day)
+        # 半年以上過去なら翌年扱い（年末年始の取り違え防止）。
+        # 少し過去のETA（例：7/24時点の6/22）は当年のままにする。
+        if (today - d).days > 180:
+            d = date(today.year + 1, month, day)
+        return d
+    except ValueError:
+        return None
+
+
+def _find_dates(text, today):
+    """text 内の日付候補をできる限り拾って date のリストで返す。
+    対応：M/D・M-D・M.D（年あり/なし）、月名(July 30 / 30 Jul)、日本語(7月30日)。"""
+    out = []
+    # 数字形式 M/D, M/D/Y, M-D, M-D-Y, M.D, M.D.Y
+    for m in re.finditer(r'(?<!\d)(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?(?!\d)', text):
+        year = int(m.group(3)) if m.group(3) else None
+        d = _mk_date(int(m.group(1)), int(m.group(2)), year, today)
+        if d:
+            out.append(d)
+    # 月名 + 日（例：July 30, Jul 30 2026）
+    for m in re.finditer(r'\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?', text):
+        mon = _MONTH_NAMES.get(m.group(1).lower())
+        if mon:
+            d = _mk_date(mon, int(m.group(2)), int(m.group(3)) if m.group(3) else None, today)
+            if d:
+                out.append(d)
+    # 日 + 月名（例：30 July, 30th of July）
+    for m in re.finditer(r'\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([A-Za-z]{3,9})(?:,?\s+(\d{4}))?', text):
+        mon = _MONTH_NAMES.get(m.group(2).lower())
+        if mon:
+            d = _mk_date(mon, int(m.group(1)), int(m.group(3)) if m.group(3) else None, today)
+            if d:
+                out.append(d)
+    # 日本語 7月30日
+    for m in re.finditer(r'(\d{1,2})\s*月\s*(\d{1,2})\s*日', text):
+        d = _mk_date(int(m.group(1)), int(m.group(2)), None, today)
+        if d:
+            out.append(d)
+    return out
+
+
 def parse_eta(description: str):
+    """Descriptionから配送予定日(ETA)を推定。範囲がある場合は遅い方を採用。
+    読み取れなければ None（呼び出し側が手動対応/未定判定に回す）。"""
     if not description:
         return None
-    m = re.search(r'ETA[:\s]+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?', description, re.IGNORECASE)
-    if m:
-        month = int(m.group(1))
-        day   = int(m.group(2))
-        year  = int(m.group(3)) if m.group(3) else date.today().year
-        if year < 100:
-            year += 2000
-        try:
-            return date(year, month, day)
-        except ValueError:
-            return None
-    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', description)
-    if m:
-        try:
-            return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
-        except ValueError:
-            return None
+    today = date.today()
 
-    # 「Estimated Delivery by 07/29 - 07/30」等：ETA表記も年もないMM/DD形式。
-    # 配送予定を示す文脈のときだけMM/DDを日付として拾い、範囲なら遅い方を採用する。
-    if re.search(r'estimated delivery|delivery by|deliver by|arriv', description, re.IGNORECASE):
-        today = date.today()
-        found = []
-        # MM/DD（後ろに /数字 が続くMM/DD/YYYYは上で処理済みなので除外）
-        for mm, dd in re.findall(r'\b(\d{1,2})/(\d{1,2})(?!/?\d)', description):
-            month, day = int(mm), int(dd)
-            try:
-                d = date(today.year, month, day)
-            except ValueError:
-                continue
-            # 年末年始の取り違え防止：30日以上過去なら翌年扱い
-            if (today - d).days > 30:
-                try:
-                    d = date(today.year + 1, month, day)
-                except ValueError:
-                    continue
-            found.append(d)
-        if found:
-            return max(found)  # 範囲の場合は遅い方
+    # 1. 「ETA」直後のテキストから日付を拾う（ETA表記があれば最優先）
+    m = re.search(r'ETA\b', description, re.IGNORECASE)
+    if m:
+        after = description[m.end():m.end() + 60]
+        ds = _find_dates(after, today)
+        if ds:
+            return max(ds)
+
+    # 2. 配送予定を示す文脈がある場合、本文全体から日付を拾う
+    if _DELIVERY_CONTEXT.search(description):
+        ds = _find_dates(description, today)
+        if ds:
+            return max(ds)
+
+    # 3. 年つきの完全な日付はどこにあっても採用（M/D/Y・M-D-Y・M.D.Y）
+    m = re.search(r'(?<!\d)(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})(?!\d)', description)
+    if m:
+        return _mk_date(int(m.group(1)), int(m.group(2)), int(m.group(3)), today)
+
     return None
+
+
+def looks_like_has_date(description: str) -> bool:
+    """ETA表記や日付らしき記述が含まれるか（parse_etaがNoneでも手動に回す判断用）。"""
+    if not description:
+        return False
+    if re.search(r'ETA\b', description, re.IGNORECASE):
+        return True
+    if re.search(r'(?<!\d)\d{1,2}[/\-.]\d{1,2}(?!\d)', description):
+        return True
+    if re.search(r'\d{1,2}\s*月\s*\d{1,2}\s*日', description):
+        return True
+    if re.search(r'\b[A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?\b', description) and \
+       any(mn in description.lower() for mn in _MONTH_NAMES):
+        return True
+    return False
 
 
 # ETAの具体的な日付は無いが「入荷予定はある」ことを示す表現。
@@ -352,9 +418,9 @@ def process_report_delays():
 
                     # ETAの日付は取れないが「入荷予定はある」文面の場合、
                     # 誤って"未定"メールを送らず、自動送信せず手動対応に回す（ステータスはNEWのまま）
-                    if eta is None and has_incoming_signal(description):
-                        print(f"  → ETA日付なし＋入荷予定あり → 自動送信せず手動対応（要手動確認）")
-                        manual_review.append(f"Case {case_id}（{shop_name}）: 入荷予定ありだがETA日付なし")
+                    if eta is None and (has_incoming_signal(description) or looks_like_has_date(description)):
+                        print(f"  → ETA日付を確定できず（入荷予定/日付らしき記述あり）→ 自動送信せず手動対応")
+                        manual_review.append(f"Case {case_id}（{shop_name}）: ETA日付を確定できず要手動確認")
                         continue
 
                     # Order Numberに一致するsales/viewリンクを選ぶ

@@ -58,23 +58,27 @@ def hide_item(item_number: str):
 
 def try_update(service_secret, license_key, manage_number: str):
     """色々なメソッド・パスで更新を試みる"""
-    base_headers = {
+    auth_headers = {
         **get_auth_header(service_secret, license_key),
-        "Content-Type": "application/json",
         "Accept": "application/json",
     }
     body = {"item": {"hideItem": True}}
 
     patterns = [
-        ("GET",    f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
-        ("PUT",    f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
-        ("PATCH",  f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}/edit"),
-        ("POST",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit"),
-        ("PUT",    f"https://api.rms.rakuten.co.jp/es/2.0/items/edit"),
+        # /items/edit エンドポイント（URLは存在が確認済み）
+        ("GET",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
+        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
+        ("PUT",   f"https://api.rms.rakuten.co.jp/es/2.0/items/edit", "application/json"),
+        # Content-Type を merge-patch+json に変えて試す
+        ("PATCH", f"https://api.rms.rakuten.co.jp/es/2.0/items/{manage_number}", "application/merge-patch+json"),
+        # v1.0 エンドポイントを試す
+        ("PATCH", f"https://api.rms.rakuten.co.jp/es/1.0/items/{manage_number}", "application/json"),
+        ("PUT",   f"https://api.rms.rakuten.co.jp/es/1.0/items/{manage_number}", "application/json"),
     ]
 
-    for method, url in patterns:
-        res = requests.request(method, url, headers=base_headers, json=body, timeout=15)
+    for method, url, content_type in patterns:
+        headers = {**auth_headers, "Content-Type": content_type}
+        res = requests.request(method, url, headers=headers, json=body, timeout=15)
         print(f"  {method} {url.split('rms.rakuten.co.jp')[1]}")
         print(f"  → ステータス: {res.status_code}")
         if res.status_code == 200:

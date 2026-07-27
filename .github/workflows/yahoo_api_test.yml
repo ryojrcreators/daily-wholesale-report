@@ -11,12 +11,13 @@ on:
         required: false
         default: ''
       mode:
-        description: 'dump=読み取りのみ / hide=在庫0にする / restore=在庫を戻す / publish=実店舗へ反映'
+        description: 'dump=読み取りのみ / probe-edit=editItemの必須項目を調べる（変更なし） / hide=在庫0にする / restore=在庫を戻す / publish=実店舗へ反映'
         required: true
         default: 'dump'
         type: choice
         options:
           - 'dump'
+          - 'probe-edit'
           - 'hide'
           - 'restore'
           - 'publish'

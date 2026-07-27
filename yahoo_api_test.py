@@ -117,6 +117,56 @@ def print_state(label: str, fields: dict):
           f"Quantity={fields.get('Quantity')}")
 
 
+def probe_edit_required_fields(token: str, store: dict, item_code: str, fields: dict):
+    """
+    editItem に最小限のパラメータだけ送って、必須項目のエラーを全部吐かせる。
+    必ず400で終わるため商品は変更されない（必須項目の洗い出し専用）。
+    """
+    res = requests.post(
+        f"{BASE}/editItem",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"seller_id": store["seller_id"], "item_code": item_code},
+        timeout=30,
+    )
+    print(f"  editItem（最小構成）→ ステータス: {res.status_code}")
+
+    try:
+        root = ElementTree.fromstring(res.content)
+    except ElementTree.ParseError:
+        print(res.text[:3000])
+        return
+
+    required = []
+    for err in root.iter("Error"):
+        target = (err.findtext("Target") or "").strip()
+        message = (err.findtext("Message") or "").strip()
+        code = (err.findtext("Code") or "").strip()
+        required.append(target)
+        print(f"    必須: {target:<28} {code}  {message}")
+
+    print(f"\n  必須項目の数: {len(required)}")
+
+    # getItem で取れる項目名は CamelCase、editItm の必須項目名は snake_case なので
+    # 大文字小文字とアンダースコアを潰して突き合わせる
+    def norm(s: str) -> str:
+        return s.replace("_", "").replace("-", "").lower()
+
+    available = {norm(k): k for k in fields}
+    covered, missing = [], []
+    for target in required:
+        key = available.get(norm(target))
+        (covered if key else missing).append(target if not key else f"{target} → {key}")
+
+    print("\n  --- getItem の値で埋められそうな項目 ---")
+    for c in covered:
+        print(f"    ✅ {c}")
+    print("\n  --- getItem に見当たらない項目（送ると消える恐れ） ---")
+    for m in missing:
+        print(f"    ❌ {m}")
+    if not missing:
+        print("    （なし）")
+
+
 def set_stock(token: str, store: dict, item_code: str, quantity: str) -> bool:
     """在庫数だけを更新する。他の項目は一切変更しないので商品ページを壊さない。"""
     res = requests.post(
@@ -194,7 +244,9 @@ def main():
             publish(token, store)
             continue
 
-        if MODE == "hide":
+        if MODE == "probe-edit":
+            probe_edit_required_fields(token, store, TARGET_ITEM_CODE, before)
+        elif MODE == "hide":
             print(f"  ※ 復元用に現在の在庫数を控えてください: {before.get('Quantity')}")
             change_stock(token, store, TARGET_ITEM_CODE, "0", before)
         elif MODE == "restore":

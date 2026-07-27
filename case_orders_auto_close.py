@@ -398,35 +398,45 @@ def fetch_case_skus(page, case_id: str) -> list:
     page.goto(f"{BASE_URL}/case-orders/view/{case_id}", wait_until="networkidle")
     page.wait_for_timeout(300)
 
-    return page.evaluate(
+    # 一覧と同じく、列名（Sku / Shop）を持つテーブルを探して特定する。
+    # 見出し「Related Skus」からの相対位置に頼るとマークアップ変更で壊れやすい。
+    info = page.evaluate(
         """() => {
-            // 「Related Skus」見出しの直後のテーブルを探す
-            const heading = [...document.querySelectorAll('h1,h2,h3,h4,legend,div,span')]
-                .find(el => el.textContent.trim() === 'Related Skus');
-            if (!heading) return [];
-            let table = null;
-            for (let el = heading; el && !table; el = el.nextElementSibling) {
-                table = el.querySelector ? el.querySelector('table') : null;
-                if (el.tagName === 'TABLE') table = el;
+            const tables = [...document.querySelectorAll('table')];
+            const target = tables.find(t => {
+                const hs = [...t.querySelectorAll('th')].map(th => th.textContent.trim());
+                return hs.includes('Sku') && hs.includes('Shop');
+            });
+            if (!target) {
+                return {
+                    rows: null,
+                    tables: tables.map((t, i) => ({
+                        i,
+                        headers: [...t.querySelectorAll('th')].map(th => th.textContent.trim()),
+                        rowCount: t.querySelectorAll('tbody tr').length,
+                    })),
+                };
             }
-            if (!table) {
-                // 見出しの親要素から探す（マークアップが入れ子の場合）
-                const parent = heading.closest('div');
-                table = parent ? parent.querySelector('table') : null;
-            }
-            if (!table) return [];
-
-            const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+            const headers = [...target.querySelectorAll('th')].map(th => th.textContent.trim());
             const idxSku = headers.indexOf('Sku');
             const idxShop = headers.indexOf('Shop');
-            if (idxSku < 0 || idxShop < 0) return [];
-
-            return [...table.querySelectorAll('tbody tr')].map(tr => {
+            const rows = [...target.querySelectorAll('tbody tr')].map(tr => {
                 const tds = [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
                 return { mall: tds[idxShop] || '', sku: tds[idxSku] || '' };
             }).filter(r => r.sku);
+            return { headers, rows };
         }"""
     )
+
+    if info.get("rows") is None:
+        print("  ！Related Skus のテーブルが見つかりません。ページ内のテーブル構成:")
+        for t in info.get("tables", []):
+            print(f"    table[{t['i']}] rows={t['rowCount']} headers={t['headers']}")
+        return []
+
+    rows = info["rows"]
+    print(f"  Related Skus: {len(rows)}件 → {[(r['mall'], r['sku']) for r in rows]}")
+    return rows
 
 
 def mark_case_in_progress(page, case_id: str):

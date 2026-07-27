@@ -8,8 +8,13 @@ Yahoo!ショッピング商品リストAPI（myItemList）で出品中の全商�
   使うたびにリセットされる）。そのためGitHub Secretsではなく、スプレッドシートの非公開タブ
   「Yahoo_Config」に保存し、毎回読み書きする。
 - API取得が失敗・0件だった場合はシートを上書きせず終了する（rakuten_listing_sync.py と同じ考え方）。
-- myItemList は query または stcat_key のどちらかが必須パラメータ。絞り込みなしで全件取得できるかは
-  未検証のため、まず query="" を試す。エラーになった場合はログを見て取得方式を調整する。
+- myItemList は query または stcat_key のどちらかが必須パラメータで、query=""（空文字）では
+  「queryかstcat_keyのどちらか片方が必須です」エラーになることを実機で確認済み。そのため、
+  ストアカテゴリ一覧API（stCategoryList）でカテゴリツリーを辿って全stcat_keyを集め、
+  カテゴリごとにmyItemListをページングする方式にしている。同じ商品が複数カテゴリに
+  属していることがあるため、商品コードで重複除去する。
+  ※ どのストアカテゴリにも属していない商品がもしあれば取得漏れになる可能性がある
+    （未検証。件数が想定より少ない場合はこの点を疑う）。
 """
 
 import os
@@ -44,6 +49,7 @@ CONFIG_SHEET_NAME = "Yahoo_Config"
 
 TOKEN_URL = "https://auth.login.yahoo.co.jp/yconnect/v2/token"
 ITEM_LIST_URL = "https://circus.shopping.yahooapis.jp/ShoppingWebService/V1/myItemList"
+STCAT_LIST_URL = "https://circus.shopping.yahooapis.jp/ShoppingWebService/V1/stCategoryList"
 RESULTS_PER_PAGE = 100  # myItemList の1ページ最大件数
 PAGE_INTERVAL = 1.0  # レート制限（1クエリー/秒）対策
 
@@ -115,12 +121,39 @@ def refresh_access_token(spreadsheet) -> str:
     return data["access_token"]
 
 
-# ── myItemList をページングしながら1店舗分を取得 ────
-def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
+# ── ストアカテゴリをツリー状に辿って全stcat_keyを集める ─
+def fetch_all_stcat_keys(store: dict, access_token: str) -> list:
     headers = {"Authorization": f"Bearer {access_token}"}
-    rows = []
+    keys = []
+
+    def walk(page_key):
+        params = {"seller_id": store["seller_id"]}
+        if page_key:
+            params["page_key"] = page_key
+        res = requests.get(STCAT_LIST_URL, headers=headers, params=params, timeout=30)
+        if res.status_code == 401:
+            raise RuntimeError(f"[{store['name']}] 認証エラー（401）。アクセストークンが無効です。")
+        if res.status_code >= 400:
+            raise RuntimeError(
+                f"[{store['name']}] stCategoryList エラー（status={res.status_code}）: {res.text[:1000]}"
+            )
+        root = ElementTree.fromstring(res.content)
+        for result in root.findall("Result"):
+            key = (result.findtext("PageKey") or "").strip()
+            if not key:
+                continue
+            keys.append(key)
+            time.sleep(PAGE_INTERVAL)
+            walk(key)
+
+    walk(None)
+    return keys
+
+
+# ── 1カテゴリ分、myItemListをページングして取得 ────
+def fetch_items_in_category(store: dict, access_token: str, stcat_key: str, items_by_code: dict):
+    headers = {"Authorization": f"Bearer {access_token}"}
     start = 1
-    page = 1
 
     while True:
         params = {
@@ -128,7 +161,7 @@ def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
             "stock": "true",
             "start": start,
             "results": RESULTS_PER_PAGE,
-            "query": "",  # 要検証：絞り込みなしで全件取得できるか未確認
+            "stcat_key": stcat_key,
         }
         res = requests.get(ITEM_LIST_URL, headers=headers, params=params, timeout=30)
 
@@ -142,22 +175,34 @@ def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
         root = ElementTree.fromstring(res.content)
         results = root.findall("Result")
         total = root.get("totalResultsAvailable", "?")
-        print(f"    [{store['name']}] ページ{page}: {len(results)}件取得（累計 {total}件中）")
 
         for result in results:
             item_code = (result.findtext("ItemCode") or "").strip()
+            if not item_code:
+                continue
             name = (result.findtext("Name") or "").strip()
             price = (result.findtext("Price") or "").strip()
             quantity = (result.findtext("Quantity") or "").strip()
-            rows.append([store["name"], item_code, name, price, quantity, fetched_at])
+            items_by_code[item_code] = [store["name"], item_code, name, price, quantity]
 
         if not results or start + len(results) > int(total):
             break
         start += len(results)
-        page += 1
         time.sleep(PAGE_INTERVAL)
 
-    print(f"  [{store['name']}] 取得件数: {len(rows)}件")
+
+# ── 1店舗分：カテゴリを全て辿って商品を重複除去しながら取得 ─
+def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
+    stcat_keys = fetch_all_stcat_keys(store, access_token)
+    print(f"  [{store['name']}] ストアカテゴリ数: {len(stcat_keys)}")
+
+    items_by_code = {}
+    for i, stcat_key in enumerate(stcat_keys, start=1):
+        fetch_items_in_category(store, access_token, stcat_key, items_by_code)
+        print(f"    [{store['name']}] カテゴリ{i}/{len(stcat_keys)}処理済み（累計商品数: {len(items_by_code)}件）")
+
+    rows = [row + [fetched_at] for row in items_by_code.values()]
+    print(f"  [{store['name']}] 取得件数（重複除去後）: {len(rows)}件")
     return rows
 
 

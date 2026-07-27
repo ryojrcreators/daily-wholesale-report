@@ -177,13 +177,14 @@ def rakuten_auth_headers(store: dict) -> dict:
     }
 
 
-def rakuten_hide(manage_number: str, required: bool = True) -> list:
+def rakuten_hide(manage_number: str) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてで hideItem=true にする。
     戻り値は [(店舗名, 結果文字列, 成功したか)] のリスト。
 
-    required=False は、Yahooコードから接尾辞を外して推測した商品管理番号の場合に使う。
-    推測が外れて存在しないのは正常なので、見つからなくても失敗扱いにしない。
+    どちらの店舗にも存在しない場合は失敗にしない。Related Skus に楽天として
+    登録されていても、すでに楽天から削除済みの商品が実在するため
+    （＝止めるべき出品が無いだけで異常ではない）。ログには残す。
     """
     results = []
     for store in RAKUTEN_STORES:
@@ -224,7 +225,7 @@ def rakuten_hide(manage_number: str, required: bool = True) -> list:
             time.sleep(API_INTERVAL)
 
     if not results:
-        results.append(("-", "楽天のどちらの店舗にも存在しません", required is False))
+        results.append(("-", "楽天には出品が見つかりませんでした", True))
     return results
 
 
@@ -521,7 +522,7 @@ def main():
                     if not ok:
                         all_ok = False
             for sku in derived_bases:
-                for store_name, message, ok in rakuten_hide(sku, required=False):
+                for store_name, message, ok in rakuten_hide(sku):
                     print(f"    [楽天(推測)] {sku} / {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], "楽天(推測)", store_name, sku, message])
                     if not ok:

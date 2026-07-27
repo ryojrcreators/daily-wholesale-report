@@ -230,6 +230,74 @@ def edit_hide_test(token: str, store: dict, item_code: str, before: dict):
     print_state("  変更後", after)
 
 
+# edit-hide-test（2026/07/28実施）で 13000504-ak の6項目が消えたため、その復元用。
+# 値は同テストが変更前に出力したバックアップログから転記したもの。
+# ※ 画像や Taxable 等は省略しても消えなかったため、復元対象に含めていない。
+RESTORE_PAYLOAD_13000504_AK = {
+    "path": "ホーム キッチン",
+    "name": "【並行輸入品】The Honest Company ベビーおむつ テープタイプ サイズ1 80枚り 吸水性 ソフト",
+    "product_category": "44391",
+    "price": "9463",
+    "display": "1",
+    "delivery": "1",
+    "lead_time_in_stock": "1",
+    "sp_code": "1000005521",
+    "headline": "TheHonestCompany ベビーおむつ アメリカーナ",
+    "caption": (
+        "The Honest Company ベビーおむつ テープタイプ サイズ1 80枚り 吸水性 ソフト"
+        "サイズ　34.5×20.3×19.5cm柔らかく伸縮性のあるサイドパネル、快適な伸縮性ウエストバンド、"
+        "ぴったりフィットするレッグカフスが特徴低刺激性、超ソフト、超吸収性、優しく、安全なおむつ"
+        "水分を素早く吸い混んでくれるので赤ちゃんの繊細なお肌を快適に保ってくれます。"
+        "超吸収性おむつは、赤ちゃんのデリケートな肌に優しいデザイン<br><br><br><br />"
+    ),
+    "explanation": (
+        "The Honest Company ベビーおむつ テープタイプ サイズ1 80枚り 吸水性 ソフト"
+        "サイズ　34.5×20.3×19.5cm柔らかく伸縮性のあるサイドパネル、快適な伸縮性ウエストバンド、"
+        "ぴったりフィットするレッグカフスが特徴低刺激性、超ソフト、超吸収性、優しく、安全なおむつ"
+        "水分を素早く吸い混んでくれるので赤ちゃんの繊細なお肌を快適に保ってくれます。"
+        "超吸収性おむつは、赤ちゃんのデリケートな肌に優しいデザイン"
+    ),
+    "sp_additional": (
+        "The Honest Company ベビーおむつ テープタイプ サイズ1 80枚り 吸水性 ソフト"
+        "サイズ　34.5×20.3×19.5cm柔らかく伸縮性のあるサイドパネル、快適な伸縮性ウエストバンド、"
+        "ぴったりフィットするレッグカフスが特徴低刺激性、超ソフト、超吸収性、優しく、安全なおむつ"
+        "水分を素早く吸い混んでくれるので赤ちゃんの繊細なお肌を快適に保ってくれます。"
+        "超吸収性おむつは、赤ちゃんのデリケートな肌に優しいデザイン"
+    ),
+}
+
+
+def restore_edit(token: str, store: dict, item_code: str, before: dict):
+    """edit-hide-test で消えた項目を書き戻す"""
+    if item_code != "13000504-ak":
+        print(f"  この商品コード用の復元データがありません（対応: 13000504-ak）")
+        return
+
+    payload = {"seller_id": store["seller_id"], "item_code": item_code,
+               **RESTORE_PAYLOAD_13000504_AK}
+
+    res = requests.post(
+        f"{BASE}/editItem",
+        headers={"Authorization": f"Bearer {token}"},
+        data=payload,
+        timeout=30,
+    )
+    print(f"  → ステータス: {res.status_code}")
+    print(f"  {res.text[:800]}")
+    if res.status_code >= 400:
+        return
+
+    time.sleep(2)
+    after = get_item(token, store, item_code)
+
+    print("\n  --- 復元後の状態 ---")
+    for tag in ["Headline", "Caption", "Explanation", "SpAdditional", "SpCode",
+                "LeadTimeInStock", "Delivery", "Display", "EditingFlag"]:
+        value = after.get(tag)
+        mark = "✅" if value else "❌"
+        print(f"  {mark} {tag}: {str(value)[:80]}")
+
+
 def set_stock(token: str, store: dict, item_code: str, quantity: str) -> bool:
     """在庫数だけを更新する。他の項目は一切変更しないので商品ページを壊さない。"""
     res = requests.post(
@@ -311,6 +379,8 @@ def main():
             probe_edit_required_fields(token, store, TARGET_ITEM_CODE, before)
         elif MODE == "edit-hide-test":
             edit_hide_test(token, store, TARGET_ITEM_CODE, before)
+        elif MODE == "restore-edit":
+            restore_edit(token, store, TARGET_ITEM_CODE, before)
         elif MODE == "hide":
             print(f"  ※ 復元用に現在の在庫数を控えてください: {before.get('Quantity')}")
             change_stock(token, store, TARGET_ITEM_CODE, "0", before)

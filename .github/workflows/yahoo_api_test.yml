@@ -19,6 +19,7 @@ on:
           - 'dump'
           - 'probe-edit'
           - 'edit-hide-test'
+          - 'restore-edit'
           - 'hide'
           - 'restore'
           - 'publish'

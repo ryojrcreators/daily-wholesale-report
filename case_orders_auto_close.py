@@ -177,10 +177,13 @@ def rakuten_auth_headers(store: dict) -> dict:
     }
 
 
-def rakuten_hide(manage_number: str) -> list:
+def rakuten_hide(manage_number: str, required: bool = True) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてで hideItem=true にする。
     戻り値は [(店舗名, 結果文字列, 成功したか)] のリスト。
+
+    required=False は、Yahooコードから接尾辞を外して推測した商品管理番号の場合に使う。
+    推測が外れて存在しないのは正常なので、見つからなくても失敗扱いにしない。
     """
     results = []
     for store in RAKUTEN_STORES:
@@ -221,8 +224,20 @@ def rakuten_hide(manage_number: str) -> list:
             time.sleep(API_INTERVAL)
 
     if not results:
-        results.append(("-", "どちらの店舗にも存在しません", False))
+        results.append(("-", "楽天のどちらの店舗にも存在しません", required is False))
     return results
+
+
+def strip_yahoo_suffix(item_code: str) -> str:
+    """
+    Yahooの商品コードから接尾辞を外して、楽天の商品管理番号（基準コード）を推測する。
+    例: 13000504-ak → 13000504
+    長い接尾辞から順に照合する（-akc を akc と誤って切らないため）。
+    """
+    for suffix in sorted([s for s in YAHOO_SUFFIXES if s], key=len, reverse=True):
+        if item_code.endswith(suffix):
+            return item_code[: -len(suffix)]
+    return item_code
 
 
 # ══ Yahoo：在庫を0にする ══════════════════════════
@@ -449,11 +464,27 @@ def main():
 
             all_ok = True
 
-            # 楽天：Related Skus に載っているコードをそのまま使う
+            # Yahooコードしか載っていないケースに備えて、接尾辞を外して楽天コードを推測する
+            # （例: 13000504-ak → 13000504）。推測が外れて存在しなくても失敗扱いにしない。
+            derived_bases = []
+            for ysku in yahoo_skus:
+                base = strip_yahoo_suffix(ysku)
+                if base and base not in rakuten_skus and base not in derived_bases:
+                    derived_bases.append(base)
+            if derived_bases:
+                print(f"  Yahooコードから推測した楽天コード: {derived_bases}")
+
+            # 楽天：Related Skus に載っているコードと、上で推測したコード
             for sku in rakuten_skus:
                 for store_name, message, ok in rakuten_hide(sku):
                     print(f"    [楽天] {sku} / {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], "楽天", store_name, sku, message])
+                    if not ok:
+                        all_ok = False
+            for sku in derived_bases:
+                for store_name, message, ok in rakuten_hide(sku, required=False):
+                    print(f"    [楽天(推測)] {sku} / {store_name}: {message}")
+                    log_rows.append([now, case_id, case["caseType"], "楽天(推測)", store_name, sku, message])
                     if not ok:
                         all_ok = False
 
@@ -461,7 +492,7 @@ def main():
             # （Related Skus には売れたことのあるSKUしか無いため、Yahooのコードは
             #   載っていないことが多い。楽天コードを基準に組み立てて実在確認する）
             candidates = list(yahoo_skus)
-            for base in rakuten_skus:
+            for base in rakuten_skus + derived_bases:
                 for suffix in YAHOO_SUFFIXES:
                     code = base + suffix
                     if code not in candidates:

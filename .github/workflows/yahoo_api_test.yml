@@ -6,6 +6,16 @@ on:
       item_code:
         description: '調査対象のYahoo商品コード（ItemCode）'
         required: true
+      mode:
+        description: 'dump=読み取りのみ / hide=出品停止を試す / restore=元に戻す / publish=実店舗へ反映'
+        required: true
+        default: 'dump'
+        type: choice
+        options:
+          - 'dump'
+          - 'hide'
+          - 'restore'
+          - 'publish'
 
 jobs:
   test:
@@ -27,4 +37,5 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
           TARGET_ITEM_CODE: ${{ inputs.item_code }}
+          MODE: ${{ inputs.mode }}
         run: python yahoo_api_test.py

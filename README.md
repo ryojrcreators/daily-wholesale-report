@@ -133,7 +133,7 @@ python rakuten_asin_finder.py
 | 赤字・仕入不可チェック | JST 9:00 / 13:00 / 17:00 | GitHub cron |
 | ASIN補完 | JST 10:00 / 14:00 / 18:00 | GitHub cron |
 | 出品データ同期（楽天） | JST 7:00 | GitHub cron |
-| 出品データ同期（Yahoo） | JST 7:30 | GitHub cron |
+| 出品データ同期（Yahoo） | 2日に1回・JST 7:30 | GitHub cron |
 | POデータ反映 | JST 20:00 | GitHub cron |
 | SOデータ反映 | サーバー準備完了時 | `repository_dispatch`（server-is-ready） |
 | Report Delay 自動処理 | LA 9:00 / 17:00（1日2回） | GitHub cron |

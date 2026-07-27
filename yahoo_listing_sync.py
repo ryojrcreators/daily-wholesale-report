@@ -172,9 +172,12 @@ def fetch_all_stcat_keys(spreadsheet, token_state: TokenState, store: dict) -> l
             if not key:
                 continue
             keys.append(key)
+            if len(keys) % 20 == 0:
+                print(f"    [{store['name']}] カテゴリ一覧収集中... {len(keys)}件見つかりました")
             time.sleep(PAGE_INTERVAL)
             walk(key)
 
+    print(f"  [{store['name']}] カテゴリ一覧を収集中...")
     walk(None)
     return keys
 

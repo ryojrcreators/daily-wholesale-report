@@ -337,27 +337,56 @@ def fetch_target_cases(page) -> list:
     page.goto(CASE_LIST_URL, wait_until="networkidle")
     page.wait_for_timeout(500)
 
-    rows = page.evaluate(
+    # ページ内に複数のtableがある（ヘッダーのアラート用など）ため、
+    # 「Case Type」列を持つテーブルを一覧として選ぶ
+    info = page.evaluate(
         """() => {
-            const table = document.querySelector('table');
-            if (!table) return [];
-            const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+            const tables = [...document.querySelectorAll('table')].map((t, i) => ({
+                i,
+                headers: [...t.querySelectorAll('th')].map(th => th.textContent.trim()),
+                rowCount: t.querySelectorAll('tbody tr').length,
+            }));
+            const target = [...document.querySelectorAll('table')].find(
+                t => [...t.querySelectorAll('th')].some(th => th.textContent.trim() === 'Case Type')
+            );
+            if (!target) return { tables, rows: null };
+
+            const headers = [...target.querySelectorAll('th')].map(th => th.textContent.trim());
             const idxId = headers.indexOf('Id');
             const idxType = headers.indexOf('Case Type');
             const idxProduct = headers.indexOf('Product');
-            return [...table.querySelectorAll('tbody tr')].map(tr => {
+            const rows = [...target.querySelectorAll('tbody tr')].map(tr => {
                 const tds = [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
                 return {
                     id: (tds[idxId] || '').replace(/,/g, ''),
                     caseType: tds[idxType] || '',
                     product: tds[idxProduct] || '',
+                    raw: tds.join(' | '),
                 };
             });
+            return { tables, headers, rows, bodyText: document.body.innerText.slice(0, 1500) };
         }"""
     )
 
+    if not info.get("rows"):
+        print("！ケース一覧のテーブルが見つかりませんでした。ページ内のテーブル構成:")
+        for t in info.get("tables", []):
+            print(f"  table[{t['i']}] rows={t['rowCount']} headers={t['headers']}")
+        print(f"  ページ本文の先頭:\n{info.get('bodyText', '')}")
+        try:
+            page.screenshot(path="debug_case_list.png", full_page=True)
+        except Exception:
+            pass
+        return []
+
+    rows = info["rows"]
+    print(f"一覧のヘッダー: {info.get('headers')}")
+    print(f"読み取れた行数: {len(rows)}")
+    for r in rows:
+        print(f"  {r['id']} | Type={r['caseType']} | {r['raw'][:160]}")
+
     targets = [r for r in rows if r["caseType"] in TARGET_CASE_TYPES and r["id"].isdigit()]
-    print(f"New + Rakuten/Yahoo のケース: {len(rows)}件、うちClose系: {len(targets)}件")
+    print(f"うちClose系: {len(targets)}件")
     return targets
 
 

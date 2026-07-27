@@ -15,6 +15,9 @@ Yahoo!ショッピング商品リストAPI（myItemList）で出品中の全商�
   属していることがあるため、商品コードで重複除去する。
   ※ どのストアカテゴリにも属していない商品がもしあれば取得漏れになる可能性がある
     （未検証。件数が想定より少ない場合はこの点を疑う）。
+- カテゴリ数が数百に及ぶ店舗もあり、全件取得に1時間を超えることがある。アクセストークンは
+  短命なため、401が返ってきたらその場でリフレッシュトークンを使って再取得し、同じリクエストを
+  リトライする（authed_get）。
 """
 
 import os
@@ -121,22 +124,48 @@ def refresh_access_token(spreadsheet) -> str:
     return data["access_token"]
 
 
+class TokenState:
+    """実行中に401で失効した場合、その場でリフレッシュして持ち直すための入れ物。"""
+
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+
+
+def authed_get(spreadsheet, token_state: TokenState, url: str, params: dict, store_name: str, api_name: str):
+    """
+    アクセストークンで認証しつつGETする。401が返ってきた場合は1回だけ
+    リフレッシュトークンでアクセストークンを取り直してリトライする
+    （カテゴリ数が多い店舗では全件取得に1時間以上かかり、その間にアクセストークンが
+    失効することがあるため）。
+    """
+    for attempt in range(2):
+        headers = {"Authorization": f"Bearer {token_state.access_token}"}
+        res = requests.get(url, headers=headers, params=params, timeout=30)
+
+        if res.status_code == 401 and attempt == 0:
+            print(f"    [{store_name}] アクセストークンが失効したため再取得します...")
+            token_state.access_token = refresh_access_token(spreadsheet)
+            continue
+
+        if res.status_code >= 400:
+            raise RuntimeError(
+                f"[{store_name}] {api_name} エラー（status={res.status_code}）: {res.text[:1000]}"
+            )
+        return res
+
+    raise RuntimeError(f"[{store_name}] {api_name}: アクセストークン再取得後も認証エラーが続きました。")
+
+
 # ── ストアカテゴリをツリー状に辿って全stcat_keyを集める ─
-def fetch_all_stcat_keys(store: dict, access_token: str) -> list:
-    headers = {"Authorization": f"Bearer {access_token}"}
+def fetch_all_stcat_keys(spreadsheet, token_state: TokenState, store: dict) -> list:
     keys = []
 
     def walk(page_key):
         params = {"seller_id": store["seller_id"]}
         if page_key:
             params["page_key"] = page_key
-        res = requests.get(STCAT_LIST_URL, headers=headers, params=params, timeout=30)
-        if res.status_code == 401:
-            raise RuntimeError(f"[{store['name']}] 認証エラー（401）。アクセストークンが無効です。")
-        if res.status_code >= 400:
-            raise RuntimeError(
-                f"[{store['name']}] stCategoryList エラー（status={res.status_code}）: {res.text[:1000]}"
-            )
+        res = authed_get(spreadsheet, token_state, STCAT_LIST_URL, params, store["name"], "stCategoryList")
+
         root = ElementTree.fromstring(res.content)
         for result in root.findall("Result"):
             key = (result.findtext("PageKey") or "").strip()
@@ -151,8 +180,7 @@ def fetch_all_stcat_keys(store: dict, access_token: str) -> list:
 
 
 # ── 1カテゴリ分、myItemListをページングして取得 ────
-def fetch_items_in_category(store: dict, access_token: str, stcat_key: str, items_by_code: dict):
-    headers = {"Authorization": f"Bearer {access_token}"}
+def fetch_items_in_category(spreadsheet, token_state: TokenState, store: dict, stcat_key: str, items_by_code: dict):
     start = 1
 
     while True:
@@ -163,14 +191,7 @@ def fetch_items_in_category(store: dict, access_token: str, stcat_key: str, item
             "results": RESULTS_PER_PAGE,
             "stcat_key": stcat_key,
         }
-        res = requests.get(ITEM_LIST_URL, headers=headers, params=params, timeout=30)
-
-        if res.status_code == 401:
-            raise RuntimeError(f"[{store['name']}] 認証エラー（401）。アクセストークンが無効です。")
-        if res.status_code >= 400:
-            raise RuntimeError(
-                f"[{store['name']}] myItemList エラー（status={res.status_code}）: {res.text[:1000]}"
-            )
+        res = authed_get(spreadsheet, token_state, ITEM_LIST_URL, params, store["name"], "myItemList")
 
         root = ElementTree.fromstring(res.content)
         results = root.findall("Result")
@@ -192,13 +213,13 @@ def fetch_items_in_category(store: dict, access_token: str, stcat_key: str, item
 
 
 # ── 1店舗分：カテゴリを全て辿って商品を重複除去しながら取得 ─
-def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
-    stcat_keys = fetch_all_stcat_keys(store, access_token)
+def fetch_store_rows(spreadsheet, token_state: TokenState, store: dict, fetched_at: str) -> list:
+    stcat_keys = fetch_all_stcat_keys(spreadsheet, token_state, store)
     print(f"  [{store['name']}] ストアカテゴリ数: {len(stcat_keys)}")
 
     items_by_code = {}
     for i, stcat_key in enumerate(stcat_keys, start=1):
-        fetch_items_in_category(store, access_token, stcat_key, items_by_code)
+        fetch_items_in_category(spreadsheet, token_state, store, stcat_key, items_by_code)
         print(f"    [{store['name']}] カテゴリ{i}/{len(stcat_keys)}処理済み（累計商品数: {len(items_by_code)}件）")
 
     rows = [row + [fetched_at] for row in items_by_code.values()]
@@ -215,9 +236,9 @@ def main():
     all_rows = []
 
     try:
-        access_token = refresh_access_token(spreadsheet)
+        token_state = TokenState(refresh_access_token(spreadsheet))
         for store in STORES:
-            all_rows.extend(fetch_store_rows(store, access_token, fetched_at))
+            all_rows.extend(fetch_store_rows(spreadsheet, token_state, store, fetched_at))
     except Exception as e:
         print(f"取得失敗のため中断します（シートは前回のまま更新しません）: {e}")
         sys.exit(1)

@@ -6,8 +6,12 @@ on:
       item_code:
         description: '調査対象のYahoo商品コード（ItemCode）'
         required: true
+      restore_quantity:
+        description: 'restore時に戻す在庫数（hide実行時のログに出た元の在庫数を入れる）'
+        required: false
+        default: ''
       mode:
-        description: 'dump=読み取りのみ / hide=出品停止を試す / restore=元に戻す / publish=実店舗へ反映'
+        description: 'dump=読み取りのみ / hide=在庫0にする / restore=在庫を戻す / publish=実店舗へ反映'
         required: true
         default: 'dump'
         type: choice
@@ -38,4 +42,5 @@ jobs:
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
           TARGET_ITEM_CODE: ${{ inputs.item_code }}
           MODE: ${{ inputs.mode }}
+          RESTORE_QUANTITY: ${{ inputs.restore_quantity }}
         run: python yahoo_api_test.py

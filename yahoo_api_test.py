@@ -37,17 +37,11 @@ CONFIG_SHEET_NAME = "Yahoo_Config"
 TOKEN_URL = "https://auth.login.yahoo.co.jp/yconnect/v2/token"
 BASE = "https://circus.shopping.yahooapis.jp/ShoppingWebService/V1"
 
-# 出品停止に効きそうなフィールドの候補。実機で順に試して、実際に値が変わったものを採用する。
-HIDE_ATTEMPTS = [
-    ("display=0",     {"display": "0"}),
-    ("hidden-flag=1", {"hidden-flag": "1"}),
-    ("hiddenFlag=1",  {"hiddenFlag": "1"}),
-]
-RESTORE_ATTEMPTS = [
-    ("display=1",     {"display": "1"}),
-    ("hidden-flag=0", {"hidden-flag": "0"}),
-    ("hiddenFlag=0",  {"hiddenFlag": "0"}),
-]
+# editItem は部分更新ができず、全項目の送信が必須（path/name/product_category...）。
+# 送り漏れで商品ページを壊すリスクがあるため使わない。
+# 代わりに在庫数だけを更新する setStock を使い、在庫0にして注文を止める。
+# 復元用の在庫数は RESTORE_QUANTITY で指定する。
+RESTORE_QUANTITY = os.environ.get("RESTORE_QUANTITY", "")
 
 
 # ── リフレッシュトークン（yahoo_listing_sync.py と同じ仕組み） ──
@@ -123,18 +117,21 @@ def print_state(label: str, fields: dict):
           f"Quantity={fields.get('Quantity')}")
 
 
-def edit_item(token: str, store: dict, item_code: str, extra: dict):
+def set_stock(token: str, store: dict, item_code: str, quantity: str) -> bool:
+    """在庫数だけを更新する。他の項目は一切変更しないので商品ページを壊さない。"""
     res = requests.post(
-        f"{BASE}/editItem",
+        f"{BASE}/setStock",
         headers={"Authorization": f"Bearer {token}"},
-        data={"seller_id": store["seller_id"], "item_code": item_code, **extra},
+        data={
+            "seller_id": store["seller_id"],
+            "item_code": item_code,
+            "quantity": quantity,
+        },
         timeout=30,
     )
     print(f"    → ステータス: {res.status_code}")
-    if res.status_code >= 400:
-        print(f"    {res.text[:400]}")
-        return False
-    return True
+    print(f"    {res.text[:600]}")
+    return res.status_code < 400
 
 
 def publish(token: str, store: dict):
@@ -149,26 +146,22 @@ def publish(token: str, store: dict):
     print(f"  {res.text[:600]}")
 
 
-def try_attempts(token: str, store: dict, item_code: str, attempts: list, before: dict):
-    """パラメータ名の候補を順に試し、実際に値が変わったものを特定する"""
-    for label, params in attempts:
-        print(f"\n  試行: editItem {label}")
-        if not edit_item(token, store, item_code, params):
-            continue
+def change_stock(token: str, store: dict, item_code: str, quantity: str, before: dict):
+    print(f"\n  setStock quantity={quantity}")
+    if not set_stock(token, store, item_code, quantity):
+        return
 
-        time.sleep(2)
-        after = get_item(token, store, item_code)
-        print_state("    変更後", after)
+    time.sleep(2)
+    after = get_item(token, store, item_code)
+    print_state("  変更後", after)
 
-        if (after.get("Display") != before.get("Display")
-                or after.get("HiddenFlag") != before.get("HiddenFlag")):
-            print(f"    ✅ このパラメータが効きました: {label}")
-            return after, label
+    if after.get("Quantity") == quantity:
+        print(f"  ✅ 在庫数を {before.get('Quantity')} → {quantity} に変更できました")
+    else:
+        print(f"  ⚠️ 在庫数が反映されていません（現在: {after.get('Quantity')}）")
 
-        print("    → 値は変わりませんでした。次の候補を試します。")
-
-    print("\n  ⚠️ どの候補も効きませんでした。")
-    return None, None
+    if after.get("EditingFlag") == "1":
+        print("  ※ EditingFlag=1（編集中・未反映）。MODE=publish で反映APIを試してください。")
 
 
 # ── メイン ────────────────────────────────────────
@@ -201,12 +194,14 @@ def main():
             publish(token, store)
             continue
 
-        attempts = HIDE_ATTEMPTS if MODE == "hide" else RESTORE_ATTEMPTS
-        after, label = try_attempts(token, store, TARGET_ITEM_CODE, attempts, before)
-
-        if after and after.get("EditingFlag") == "1":
-            print("\n  ※ EditingFlag=1（編集中・未反映）です。"
-                  "実店舗に反映するには MODE=publish で反映APIを実行してください。")
+        if MODE == "hide":
+            print(f"  ※ 復元用に現在の在庫数を控えてください: {before.get('Quantity')}")
+            change_stock(token, store, TARGET_ITEM_CODE, "0", before)
+        elif MODE == "restore":
+            if not RESTORE_QUANTITY:
+                print("  復元する在庫数（restore_quantity）が指定されていません。中止します。")
+                continue
+            change_stock(token, store, TARGET_ITEM_CODE, RESTORE_QUANTITY, before)
 
 
 if __name__ == "__main__":

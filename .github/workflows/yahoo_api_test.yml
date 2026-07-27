@@ -18,6 +18,7 @@ on:
         options:
           - 'dump'
           - 'probe-edit'
+          - 'edit-hide-test'
           - 'hide'
           - 'restore'
           - 'publish'

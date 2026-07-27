@@ -167,6 +167,69 @@ def probe_edit_required_fields(token: str, store: dict, item_code: str, fields: 
         print("    （なし）")
 
 
+def edit_hide_test(token: str, store: dict, item_code: str, before: dict):
+    """
+    必須4項目 + display=0 だけを送って、省略した項目が保持されるのか消えるのかを確かめる。
+
+    editItem が「部分更新」なら他の項目は残る。「全置換」なら消える。
+    消えた場合に備えて、変更前の全項目を省略せずログに出しておく（復元用のバックアップ）。
+    """
+    print("\n  --- 変更前の全項目（復元用バックアップ。消えた場合はここから戻す） ---")
+    for tag, text in before.items():
+        print(f"  [{tag}] {text}")
+
+    payload = {
+        "seller_id": store["seller_id"],
+        "item_code": item_code,
+        "path": before.get("Path", ""),
+        "name": before.get("Name", ""),
+        "product_category": before.get("ProductCategory", ""),
+        "price": before.get("Price", ""),
+        "display": "0",
+    }
+    print("\n  --- 送信内容（必須4項目 + display=0 のみ） ---")
+    for k, v in payload.items():
+        if k != "seller_id":
+            print(f"  {k}: {str(v)[:80]}")
+
+    res = requests.post(
+        f"{BASE}/editItem",
+        headers={"Authorization": f"Bearer {token}"},
+        data=payload,
+        timeout=30,
+    )
+    print(f"\n  → ステータス: {res.status_code}")
+    print(f"  {res.text[:800]}")
+    if res.status_code >= 400:
+        print("  失敗したため商品は変更されていません。")
+        return
+
+    time.sleep(2)
+    after = get_item(token, store, item_code)
+
+    print("\n  --- 変更前後の差分 ---")
+    lost, changed = [], []
+    for tag, old in before.items():
+        new = after.get(tag)
+        if new is None:
+            lost.append(tag)
+            print(f"    ❌ 消えた: {tag}")
+        elif new != old:
+            changed.append(tag)
+            print(f"    🔄 変化: {tag}: {old[:60]} → {new[:60]}")
+    for tag in after:
+        if tag not in before:
+            print(f"    ➕ 増えた: {tag}: {after[tag][:60]}")
+
+    print(f"\n  消えた項目: {len(lost)}個 / 変化した項目: {len(changed)}個")
+    if not lost:
+        print("  ✅ 省略した項目は保持されました（部分更新として使えます）")
+    else:
+        print("  ⚠️ 省略した項目が消えました（全置換型。この方法は危険です）")
+
+    print_state("  変更後", after)
+
+
 def set_stock(token: str, store: dict, item_code: str, quantity: str) -> bool:
     """在庫数だけを更新する。他の項目は一切変更しないので商品ページを壊さない。"""
     res = requests.post(
@@ -246,6 +309,8 @@ def main():
 
         if MODE == "probe-edit":
             probe_edit_required_fields(token, store, TARGET_ITEM_CODE, before)
+        elif MODE == "edit-hide-test":
+            edit_hide_test(token, store, TARGET_ITEM_CODE, before)
         elif MODE == "hide":
             print(f"  ※ 復元用に現在の在庫数を控えてください: {before.get('Quantity')}")
             change_stock(token, store, TARGET_ITEM_CODE, "0", before)

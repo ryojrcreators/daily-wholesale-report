@@ -63,6 +63,19 @@ REPLY_MESSAGE = "Rakuten/Yahoo Closed"
 SHOP_RAKUTEN = "楽天"
 SHOP_YAHOO = "Yahoo(new)"
 
+# Yahooの商品コードは「楽天の商品管理番号 + 店舗ごとの接尾辞」という規則になっている。
+# 社内システムのRelated Skusには売れたことのあるSKUしか登録されていないため、
+# Yahooのコードが載っていないケースが多い。そこで楽天コードを基準に、この接尾辞を付けた
+# コードが実在するかを getItem で1つずつ確かめる（シートに頼らないので常に最新）。
+#
+# 接尾辞は sku_suffix_survey.py で全出品データ（62,438件）を集計して洗い出したもの。
+#   msy 27,477件 / akc 20,200件 / -ak 8,123件 / -msy 2,806件 / -akc 1,724件 / -mys 6件
+# 店舗ごとに使う接尾辞は分かれている（akc系=American Kitchen、msy系=Meta Store）が、
+# どの環境変数がどちらの店舗かを取り違えると取りこぼすため、両店舗で全パターンを試す。
+# 1SKUあたり最大 6パターン×2店舗×2回(存在確認+更新) の呼び出しになるが、
+# 1回の実行で扱うケース数は少ないため許容する。
+YAHOO_SUFFIXES = ["", "msy", "akc", "-ak", "-msy", "-akc", "-mys"]
+
 # ── 楽天 RMS API ──────────────────────────────────
 RMS_BASE = "https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers"
 RAKUTEN_STORES = [
@@ -236,47 +249,58 @@ def yahoo_get_item(token: str, store: dict, item_code: str):
     return fields
 
 
-def yahoo_close(token: str, item_code: str) -> list:
-    """2店舗を順に確認し、存在する店舗すべてで在庫を0にする。"""
+def yahoo_close(token: str, candidates: list) -> list:
+    """
+    候補の商品コードを2店舗それぞれで実在確認し、見つかったものすべての在庫を0にする。
+
+    candidates は「楽天コード + 接尾辞」で組み立てた候補、または
+    Related Skus に直接載っていたYahooコード。存在しないものは静かに読み飛ばす。
+    """
     results = []
+    found_any = False
+
     for store in YAHOO_STORES:
-        try:
-            item = yahoo_get_item(token, store, item_code)
-        except Exception as e:
-            results.append((store["name"], f"取得エラー: {e}", False))
-            continue
-        finally:
-            time.sleep(API_INTERVAL)
+        for item_code in candidates:
+            try:
+                item = yahoo_get_item(token, store, item_code)
+            except Exception as e:
+                results.append((store["name"], f"{item_code}: 取得エラー: {e}", False))
+                continue
+            finally:
+                time.sleep(API_INTERVAL)
 
-        if item is None:
-            continue  # この店舗には存在しない
+            if item is None:
+                continue  # この店舗にこのコードは無い（候補の外れ。正常）
 
-        if item.get("Quantity") == "0":
-            results.append((store["name"], "すでに在庫0", True))
-            continue
+            found_any = True
 
-        if DRY_RUN:
-            results.append((store["name"], f"【DRY RUN】在庫{item.get('Quantity')}→0の対象", True))
-            continue
+            if item.get("Quantity") == "0":
+                results.append((store["name"], f"{item_code}: すでに在庫0", True))
+                continue
 
-        try:
-            res = requests.post(
-                f"{YAHOO_BASE}/setStock",
-                headers={"Authorization": f"Bearer {token}"},
-                data={"seller_id": store["seller_id"], "item_code": item_code, "quantity": "0"},
-                timeout=30,
-            )
-            if res.status_code < 400:
-                results.append((store["name"], f"在庫{item.get('Quantity')}→0にしました", True))
-            else:
-                results.append((store["name"], f"在庫更新失敗({res.status_code})", False))
-        except Exception as e:
-            results.append((store["name"], f"在庫更新エラー: {e}", False))
-        finally:
-            time.sleep(API_INTERVAL)
+            if DRY_RUN:
+                results.append((store["name"], f"{item_code}: 【DRY RUN】在庫{item.get('Quantity')}→0の対象", True))
+                continue
 
-    if not results:
-        results.append(("-", "どちらの店舗にも存在しません", False))
+            try:
+                res = requests.post(
+                    f"{YAHOO_BASE}/setStock",
+                    headers={"Authorization": f"Bearer {token}"},
+                    data={"seller_id": store["seller_id"], "item_code": item_code, "quantity": "0"},
+                    timeout=30,
+                )
+                if res.status_code < 400:
+                    results.append((store["name"], f"{item_code}: 在庫{item.get('Quantity')}→0にしました", True))
+                else:
+                    results.append((store["name"], f"{item_code}: 在庫更新失敗({res.status_code})", False))
+            except Exception as e:
+                results.append((store["name"], f"{item_code}: 在庫更新エラー: {e}", False))
+            finally:
+                time.sleep(API_INTERVAL)
+
+    if not found_any:
+        # Yahooに出品が無い商品も普通にあるため、失敗ではなく情報として扱う
+        results.append(("-", "Yahooには出品が見つかりませんでした", True))
     return results
 
 
@@ -419,19 +443,34 @@ def main():
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", "対象SKUなし（Newのまま）"])
                 continue
 
-            print(f"  対象SKU: {len(targets)}件")
+            rakuten_skus = [t["sku"] for t in targets if t["mall"] == SHOP_RAKUTEN]
+            yahoo_skus = [t["sku"] for t in targets if t["mall"] == SHOP_YAHOO]
+            print(f"  楽天SKU: {rakuten_skus} / YahooSKU: {yahoo_skus}")
+
             all_ok = True
 
-            for target in targets:
-                mall, sku = target["mall"], target["sku"]
-                if mall == SHOP_RAKUTEN:
-                    results = rakuten_hide(sku)
-                else:
-                    results = yahoo_close(yahoo_token, sku)
+            # 楽天：Related Skus に載っているコードをそのまま使う
+            for sku in rakuten_skus:
+                for store_name, message, ok in rakuten_hide(sku):
+                    print(f"    [楽天] {sku} / {store_name}: {message}")
+                    log_rows.append([now, case_id, case["caseType"], "楽天", store_name, sku, message])
+                    if not ok:
+                        all_ok = False
 
-                for store_name, message, ok in results:
-                    print(f"    [{mall}] {sku} / {store_name}: {message}")
-                    log_rows.append([now, case_id, case["caseType"], mall, store_name, sku, message])
+            # Yahoo：直接載っているコードに加えて、楽天コード+接尾辞の候補も試す
+            # （Related Skus には売れたことのあるSKUしか無いため、Yahooのコードは
+            #   載っていないことが多い。楽天コードを基準に組み立てて実在確認する）
+            candidates = list(yahoo_skus)
+            for base in rakuten_skus:
+                for suffix in YAHOO_SUFFIXES:
+                    code = base + suffix
+                    if code not in candidates:
+                        candidates.append(code)
+
+            if candidates:
+                for store_name, message, ok in yahoo_close(yahoo_token, candidates):
+                    print(f"    [Yahoo] {store_name}: {message}")
+                    log_rows.append([now, case_id, case["caseType"], "Yahoo", store_name, "-", message])
                     if not ok:
                         all_ok = False
 

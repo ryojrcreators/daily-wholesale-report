@@ -87,7 +87,7 @@ def save_refresh_token(spreadsheet, new_token: str):
     values = ws.get_all_values()
     for i, row in enumerate(values, start=1):
         if row and row[0] == "refresh_token":
-            ws.update(f"A{i}:B{i}", [["refresh_token", new_token]])
+            ws.update(range_name=f"A{i}:B{i}", values=[["refresh_token", new_token]])
             return
     ws.append_row(["refresh_token", new_token])
 
@@ -134,7 +134,10 @@ def fetch_store_rows(store: dict, access_token: str, fetched_at: str) -> list:
 
         if res.status_code == 401:
             raise RuntimeError(f"[{store['name']}] 認証エラー（401）。アクセストークンが無効です。")
-        res.raise_for_status()
+        if res.status_code >= 400:
+            raise RuntimeError(
+                f"[{store['name']}] myItemList エラー（status={res.status_code}）: {res.text[:1000]}"
+            )
 
         root = ElementTree.fromstring(res.content)
         results = root.findall("Result")

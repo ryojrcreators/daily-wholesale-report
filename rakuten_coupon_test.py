@@ -190,10 +190,15 @@ def probe_issue():
             return
 
 
-# coupon.issue に送れる項目。coupon.get の応答にはこれ以外（shopId, couponStatus 等）も
-# 含まれるが、発行時には受け付けられないため、この一覧で絞り込む。
-# 並び順もこのとおりにする（XMLの要素順を見ている可能性があるため）。
-ISSUE_FIELDS = [
+# coupon.issue に送れる項目と、その並び順。
+# coupon.get の応答には shopId / couponStatus / regDate など発行時に指定できない項目も
+# 含まれるため、この一覧で絞り込む。
+#
+# 並び順は RMS公式の .NET クライアント（JakeJP/Rakuten.RMS.Api）の CouponToIssue クラスの
+# プロパティ順に合わせている。順序が違うと「Request data is wrong format」で弾かれる
+# （multiRankCond を末尾に置いて実際に弾かれた）。
+# multiRankCond と otherConditions は入れ子構造なので、この一覧とは別に組み立てる。
+ISSUE_FIELD_ORDER = [
     "couponName",
     "couponCaption",
     "couponStartDate",
@@ -204,8 +209,10 @@ ISSUE_FIELDS = [
     "discountType",
     "discountFactor",
     "memberAvailMaxCount",
+    "_multiRankCond",   # ここに入る（combineFlagより前）
     "combineFlag",
     "displayFlag",
+    "_otherConditions",  # items の後、最後
 ]
 
 
@@ -214,7 +221,23 @@ def build_issue_xml(src: dict, start: str, end: str, other_conditions: list, ran
     from xml.sax.saxutils import escape
 
     parts = []
-    for field in ISSUE_FIELDS:
+    for field in ISSUE_FIELD_ORDER:
+        if field == "_multiRankCond":
+            if rank_conds:
+                inner = "".join(f"<rankCond>{escape(r)}</rankCond>" for r in rank_conds)
+                parts.append(f"      <multiRankCond>{inner}</multiRankCond>")
+            continue
+
+        if field == "_otherConditions":
+            if other_conditions:
+                conds = "".join(
+                    f"<otherCondition><conditionTypeCode>{escape(c)}</conditionTypeCode>"
+                    f"<startValue>{escape(v)}</startValue></otherCondition>"
+                    for c, v in other_conditions
+                )
+                parts.append(f"      <otherConditions>{conds}</otherConditions>")
+            continue
+
         if field == "couponStartDate":
             value = start
         elif field == "couponEndDate":
@@ -224,18 +247,6 @@ def build_issue_xml(src: dict, start: str, end: str, other_conditions: list, ran
         if value is None or value == "":
             continue
         parts.append(f"      <{field}>{escape(str(value))}</{field}>")
-
-    if rank_conds:
-        inner = "".join(f"<rankCond>{escape(r)}</rankCond>" for r in rank_conds)
-        parts.append(f"      <multiRankCond>{inner}</multiRankCond>")
-
-    if other_conditions:
-        conds = "".join(
-            f"<otherCondition><conditionTypeCode>{escape(c)}</conditionTypeCode>"
-            f"<startValue>{escape(v)}</startValue></otherCondition>"
-            for c, v in other_conditions
-        )
-        parts.append(f"      <otherConditions>{conds}</otherConditions>")
 
     body = "\n".join(parts)
     return (

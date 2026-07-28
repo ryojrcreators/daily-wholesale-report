@@ -190,8 +190,131 @@ def probe_issue():
             return
 
 
+# coupon.issue に送れる項目。coupon.get の応答にはこれ以外（shopId, couponStatus 等）も
+# 含まれるが、発行時には受け付けられないため、この一覧で絞り込む。
+# 並び順もこのとおりにする（XMLの要素順を見ている可能性があるため）。
+ISSUE_FIELDS = [
+    "couponName",
+    "couponCaption",
+    "couponStartDate",
+    "couponEndDate",
+    "couponImage",
+    "issueCount",
+    "itemType",
+    "discountType",
+    "discountFactor",
+    "memberAvailMaxCount",
+    "combineFlag",
+    "displayFlag",
+]
+
+
+def build_issue_xml(src: dict, start: str, end: str, other_conditions: list, rank_conds: list) -> str:
+    """coupon.get で取得した内容から、期間だけ差し替えた発行用XMLを組み立てる"""
+    from xml.sax.saxutils import escape
+
+    parts = []
+    for field in ISSUE_FIELDS:
+        if field == "couponStartDate":
+            value = start
+        elif field == "couponEndDate":
+            value = end
+        else:
+            value = src.get(field)
+        if value is None or value == "":
+            continue
+        parts.append(f"      <{field}>{escape(str(value))}</{field}>")
+
+    if rank_conds:
+        inner = "".join(f"<rankCond>{escape(r)}</rankCond>" for r in rank_conds)
+        parts.append(f"      <multiRankCond>{inner}</multiRankCond>")
+
+    if other_conditions:
+        conds = "".join(
+            f"<otherCondition><conditionTypeCode>{escape(c)}</conditionTypeCode>"
+            f"<startValue>{escape(v)}</startValue></otherCondition>"
+            for c, v in other_conditions
+        )
+        parts.append(f"      <otherConditions>{conds}</otherConditions>")
+
+    body = "\n".join(parts)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<request>\n  <couponIssueRequest>\n    <coupon>\n"
+        f"{body}\n"
+        "    </coupon>\n  </couponIssueRequest>\n</request>"
+    )
+
+
+def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
+    """既存クーポンをコピーし、期間だけ差し替えて発行する"""
+    res = requests.get(
+        f"{BASE}/es/1.0/coupon/get",
+        headers=auth_headers(),
+        params={"couponCode": coupon_code},
+        timeout=30,
+    )
+    if res.status_code >= 400:
+        print(f"  コピー元の取得に失敗しました（{res.status_code}）")
+        print(res.text[:500])
+        return
+
+    root = ElementTree.fromstring(res.content)
+    coupon = root.find("coupon")
+    if coupon is None:
+        print("  コピー元のクーポンが見つかりません。")
+        print(res.text[:500])
+        return
+
+    src = {}
+    for child in coupon:
+        tag = child.tag.split("}")[-1]
+        if not list(child):
+            src[tag] = (child.text or "").strip()
+
+    other_conditions = [
+        ((oc.findtext("conditionTypeCode") or "").strip(), (oc.findtext("startValue") or "").strip())
+        for oc in coupon.iter("otherCondition")
+    ]
+    rank_conds = [(rc.text or "").strip() for rc in coupon.iter("rankCond")]
+
+    print(f"  コピー元: {src.get('couponName')}")
+    print(f"    元の期間: {src.get('couponStartDate')} 〜 {src.get('couponEndDate')}")
+    print(f"    新しい期間: {start} 〜 {end}")
+    print(f"    発行枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}")
+    print(f"    利用条件: {other_conditions}")
+
+    xml = build_issue_xml(src, start, end, other_conditions, rank_conds)
+    print(f"\n  --- 送信するXML ---\n{xml}\n")
+
+    if not do_issue:
+        print("  【確認のみ】実際には発行していません。発行するには MODE=copy-issue で実行してください。")
+        return
+
+    issue_res = requests.post(
+        f"{BASE}/es/1.0/coupon/issue",
+        headers={**auth_headers(), "Content-Type": "application/xml; charset=utf-8"},
+        data=xml.encode("utf-8"),
+        timeout=30,
+    )
+    print(f"  → ステータス: {issue_res.status_code}")
+    print(f"  {issue_res.text[:1500]}")
+
+
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
+    if mode in ("copy-preview", "copy-issue"):
+        code = os.environ.get("COUPON_CODE", "").strip()
+        start = os.environ.get("NEW_START", "").strip()
+        end = os.environ.get("NEW_END", "").strip()
+        if not (code and start and end):
+            print("COUPON_CODE / NEW_START / NEW_END をすべて指定してください。")
+            print("  日時の形式: 2026-08-01T20:00:00+09:00")
+            raise SystemExit(1)
+        print(f"=== 店舗（{SHOP_NAME}）: {code} をコピーして発行 ===\n")
+        copy_coupon(code, start, end, do_issue=(mode == "copy-issue"))
+        raise SystemExit(0)
+
     if mode == "probe-issue":
         print(f"=== 店舗（{SHOP_NAME}）: coupon.issue の必須項目を調べる ===\n")
         probe_issue()

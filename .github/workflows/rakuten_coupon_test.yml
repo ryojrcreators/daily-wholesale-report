@@ -13,6 +13,8 @@ on:
           - 'list'
           - 'detail'
           - 'probe-issue'
+          - 'copy-preview'
+          - 'copy-issue'
       coupon_code:
         description: 'detail時に見るクーポンコード'
         required: false
@@ -21,6 +23,14 @@ on:
         description: 'list時の取得件数'
         required: false
         default: '20'
+      new_start:
+        description: 'copy時の新しい開始日時（例 2026-08-01T20:00:00+09:00）'
+        required: false
+        default: ''
+      new_end:
+        description: 'copy時の新しい終了日時（例 2026-08-08T01:59:59+09:00）'
+        required: false
+        default: ''
 
 jobs:
   test:
@@ -39,4 +49,6 @@ jobs:
           MODE: ${{ inputs.mode }}
           COUPON_CODE: ${{ inputs.coupon_code }}
           HITS: ${{ inputs.hits }}
+          NEW_START: ${{ inputs.new_start }}
+          NEW_END: ${{ inputs.new_end }}
         run: python -u rakuten_coupon_test.py

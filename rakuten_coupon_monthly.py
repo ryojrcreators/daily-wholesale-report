@@ -44,6 +44,8 @@ SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 
 # 発行結果の通知先。ルームidは設定タブから読む（トークンだけSecrets）
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
+# 通知の宛先。Chatworkの記法なのでそのまま送る
+CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
 
 CONFIG_SHEET = "クーポン_月次設定"
 LOG_SHEET = "クーポン_発行ログ"
@@ -170,6 +172,7 @@ def post_chatwork(room_id: str, body: str):
 
 def build_success_message(name, period_label, start, end, code, url, request_message) -> str:
     lines = [
+        CW_MENTION,
         f"[info][title]楽天クーポン更新（{period_label}）[/title]",
         name,
         f"期間: {format_period(start, end)}",
@@ -322,7 +325,8 @@ def main():
                 name, period_label, new_start, new_end, code, url, request_message))
         else:
             # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
-            post_chatwork(room_id, f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
+            post_chatwork(room_id, f"{CW_MENTION}\n"
+                                   f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
                                    f"{name}\n{message}\n手動での対応をお願いします。[/info]")
         log_rows.append([now_label, name, period_label, message, code or "", url or ""])
 

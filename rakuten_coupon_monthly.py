@@ -24,6 +24,7 @@ import json
 import calendar
 from datetime import datetime, timezone, timedelta
 
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -41,15 +42,21 @@ LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
 SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 
+# 発行結果の通知先。ルームidは設定タブから読む（トークンだけSecrets）
+CW_TOKEN = os.environ.get("CW_TOKEN", "")
+
 CONFIG_SHEET = "クーポン_月次設定"
 LOG_SHEET = "クーポン_発行ログ"
 LOG_HEADER = ["実行日時(JST)", "クーポン名", "対象期間", "結果", "新クーポンコード", "取得URL"]
 
 # 設定タブの既定値。タブが無い場合はこの内容で作成する。
+# 依頼メッセージは、発行後のChatwork通知の末尾にそのまま入る。
 DEFAULT_CONFIG = [
-    ["対象クーポン名（この名前の最新のものをコピー元にします）"],
-    ["アメリカーナLINE登録限定1,000円OFFクーポン"],
-    ["ショップまたは商品レビュー投稿で1,000円クーポン"],
+    ["対象クーポン名（この名前の最新のものをコピー元にします）", "更新後の依頼メッセージ"],
+    ["アメリカーナLINE登録限定1,000円OFFクーポン", "LINEの方の更新をお願いします。"],
+    ["ショップまたは商品レビュー投稿で1,000円クーポン", "メッセージテンプレートの更新をお願いします。"],
+    [""],
+    ["Chatworkルームid", "60101971"],
     [""],
     ["イベント期間（手動指定。セールクーポンから自動判定もします）"],
     ["開始日(YYYY-MM-DD)", "終了日(YYYY-MM-DD)", "メモ"],
@@ -73,34 +80,51 @@ def get_spreadsheet():
     return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
 
 
-def load_config(spreadsheet):
-    """対象クーポン名と、手動指定のイベント期間を読み込む。"""
-    try:
-        ws = spreadsheet.worksheet(CONFIG_SHEET)
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"「{CONFIG_SHEET}」タブが無いため、既定の内容で作成します。")
-        ws = spreadsheet.add_worksheet(title=CONFIG_SHEET, rows=100, cols=3)
-        ws.update(range_name="A1", values=DEFAULT_CONFIG)
-        return [row[0] for row in DEFAULT_CONFIG[1:3]], []
+def parse_config(rows: list):
+    """
+    設定タブの内容を読み解く。
+    戻り値は (対象クーポン [(名前, 依頼メッセージ)], イベント期間 [(開始, 終了)], Chatworkルームid)
+    """
+    targets, events, room_id = [], [], ""
+    section = None
 
-    rows = ws.get_all_values()
-    names, events, section = [], [], "names"
-    for row in rows[1:]:
+    for row in rows:
         first = row[0].strip() if row else ""
+        second = row[1].strip() if len(row) > 1 else ""
+
         if not first:
+            continue
+        if first.startswith("対象クーポン名"):
+            section = "targets"
+            continue
+        if first.startswith("Chatworkルームid"):
+            room_id = second
+            section = None
             continue
         if first.startswith("イベント期間"):
             section = "events"
             continue
         if first.startswith("開始日"):
             continue
-        if section == "names":
-            names.append(first)
-        else:
-            end = row[1].strip() if len(row) > 1 else ""
-            if end:
-                events.append((first, end))
-    return names, events
+
+        if section == "targets":
+            targets.append((first, second))
+        elif section == "events" and second:
+            events.append((first, second))
+
+    return targets, events, room_id
+
+
+def load_config(spreadsheet):
+    try:
+        ws = spreadsheet.worksheet(CONFIG_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"「{CONFIG_SHEET}」タブが無いため、既定の内容で作成します。")
+        ws = spreadsheet.add_worksheet(title=CONFIG_SHEET, rows=100, cols=3)
+        ws.update(range_name="A1", values=DEFAULT_CONFIG)
+        return parse_config(DEFAULT_CONFIG)
+
+    return parse_config(ws.get_all_values())
 
 
 def append_log(spreadsheet, rows: list):
@@ -112,6 +136,50 @@ def append_log(spreadsheet, rows: list):
         ws = spreadsheet.add_worksheet(title=LOG_SHEET, rows=1000, cols=len(LOG_HEADER))
         ws.append_row(LOG_HEADER)
     ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+
+# ══ Chatwork 通知 ═════════════════════════════════
+def format_period(start: str, end: str) -> str:
+    """2026-08-01T00:00:00+09:00 → 2026/08/01 00:00 の形にする"""
+    def fmt(v):
+        dt = parse_rms_datetime(v)
+        return dt.strftime("%Y/%m/%d %H:%M") if dt else v
+    return f"{fmt(start)} 〜 {fmt(end)}"
+
+
+def post_chatwork(room_id: str, body: str):
+    if not room_id:
+        print("  Chatworkルームidが未設定のため通知しません。")
+        return
+    if not CW_TOKEN:
+        print("  CW_TOKENが未設定のため通知しません。")
+        return
+    try:
+        res = requests.post(
+            f"https://api.chatwork.com/v2/rooms/{room_id}/messages",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            data={"body": body},
+            timeout=30,
+        )
+        print(f"  Chatwork通知: status={res.status_code}")
+        if res.status_code >= 400:
+            print(f"    {res.text[:300]}")
+    except Exception as e:
+        print(f"  Chatwork通知に失敗しました: {e}")
+
+
+def build_success_message(name, period_label, start, end, code, url, request_message) -> str:
+    lines = [
+        f"[info][title]楽天クーポン更新（{period_label}）[/title]",
+        name,
+        f"期間: {format_period(start, end)}",
+        f"クーポンコード: {code}",
+        f"取得URL: {url}",
+    ]
+    if request_message:
+        lines += ["", request_message]
+    lines.append("[/info]")
+    return "\n".join(lines)
 
 
 # ══ 日付まわり ════════════════════════════════════
@@ -178,8 +246,10 @@ def main():
     print(f"今日: {today.strftime('%Y-%m-%d (%a) %H:%M')}")
 
     spreadsheet = get_spreadsheet()
-    target_names, manual_events = load_config(spreadsheet)
+    targets, manual_events, room_id = load_config(spreadsheet)
+    target_names = [name for name, _ in targets]
     print(f"対象クーポン: {target_names}")
+    print(f"Chatwork通知先ルームid: {room_id or '（未設定）'}")
 
     headers = auth_headers(SERVICE_SECRET, LICENSE_KEY)
     try:
@@ -203,7 +273,7 @@ def main():
     log_rows = []
     now_label = today.strftime("%Y/%m/%d %H:%M")
 
-    for name in target_names:
+    for name, request_message in targets:
         print(f"\n--- {name} ---")
         matches = [c for c in coupons if c.get("couponName") == name]
         if not matches:
@@ -236,6 +306,10 @@ def main():
             print("  【DRY RUN】以下の内容で発行します：")
             print(f"    枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}"
                   f" / 条件: {nested['otherConditions']}")
+            print("  【DRY RUN】Chatworkに送る予定のメッセージ：")
+            print(build_success_message(name, period_label, new_start, new_end,
+                                        "（発行後に決まります）", "（発行後に決まります）",
+                                        request_message))
             log_rows.append([now_label, name, period_label, "【DRY RUN】発行対象", "", ""])
             continue
 
@@ -244,6 +318,12 @@ def main():
         if success:
             print(f"    新クーポンコード: {code}")
             print(f"    取得URL: {url}")
+            post_chatwork(room_id, build_success_message(
+                name, period_label, new_start, new_end, code, url, request_message))
+        else:
+            # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
+            post_chatwork(room_id, f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
+                                   f"{name}\n{message}\n手動での対応をお願いします。[/info]")
         log_rows.append([now_label, name, period_label, message, code or "", url or ""])
 
     try:

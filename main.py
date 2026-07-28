@@ -60,9 +60,20 @@ def download_csv():
 
         # ===== CSVダウンロード =====
         print("CSVをダウンロードしています...")
-        with page.expect_download() as download_info:
-            page.click('a:has-text("Download Full CSV"), button:has-text("Download Full CSV")')
-        download = download_info.value
+        try:
+            with page.expect_download(timeout=30000) as download_info:
+                page.click('a:has-text("Download Full CSV"), button:has-text("Download Full CSV")')
+            download = download_info.value
+        except Exception as e:
+            print(f"！ダウンロードに失敗しました: {e}")
+            print(f"現在のURL: {page.url}")
+            print(f"ページ本文（先頭1500文字）: {page.inner_text('body')[:1500]}")
+            try:
+                page.screenshot(path="debug_wholesale.png", full_page=True)
+                print("スクリーンショットを debug_wholesale.png に保存しました")
+            except Exception as se:
+                print(f"スクリーンショット保存に失敗: {se}")
+            raise
 
         # 一時ファイルに保存
         tmp_path = tempfile.mktemp(suffix=".csv")

@@ -161,21 +161,33 @@ def probe_issue():
     print(f"  GET  /es/1.0/coupon/issue → {probe_res.status_code}")
     print(f"    {probe_res.text[:300]}\n")
 
-    for content_type, body in [
-        ("application/json; charset=utf-8", {}),
-        ("application/xml; charset=utf-8", "<request></request>"),
-    ]:
-        headers = {**auth_headers(), "Content-Type": content_type}
-        kwargs = {"json": body} if isinstance(body, dict) else {"data": body}
-        res = requests.post(url, headers=headers, timeout=20, **kwargs)
+    # 「Request data is wrong format」＝XMLの入れ物の形が違う、という意味。
+    # coupon.get の応答が <result><coupon>... だったので、リクエストも似た構造と推測し、
+    # ルート要素の候補を順に試す。必須項目のエラーに変われば、その形が正解。
+    # 中身は couponName だけにして、他の必須項目が足りずに必ず失敗するようにしている。
+    candidates = [
+        ("<request><coupon><couponName>テスト</couponName></coupon></request>", "request>coupon"),
+        ("<couponIssueRequest><couponName>テスト</couponName></couponIssueRequest>", "couponIssueRequest"),
+        ("<request><couponIssue><couponName>テスト</couponName></couponIssue></request>", "request>couponIssue"),
+        ("<coupon><couponName>テスト</couponName></coupon>", "coupon"),
+        ("<request><coupons><coupon><couponName>テスト</couponName></coupon></coupons></request>", "request>coupons>coupon"),
+    ]
 
-        print(f"  POST /es/1.0/coupon/issue  Content-Type={content_type.split(';')[0]}")
+    for body, label in candidates:
+        headers = {**auth_headers(), "Content-Type": "application/xml; charset=utf-8"}
+        res = requests.post(url, headers=headers, data=body.encode("utf-8"), timeout=20)
+
+        print(f"  POST ルート要素 = {label}")
         print(f"    → ステータス: {res.status_code}")
-        print(f"    {res.text[:2000]}\n")
+        print(f"    {res.text[:1500]}\n")
+
+        if "wrong format" not in res.text:
+            print(f"    ✅ この形が受け付けられました（ルート要素 = {label}）\n")
 
         if "couponCode" in res.text and "<errors>" not in res.text:
             print("    ⚠️ クーポンが作成された可能性があります。上のcouponCodeを確認し、"
                   "必要なら削除してください。\n")
+            return
 
 
 if __name__ == "__main__":

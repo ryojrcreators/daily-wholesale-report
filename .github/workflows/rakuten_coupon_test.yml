@@ -12,6 +12,7 @@ on:
           - 'probe'
           - 'list'
           - 'detail'
+          - 'probe-issue'
       coupon_code:
         description: 'detail時に見るクーポンコード'
         required: false

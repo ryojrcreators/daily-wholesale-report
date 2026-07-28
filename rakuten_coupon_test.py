@@ -146,8 +146,44 @@ def show_coupon(coupon_code: str):
     walk(root)
 
 
+def probe_issue():
+    """
+    coupon.issue に空のリクエストを投げて、必須項目のエラーを全部吐かせる。
+
+    必須項目が揃っていないので失敗するはずだが、万一通ってしまった場合に備えて
+    レスポンスに couponCode が含まれていないかを確認し、含まれていたら警告する
+    （その場合は coupon.delete で消す必要がある）。
+    """
+    url = f"{BASE}/es/1.0/coupon/issue"
+
+    # まずメソッドを確かめる（GETなら405が返り、許可メソッドが分かることがある）
+    probe_res = requests.get(url, headers=auth_headers(), timeout=20)
+    print(f"  GET  /es/1.0/coupon/issue → {probe_res.status_code}")
+    print(f"    {probe_res.text[:300]}\n")
+
+    for content_type, body in [
+        ("application/json; charset=utf-8", {}),
+        ("application/xml; charset=utf-8", "<request></request>"),
+    ]:
+        headers = {**auth_headers(), "Content-Type": content_type}
+        kwargs = {"json": body} if isinstance(body, dict) else {"data": body}
+        res = requests.post(url, headers=headers, timeout=20, **kwargs)
+
+        print(f"  POST /es/1.0/coupon/issue  Content-Type={content_type.split(';')[0]}")
+        print(f"    → ステータス: {res.status_code}")
+        print(f"    {res.text[:2000]}\n")
+
+        if "couponCode" in res.text and "<errors>" not in res.text:
+            print("    ⚠️ クーポンが作成された可能性があります。上のcouponCodeを確認し、"
+                  "必要なら削除してください。\n")
+
+
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
+    if mode == "probe-issue":
+        print(f"=== 店舗（{SHOP_NAME}）: coupon.issue の必須項目を調べる ===\n")
+        probe_issue()
+        raise SystemExit(0)
     if mode == "probe":
         probe()
     elif mode == "list":

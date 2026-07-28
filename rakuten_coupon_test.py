@@ -311,6 +311,18 @@ if __name__ == "__main__":
             print("COUPON_CODE / NEW_START / NEW_END をすべて指定してください。")
             print("  日時の形式: 2026-08-01T20:00:00+09:00")
             raise SystemExit(1)
+
+        # 日時の打ち間違い（桁落ちなど）でおかしな期間のクーポンを作らないよう、形式を検証する
+        import re
+        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+09:00$")
+        for label, value in (("NEW_START", start), ("NEW_END", end)):
+            if not date_pattern.match(value):
+                print(f"{label} の形式が正しくありません: {value}")
+                print("  正しい形式: 2026-08-01T20:00:00+09:00")
+                raise SystemExit(1)
+        if start >= end:
+            print(f"開始日時が終了日時以降になっています: {start} 〜 {end}")
+            raise SystemExit(1)
         print(f"=== 店舗（{SHOP_NAME}）: {code} をコピーして発行 ===\n")
         copy_coupon(code, start, end, do_issue=(mode == "copy-issue"))
         raise SystemExit(0)

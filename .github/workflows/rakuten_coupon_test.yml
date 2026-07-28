@@ -15,6 +15,7 @@ on:
           - 'probe-issue'
           - 'copy-preview'
           - 'copy-issue'
+          - 'issue-variants'
       coupon_code:
         description: 'detail時に見るクーポンコード'
         required: false

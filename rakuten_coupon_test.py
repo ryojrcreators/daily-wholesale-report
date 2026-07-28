@@ -312,8 +312,82 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
     print(f"  {issue_res.text[:1500]}")
 
 
+def issue_variants(coupon_code: str, start: str, end: str):
+    """
+    「Request data is wrong format」の原因を切り分けるため、
+    XMLの形を少しずつ変えて送り、どこで通るかを探す。
+
+    成功した時点でクーポンが1つ作られるので、そこで必ず止める。
+    """
+    res = requests.get(
+        f"{BASE}/es/1.0/coupon/get",
+        headers=auth_headers(),
+        params={"couponCode": coupon_code},
+        timeout=30,
+    )
+    coupon = ElementTree.fromstring(res.content).find("coupon")
+    src = {c.tag.split("}")[-1]: (c.text or "").strip() for c in coupon if not list(c)}
+    other_conditions = [
+        ((oc.findtext("conditionTypeCode") or "").strip(), (oc.findtext("startValue") or "").strip())
+        for oc in coupon.iter("otherCondition")
+    ]
+    rank_conds = [(rc.text or "").strip() for rc in coupon.iter("rankCond")]
+
+    full = build_issue_xml(src, start, end, other_conditions, rank_conds)
+    body_only = full.split("\n", 1)[1]           # XML宣言を落としたもの
+    compact = "".join(line.strip() for line in full.split("\n"))
+    minimal = build_issue_xml(
+        {k: src.get(k) for k in ("couponName", "couponCaption", "issueCount",
+                                 "itemType", "discountType", "discountFactor",
+                                 "memberAvailMaxCount", "combineFlag", "displayFlag")},
+        start, end, [], [],
+    )
+    # RS003（利用金額）だけ残したもの。otherCondition を複数送れない可能性の検証用
+    only_rs003 = build_issue_xml(
+        src, start, end,
+        [(c, v) for c, v in other_conditions if c == "RS003"], rank_conds,
+    )
+
+    variants = [
+        ("XML宣言なし", body_only),
+        ("改行・インデントなし", compact),
+        ("最小項目（画像・条件・ランクなし）", minimal),
+        ("利用条件をRS003だけに絞る", only_rs003),
+    ]
+
+    for label, body in variants:
+        res = requests.post(
+            f"{BASE}/es/1.0/coupon/issue",
+            headers={**auth_headers(), "Content-Type": "application/xml; charset=utf-8"},
+            data=body.encode("utf-8"),
+            timeout=30,
+        )
+        print(f"  ■ {label}")
+        print(f"    → ステータス: {res.status_code}")
+        print(f"    {res.text[:600]}\n")
+
+        if "wrong format" not in res.text:
+            print(f"    ✅ この形は受け付けられました（{label}）")
+            if "<couponCode>" in res.text:
+                print("    ⚠️ クーポンが作成されました。上の couponCode を確認してください。")
+            return
+
+    print("  どの形でも通りませんでした。")
+
+
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
+    if mode == "issue-variants":
+        code = os.environ.get("COUPON_CODE", "").strip()
+        start = os.environ.get("NEW_START", "").strip()
+        end = os.environ.get("NEW_END", "").strip()
+        if not (code and start and end):
+            print("COUPON_CODE / NEW_START / NEW_END をすべて指定してください。")
+            raise SystemExit(1)
+        print(f"=== 店舗（{SHOP_NAME}）: XMLの形を変えて切り分け ===\n")
+        issue_variants(code, start, end)
+        raise SystemExit(0)
+
     if mode in ("copy-preview", "copy-issue"):
         code = os.environ.get("COUPON_CODE", "").strip()
         start = os.environ.get("NEW_START", "").strip()

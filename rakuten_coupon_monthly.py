@@ -55,8 +55,11 @@ DEFAULT_CONFIG = [
     ["開始日(YYYY-MM-DD)", "終了日(YYYY-MM-DD)", "メモ"],
 ]
 
-# イベント（セール）中かどうかを判定するためのクーポン名の目印
-EVENT_NAME_MARKERS = ["先着", "限定"]
+# イベント（セール）中かどうかを判定するためのクーポン名の目印。
+# セール時に必ず発行している【先着◯名】【先着順】系だけを見る。
+# 「限定」は常設クーポン名（アメリカーナLINE登録限定1,000円OFFクーポン）にも
+# 含まれてしまい、常にイベント中と誤判定するため使わない。
+EVENT_NAME_MARKERS = ["先着"]
 
 CREATE_FROM_DAY = 20  # 何日以降に作成するか
 
@@ -128,7 +131,7 @@ def parse_rms_datetime(value: str):
         return None
 
 
-def is_event_day(today: datetime, coupons: list, manual_events: list) -> tuple:
+def is_event_day(today: datetime, coupons: list, manual_events: list, target_names: list) -> tuple:
     """今日がイベント期間中かを判定する。(判定, 理由) を返す。"""
     date_str = today.strftime("%Y-%m-%d")
     for start, end in manual_events:
@@ -137,6 +140,9 @@ def is_event_day(today: datetime, coupons: list, manual_events: list) -> tuple:
 
     for c in coupons:
         name = c.get("couponName", "")
+        # 更新対象の常設クーポン自体をイベント判定に使わない（名前が紛らわしい場合の保険）
+        if name in target_names:
+            continue
         if not any(marker in name for marker in EVENT_NAME_MARKERS):
             continue
         start = parse_rms_datetime(c.get("couponStartDate", ""))
@@ -147,7 +153,7 @@ def is_event_day(today: datetime, coupons: list, manual_events: list) -> tuple:
     return False, ""
 
 
-def check_today(today: datetime, coupons: list, manual_events: list) -> tuple:
+def check_today(today: datetime, coupons: list, manual_events: list, target_names: list) -> tuple:
     """今日が発行してよい日かを判定する。(発行してよいか, 理由) を返す。"""
     if today.day < CREATE_FROM_DAY:
         return False, f"まだ{CREATE_FROM_DAY}日前ではありません（今日は{today.day}日）"
@@ -155,7 +161,7 @@ def check_today(today: datetime, coupons: list, manual_events: list) -> tuple:
     if today.weekday() >= 5:
         return False, f"週末です（{'土曜' if today.weekday() == 5 else '日曜'}）"
 
-    is_event, reason = is_event_day(today, coupons, manual_events)
+    is_event, reason = is_event_day(today, coupons, manual_events, target_names)
     if is_event:
         return False, f"イベント期間中です: {reason}"
 
@@ -183,7 +189,7 @@ def main():
         sys.exit(1)
     print(f"既存クーポン: {len(coupons)}件")
 
-    ok, reason = check_today(today, coupons, manual_events)
+    ok, reason = check_today(today, coupons, manual_events, target_names)
     print(f"本日の判定: {reason}")
     if not ok and not FORCE:
         print("今日は発行しません。終了。")

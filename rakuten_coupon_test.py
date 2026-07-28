@@ -16,7 +16,7 @@
 
 import os
 import base64
-import json
+from xml.etree import ElementTree
 
 import requests
 
@@ -89,5 +89,76 @@ def probe():
         print(f"  {method} {path} → {status}: {meaning}")
 
 
+def list_coupons(hits: int):
+    """クーポン一覧を取得して、コピー元の候補を探す（読み取りのみ）"""
+    res = requests.get(
+        f"{BASE}/es/1.0/coupon/search",
+        headers=auth_headers(),
+        params={"hits": hits, "page": 1},
+        timeout=30,
+    )
+    print(f"  GET /es/1.0/coupon/search?hits={hits} → {res.status_code}\n")
+    if res.status_code >= 400:
+        print(res.text[:1000])
+        return
+
+    root = ElementTree.fromstring(res.content)
+    print(f"  総件数: {root.findtext('allCount')}\n")
+
+    for i, coupon in enumerate(root.iter("coupon"), start=1):
+        code = coupon.findtext("couponCode") or ""
+        name = coupon.findtext("couponName") or ""
+        start = coupon.findtext("couponStartDate") or ""
+        end = coupon.findtext("couponEndDate") or ""
+        print(f"  {i:>3}. {code}")
+        print(f"       {name[:60]}")
+        print(f"       期間: {start} 〜 {end}")
+
+
+def show_coupon(coupon_code: str):
+    """1件のクーポンの全項目を出力する（発行に必要な項目の洗い出し用）"""
+    res = requests.get(
+        f"{BASE}/es/1.0/coupon/get",
+        headers=auth_headers(),
+        params={"couponCode": coupon_code},
+        timeout=30,
+    )
+    print(f"  GET /es/1.0/coupon/get?couponCode={coupon_code} → {res.status_code}\n")
+    if res.status_code >= 400:
+        print(res.text[:1000])
+        return
+
+    # 構造を保ったまま全項目を出す（入れ子があるとコピー時に効いてくるため）
+    root = ElementTree.fromstring(res.content)
+
+    def walk(elem, depth=0):
+        tag = elem.tag.split("}")[-1]
+        text = (elem.text or "").strip()
+        children = list(elem)
+        indent = "  " + "  " * depth
+        if children:
+            print(f"{indent}[{tag}]")
+            for child in children:
+                walk(child, depth + 1)
+        else:
+            print(f"{indent}{tag}: {text}")
+
+    walk(root)
+
+
 if __name__ == "__main__":
-    probe()
+    mode = os.environ.get("MODE", "probe")
+    if mode == "probe":
+        probe()
+    elif mode == "list":
+        print(f"=== 店舗（{SHOP_NAME}）: クーポン一覧 ===\n")
+        list_coupons(int(os.environ.get("HITS", "20")))
+    elif mode == "detail":
+        code = os.environ.get("COUPON_CODE", "").strip()
+        if not code:
+            print("COUPON_CODE が指定されていません。")
+        else:
+            print(f"=== 店舗（{SHOP_NAME}）: クーポン {code} の全項目 ===\n")
+            show_coupon(code)
+    else:
+        print(f"不明なMODE: {mode}")

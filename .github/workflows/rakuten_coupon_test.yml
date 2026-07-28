@@ -2,6 +2,24 @@ name: 楽天クーポンAPI 調査（読み取りのみ）
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目'
+        required: true
+        default: 'list'
+        type: choice
+        options:
+          - 'probe'
+          - 'list'
+          - 'detail'
+      coupon_code:
+        description: 'detail時に見るクーポンコード'
+        required: false
+        default: ''
+      hits:
+        description: 'list時の取得件数'
+        required: false
+        default: '20'
 
 jobs:
   test:
@@ -17,4 +35,7 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
           RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          MODE: ${{ inputs.mode }}
+          COUPON_CODE: ${{ inputs.coupon_code }}
+          HITS: ${{ inputs.hits }}
         run: python -u rakuten_coupon_test.py

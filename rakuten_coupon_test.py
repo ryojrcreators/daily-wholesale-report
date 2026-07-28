@@ -146,58 +146,15 @@ def show_coupon(coupon_code: str):
     walk(root)
 
 
-def probe_issue():
-    """
-    coupon.issue に空のリクエストを投げて、必須項目のエラーを全部吐かせる。
-
-    必須項目が揃っていないので失敗するはずだが、万一通ってしまった場合に備えて
-    レスポンスに couponCode が含まれていないかを確認し、含まれていたら警告する
-    （その場合は coupon.delete で消す必要がある）。
-    """
-    url = f"{BASE}/es/1.0/coupon/issue"
-
-    # まずメソッドを確かめる（GETなら405が返り、許可メソッドが分かることがある）
-    probe_res = requests.get(url, headers=auth_headers(), timeout=20)
-    print(f"  GET  /es/1.0/coupon/issue → {probe_res.status_code}")
-    print(f"    {probe_res.text[:300]}\n")
-
-    # 「Request data is wrong format」＝XMLの入れ物の形が違う、という意味。
-    # coupon.get の応答が <result><coupon>... だったので、リクエストも似た構造と推測し、
-    # ルート要素の候補を順に試す。必須項目のエラーに変われば、その形が正解。
-    # 中身は couponName だけにして、他の必須項目が足りずに必ず失敗するようにしている。
-    candidates = [
-        ("<request><coupon><couponName>テスト</couponName></coupon></request>", "request>coupon"),
-        ("<couponIssueRequest><couponName>テスト</couponName></couponIssueRequest>", "couponIssueRequest"),
-        ("<request><couponIssue><couponName>テスト</couponName></couponIssue></request>", "request>couponIssue"),
-        ("<coupon><couponName>テスト</couponName></coupon>", "coupon"),
-        ("<request><coupons><coupon><couponName>テスト</couponName></coupon></coupons></request>", "request>coupons>coupon"),
-    ]
-
-    for body, label in candidates:
-        headers = {**auth_headers(), "Content-Type": "application/xml; charset=utf-8"}
-        res = requests.post(url, headers=headers, data=body.encode("utf-8"), timeout=20)
-
-        print(f"  POST ルート要素 = {label}")
-        print(f"    → ステータス: {res.status_code}")
-        print(f"    {res.text[:1500]}\n")
-
-        if "wrong format" not in res.text:
-            print(f"    ✅ この形が受け付けられました（ルート要素 = {label}）\n")
-
-        if "couponCode" in res.text and "<errors>" not in res.text:
-            print("    ⚠️ クーポンが作成された可能性があります。上のcouponCodeを確認し、"
-                  "必要なら削除してください。\n")
-            return
-
-
-# coupon.issue に送れる項目と、その並び順。
-# coupon.get の応答には shopId / couponStatus / regDate など発行時に指定できない項目も
-# 含まれるため、この一覧で絞り込む。
+# coupon.issue に送る要素と、その並び順（RMS公式ドキュメントの XML:coupon の定義順）。
 #
-# 並び順は RMS公式の .NET クライアント（JakeJP/Rakuten.RMS.Api）の CouponToIssue クラスの
-# プロパティ順に合わせている。順序が違うと「Request data is wrong format」で弾かれる
-# （multiRankCond を末尾に置いて実際に弾かれた）。
-# multiRankCond と otherConditions は入れ子構造なので、この一覧とは別に組み立てる。
+# 重要: purchaseHistoryCond / genderCond / ageRangeCond / birthmonthCond /
+# multiPrefectureCond は「値が指定なし」でも要素自体が必須。1つでも欠けると
+# 「Request data is wrong format」で弾かれる。
+#
+# coupon.get の応答には shopId / couponStatus / regDate / pcGetUrl など
+# 発行時に指定できない項目も含まれるため、この一覧で絞り込む。
+# アンダースコアで始まるものは入れ子構造なので個別に組み立てる。
 ISSUE_FIELD_ORDER = [
     "couponName",
     "couponCaption",
@@ -209,33 +166,63 @@ ISSUE_FIELD_ORDER = [
     "discountType",
     "discountFactor",
     "memberAvailMaxCount",
-    "_multiRankCond",   # ここに入る（combineFlagより前）
+    "_purchaseHistoryCond",
+    "_multiRankCond",
+    "genderCond",
+    "_ageRangeCond",
+    "birthmonthCond",
+    "_multiPrefectureCond",
     "combineFlag",
     "displayFlag",
-    "_otherConditions",  # items の後、最後
+    "_otherConditions",
 ]
 
 
-def build_issue_xml(src: dict, start: str, end: str, other_conditions: list, rank_conds: list) -> str:
+def build_issue_xml(src: dict, start: str, end: str, nested: dict) -> str:
     """coupon.get で取得した内容から、期間だけ差し替えた発行用XMLを組み立てる"""
     from xml.sax.saxutils import escape
 
+    def esc(v):
+        return escape(str(v))
+
     parts = []
     for field in ISSUE_FIELD_ORDER:
+        if field == "_purchaseHistoryCond":
+            # 必須。値は「0=指定なし」でも要素は必ず送る
+            parts.append(
+                f"      <purchaseHistoryCond><type>"
+                f"{esc(nested.get('purchaseHistoryType', '0'))}</type></purchaseHistoryCond>"
+            )
+            continue
+
         if field == "_multiRankCond":
-            if rank_conds:
-                inner = "".join(f"<rankCond>{escape(r)}</rankCond>" for r in rank_conds)
-                parts.append(f"      <multiRankCond>{inner}</multiRankCond>")
+            ranks = nested.get("rankConds") or ["0"]
+            inner = "".join(f"<rankCond>{esc(r)}</rankCond>" for r in ranks)
+            parts.append(f"      <multiRankCond>{inner}</multiRankCond>")
+            continue
+
+        if field == "_ageRangeCond":
+            parts.append(
+                f"      <ageRangeCond><lowerBound>{esc(nested.get('ageLower', '0'))}</lowerBound>"
+                f"<upperBound>{esc(nested.get('ageUpper', '0'))}</upperBound></ageRangeCond>"
+            )
+            continue
+
+        if field == "_multiPrefectureCond":
+            prefs = nested.get("prefectures") or ["NONE"]
+            inner = "".join(f"<prefectureCond>{esc(p)}</prefectureCond>" for p in prefs)
+            parts.append(f"      <multiPrefectureCond>{inner}</multiPrefectureCond>")
             continue
 
         if field == "_otherConditions":
-            if other_conditions:
-                conds = "".join(
-                    f"<otherCondition><conditionTypeCode>{escape(c)}</conditionTypeCode>"
-                    f"<startValue>{escape(v)}</startValue></otherCondition>"
-                    for c, v in other_conditions
+            conds = nested.get("otherConditions") or []
+            if conds:
+                inner = "".join(
+                    f"<otherCondition><conditionTypeCode>{esc(c)}</conditionTypeCode>"
+                    f"<startValue>{esc(v)}</startValue></otherCondition>"
+                    for c, v in conds
                 )
-                parts.append(f"      <otherConditions>{conds}</otherConditions>")
+                parts.append(f"      <otherConditions>{inner}</otherConditions>")
             continue
 
         if field == "couponStartDate":
@@ -244,9 +231,16 @@ def build_issue_xml(src: dict, start: str, end: str, other_conditions: list, ran
             value = end
         else:
             value = src.get(field)
+
+        # genderCond / birthmonthCond は必須なので、元に無ければ「指定なし」を補う
+        if (value is None or value == "") and field == "genderCond":
+            value = "NONE"
+        if (value is None or value == "") and field == "birthmonthCond":
+            value = "0"
+
         if value is None or value == "":
             continue
-        parts.append(f"      <{field}>{escape(str(value))}</{field}>")
+        parts.append(f"      <{field}>{esc(value)}</{field}>")
 
     body = "\n".join(parts)
     return (
@@ -283,19 +277,28 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
         if not list(child):
             src[tag] = (child.text or "").strip()
 
-    other_conditions = [
-        ((oc.findtext("conditionTypeCode") or "").strip(), (oc.findtext("startValue") or "").strip())
-        for oc in coupon.iter("otherCondition")
-    ]
-    rank_conds = [(rc.text or "").strip() for rc in coupon.iter("rankCond")]
+    # 入れ子の条件は、要素自体が必須なので取りこぼさないよう個別に拾う
+    age = coupon.find("ageRangeCond")
+    nested = {
+        "otherConditions": [
+            ((oc.findtext("conditionTypeCode") or "").strip(),
+             (oc.findtext("startValue") or "").strip())
+            for oc in coupon.iter("otherCondition")
+        ],
+        "rankConds": [(rc.text or "").strip() for rc in coupon.iter("rankCond")],
+        "prefectures": [(p.text or "").strip() for p in coupon.iter("prefectureCond")],
+        "purchaseHistoryType": (coupon.findtext("purchaseHistoryCond/type") or "0").strip(),
+        "ageLower": (age.findtext("lowerBound") if age is not None else "0") or "0",
+        "ageUpper": (age.findtext("upperBound") if age is not None else "0") or "0",
+    }
 
     print(f"  コピー元: {src.get('couponName')}")
     print(f"    元の期間: {src.get('couponStartDate')} 〜 {src.get('couponEndDate')}")
     print(f"    新しい期間: {start} 〜 {end}")
     print(f"    発行枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}")
-    print(f"    利用条件: {other_conditions}")
+    print(f"    利用条件: {nested['otherConditions']}")
 
-    xml = build_issue_xml(src, start, end, other_conditions, rank_conds)
+    xml = build_issue_xml(src, start, end, nested)
     print(f"\n  --- 送信するXML ---\n{xml}\n")
 
     if not do_issue:
@@ -312,147 +315,8 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
     print(f"  {issue_res.text[:1500]}")
 
 
-def issue_variants(coupon_code: str, start: str, end: str):
-    """
-    「Request data is wrong format」の原因を切り分けるため、
-    XMLの形を少しずつ変えて送り、どこで通るかを探す。
-
-    成功した時点でクーポンが1つ作られるので、そこで必ず止める。
-    """
-    res = requests.get(
-        f"{BASE}/es/1.0/coupon/get",
-        headers=auth_headers(),
-        params={"couponCode": coupon_code},
-        timeout=30,
-    )
-    coupon = ElementTree.fromstring(res.content).find("coupon")
-    src = {c.tag.split("}")[-1]: (c.text or "").strip() for c in coupon if not list(c)}
-    other_conditions = [
-        ((oc.findtext("conditionTypeCode") or "").strip(), (oc.findtext("startValue") or "").strip())
-        for oc in coupon.iter("otherCondition")
-    ]
-    rank_conds = [(rc.text or "").strip() for rc in coupon.iter("rankCond")]
-
-    full = build_issue_xml(src, start, end, other_conditions, rank_conds)
-    body_only = full.split("\n", 1)[1]           # XML宣言を落としたもの
-    compact = "".join(line.strip() for line in full.split("\n"))
-    minimal = build_issue_xml(
-        {k: src.get(k) for k in ("couponName", "couponCaption", "issueCount",
-                                 "itemType", "discountType", "discountFactor",
-                                 "memberAvailMaxCount", "combineFlag", "displayFlag")},
-        start, end, [], [],
-    )
-    # RS003（利用金額）だけ残したもの。otherCondition を複数送れない可能性の検証用
-    only_rs003 = build_issue_xml(
-        src, start, end,
-        [(c, v) for c, v in other_conditions if c == "RS003"], rank_conds,
-    )
-
-    variants = [
-        ("XML宣言なし", body_only),
-        ("改行・インデントなし", compact),
-        ("最小項目（画像・条件・ランクなし）", minimal),
-        ("利用条件をRS003だけに絞る", only_rs003),
-    ]
-
-    for label, body in variants:
-        res = requests.post(
-            f"{BASE}/es/1.0/coupon/issue",
-            headers={**auth_headers(), "Content-Type": "application/xml; charset=utf-8"},
-            data=body.encode("utf-8"),
-            timeout=30,
-        )
-        print(f"  ■ {label}")
-        print(f"    → ステータス: {res.status_code}")
-        print(f"    {res.text[:600]}\n")
-
-        if "wrong format" not in res.text:
-            print(f"    ✅ この形は受け付けられました（{label}）")
-            if "<couponCode>" in res.text:
-                print("    ⚠️ クーポンが作成されました。上の couponCode を確認してください。")
-            return
-
-    print("  どの形でも通りませんでした。")
-
-
-def probe_issue_format():
-    """
-    coupon.issue のリクエスト形式を判別する。
-
-    わざと couponName だけを送る。形式が正しければ「他の必須項目が足りない」という
-    項目エラーに変わり、形式が違えば「Request data is wrong format」のままになる。
-    項目が足りないのでクーポンは作成されない＝安全に判別できる。
-    """
-    url = f"{BASE}/es/1.0/coupon/issue"
-    name = "フォーマット判定用"
-
-    attempts = [
-        (
-            "フォーム形式（application/x-www-form-urlencoded）",
-            {"headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
-             "data": {"couponName": name}},
-        ),
-        (
-            "URLクエリパラメータ（本文なし）",
-            {"headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
-             "params": {"couponName": name}},
-        ),
-        (
-            "JSON（coupon で包む）",
-            {"headers": {"Content-Type": "application/json; charset=utf-8"},
-             "json": {"coupon": {"couponName": name}}},
-        ),
-        (
-            "JSON（couponIssueRequest で包む）",
-            {"headers": {"Content-Type": "application/json; charset=utf-8"},
-             "json": {"couponIssueRequest": {"coupon": {"couponName": name}}}},
-        ),
-        (
-            "XML（couponIssueRequest を root に）",
-            {"headers": {"Content-Type": "application/xml; charset=utf-8"},
-             "data": f"<couponIssueRequest><coupon><couponName>{name}</couponName></coupon></couponIssueRequest>".encode("utf-8")},
-        ),
-        (
-            "XML（text/xml で送る）",
-            {"headers": {"Content-Type": "text/xml; charset=utf-8"},
-             "data": f"<request><couponIssueRequest><coupon><couponName>{name}</couponName></coupon></couponIssueRequest></request>".encode("utf-8")},
-        ),
-    ]
-
-    for label, kwargs in attempts:
-        headers = {**auth_headers(), **kwargs.pop("headers")}
-        res = requests.post(url, headers=headers, timeout=20, **kwargs)
-        print(f"  ■ {label}")
-        print(f"    → ステータス: {res.status_code}")
-        print(f"    {res.text[:800]}\n")
-
-        if "wrong format" not in res.text:
-            print(f"    ✅ この形式が受け付けられました（{label}）")
-            if "<couponCode>" in res.text:
-                print("    ⚠️ クーポンが作成されました。couponCode を確認してください。")
-            return
-
-    print("  どの形式でも通りませんでした。")
-
-
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
-    if mode == "probe-format":
-        print(f"=== 店舗（{SHOP_NAME}）: coupon.issue のリクエスト形式を判別 ===\n")
-        probe_issue_format()
-        raise SystemExit(0)
-
-    if mode == "issue-variants":
-        code = os.environ.get("COUPON_CODE", "").strip()
-        start = os.environ.get("NEW_START", "").strip()
-        end = os.environ.get("NEW_END", "").strip()
-        if not (code and start and end):
-            print("COUPON_CODE / NEW_START / NEW_END をすべて指定してください。")
-            raise SystemExit(1)
-        print(f"=== 店舗（{SHOP_NAME}）: XMLの形を変えて切り分け ===\n")
-        issue_variants(code, start, end)
-        raise SystemExit(0)
-
     if mode in ("copy-preview", "copy-issue"):
         code = os.environ.get("COUPON_CODE", "").strip()
         start = os.environ.get("NEW_START", "").strip()
@@ -477,10 +341,6 @@ if __name__ == "__main__":
         copy_coupon(code, start, end, do_issue=(mode == "copy-issue"))
         raise SystemExit(0)
 
-    if mode == "probe-issue":
-        print(f"=== 店舗（{SHOP_NAME}）: coupon.issue の必須項目を調べる ===\n")
-        probe_issue()
-        raise SystemExit(0)
     if mode == "probe":
         probe()
     elif mode == "list":

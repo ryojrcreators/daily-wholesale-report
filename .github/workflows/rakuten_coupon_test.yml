@@ -12,11 +12,8 @@ on:
           - 'probe'
           - 'list'
           - 'detail'
-          - 'probe-issue'
           - 'copy-preview'
           - 'copy-issue'
-          - 'issue-variants'
-          - 'probe-format'
       coupon_code:
         description: 'detail時に見るクーポンコード'
         required: false

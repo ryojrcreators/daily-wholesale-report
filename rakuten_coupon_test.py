@@ -375,8 +375,73 @@ def issue_variants(coupon_code: str, start: str, end: str):
     print("  どの形でも通りませんでした。")
 
 
+def probe_issue_format():
+    """
+    coupon.issue のリクエスト形式を判別する。
+
+    わざと couponName だけを送る。形式が正しければ「他の必須項目が足りない」という
+    項目エラーに変わり、形式が違えば「Request data is wrong format」のままになる。
+    項目が足りないのでクーポンは作成されない＝安全に判別できる。
+    """
+    url = f"{BASE}/es/1.0/coupon/issue"
+    name = "フォーマット判定用"
+
+    attempts = [
+        (
+            "フォーム形式（application/x-www-form-urlencoded）",
+            {"headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
+             "data": {"couponName": name}},
+        ),
+        (
+            "URLクエリパラメータ（本文なし）",
+            {"headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"},
+             "params": {"couponName": name}},
+        ),
+        (
+            "JSON（coupon で包む）",
+            {"headers": {"Content-Type": "application/json; charset=utf-8"},
+             "json": {"coupon": {"couponName": name}}},
+        ),
+        (
+            "JSON（couponIssueRequest で包む）",
+            {"headers": {"Content-Type": "application/json; charset=utf-8"},
+             "json": {"couponIssueRequest": {"coupon": {"couponName": name}}}},
+        ),
+        (
+            "XML（couponIssueRequest を root に）",
+            {"headers": {"Content-Type": "application/xml; charset=utf-8"},
+             "data": f"<couponIssueRequest><coupon><couponName>{name}</couponName></coupon></couponIssueRequest>".encode("utf-8")},
+        ),
+        (
+            "XML（text/xml で送る）",
+            {"headers": {"Content-Type": "text/xml; charset=utf-8"},
+             "data": f"<request><couponIssueRequest><coupon><couponName>{name}</couponName></coupon></couponIssueRequest></request>".encode("utf-8")},
+        ),
+    ]
+
+    for label, kwargs in attempts:
+        headers = {**auth_headers(), **kwargs.pop("headers")}
+        res = requests.post(url, headers=headers, timeout=20, **kwargs)
+        print(f"  ■ {label}")
+        print(f"    → ステータス: {res.status_code}")
+        print(f"    {res.text[:800]}\n")
+
+        if "wrong format" not in res.text:
+            print(f"    ✅ この形式が受け付けられました（{label}）")
+            if "<couponCode>" in res.text:
+                print("    ⚠️ クーポンが作成されました。couponCode を確認してください。")
+            return
+
+    print("  どの形式でも通りませんでした。")
+
+
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
+    if mode == "probe-format":
+        print(f"=== 店舗（{SHOP_NAME}）: coupon.issue のリクエスト形式を判別 ===\n")
+        probe_issue_format()
+        raise SystemExit(0)
+
     if mode == "issue-variants":
         code = os.environ.get("COUPON_CODE", "").strip()
         start = os.environ.get("NEW_START", "").strip()

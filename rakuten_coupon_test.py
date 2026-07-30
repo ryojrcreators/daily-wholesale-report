@@ -53,9 +53,20 @@ def post_chatwork(room_id: str, body: str):
         print(f"  Chatwork通知に失敗しました: {e}")
 
 
-def build_batch_report(mention: str, title: str, intro: str, results: list) -> str:
+def _format_period_label(start: str, end: str) -> str:
+    """2026-08-01T00:00:00+09:00 → 2026-08-01 00:00 の形にする"""
+    def fmt(v):
+        try:
+            return datetime.fromisoformat(v).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            return v
+    return f"{fmt(start)} 〜 {fmt(end)}"
+
+
+def build_batch_report(mention: str, title: str, intro: str, start: str, end: str, results: list) -> str:
     """バッチ発行結果からChatwork報告メッセージを組み立てる（成功分のみ列挙）。"""
-    lines = [mention, f"[info][title]{title}[/title]", intro, ""]
+    lines = [mention, f"[info][title]{title}[/title]", intro,
+              f"期間：{_format_period_label(start, end)}", ""]
     for r in results:
         if not r["success"]:
             continue
@@ -537,7 +548,7 @@ if __name__ == "__main__":
                 "CW_INTRO", "下記自社製品レビュークーポンを更新しました。\nテンプレートの更新をお願いします。"
             ).strip().replace("\\n", "\n")
             if room_id and mention:
-                body = build_batch_report(mention, title, intro, results)
+                body = build_batch_report(mention, title, intro, start, end, results)
                 post_chatwork(room_id, body)
             else:
                 print("  CW_ROOM_ID / CW_MENTION が未指定のため、Chatworkへは通知しません。")

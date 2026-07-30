@@ -270,7 +270,7 @@ def process_one(name: str, coupons: list, today: datetime, headers: dict,
         result["status"] = "issued"
         # 実際には発行しないので、確認しやすいようコピー元（＝現在有効なクーポン）の
         # コード・URL・期間をそのまま表示する（本文とタイトルの期間表示を一致させるため）
-        result["code"] = f"（DRY RUN・コピー元: {src.get('couponCode')}）"
+        result["code"] = src.get("couponCode")
         result["url"] = src.get("pcGetUrl")
         result["start"] = src.get("couponStartDate", start_str)
         result["end"] = src.get("couponEndDate", end_str)

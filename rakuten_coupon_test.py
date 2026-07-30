@@ -390,6 +390,20 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
     print(f"  {issue_res.text[:1500]}")
 
 
+def validate_period(start: str, end: str):
+    """日時の打ち間違い（桁落ちなど）でおかしな期間のクーポンを作らないよう、形式を検証する。"""
+    import re
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+09:00$")
+    for label, value in (("NEW_START", start), ("NEW_END", end)):
+        if not date_pattern.match(value):
+            print(f"{label} の形式が正しくありません: {value}")
+            print("  正しい形式: 2026-08-01T20:00:00+09:00")
+            raise SystemExit(1)
+    if start >= end:
+        print(f"開始日時が終了日時以降になっています: {start} 〜 {end}")
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
     if mode in ("copy-preview", "copy-issue"):
@@ -400,22 +414,34 @@ if __name__ == "__main__":
             print("COUPON_CODE / NEW_START / NEW_END をすべて指定してください。")
             print("  日時の形式: 2026-08-01T20:00:00+09:00")
             raise SystemExit(1)
+        validate_period(start, end)
 
-        # 日時の打ち間違い（桁落ちなど）でおかしな期間のクーポンを作らないよう、形式を検証する
-        import re
-        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+09:00$")
-        for label, value in (("NEW_START", start), ("NEW_END", end)):
-            if not date_pattern.match(value):
-                print(f"{label} の形式が正しくありません: {value}")
-                print("  正しい形式: 2026-08-01T20:00:00+09:00")
-                raise SystemExit(1)
-        if start >= end:
-            print(f"開始日時が終了日時以降になっています: {start} 〜 {end}")
-            raise SystemExit(1)
         no_image = os.environ.get("NO_IMAGE", "false").lower() == "true"
         image_url = os.environ.get("IMAGE_URL", "").strip()
         print(f"=== 店舗（{SHOP_NAME}）: {code} をコピーして発行 ===\n")
         copy_coupon(code, start, end, do_issue=(mode == "copy-issue"), no_image=no_image, image_url=image_url)
+        raise SystemExit(0)
+
+    if mode in ("batch-preview", "batch-issue"):
+        raw_codes = os.environ.get("COUPON_CODES", "").strip()
+        codes = [c.strip() for c in raw_codes.split(",") if c.strip()]
+        start = os.environ.get("NEW_START", "").strip()
+        end = os.environ.get("NEW_END", "").strip()
+        if not (codes and start and end):
+            print("COUPON_CODES（カンマ区切り）/ NEW_START / NEW_END をすべて指定してください。")
+            print("  日時の形式: 2026-08-01T20:00:00+09:00")
+            raise SystemExit(1)
+        validate_period(start, end)
+
+        no_image = os.environ.get("NO_IMAGE", "false").lower() == "true"
+        image_url = os.environ.get("IMAGE_URL", "").strip()
+        print(f"=== 店舗（{SHOP_NAME}）: {len(codes)}件を一括コピー発行 ===")
+        print(f"    新しい期間: {start} 〜 {end}\n")
+        for i, code in enumerate(codes, start=1):
+            print(f"--- [{i}/{len(codes)}] {code} ---")
+            copy_coupon(code, start, end, do_issue=(mode == "batch-issue"),
+                        no_image=no_image, image_url=image_url)
+            print()
         raise SystemExit(0)
 
     if mode == "probe":

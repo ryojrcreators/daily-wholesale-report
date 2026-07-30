@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目 / search=名前をキーワード検索'
+        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目 / search=名前をキーワード検索 / batch-preview,batch-issue=複数件一括コピー発行'
         required: true
         default: 'list'
         type: choice
@@ -15,8 +15,14 @@ on:
           - 'search'
           - 'copy-preview'
           - 'copy-issue'
+          - 'batch-preview'
+          - 'batch-issue'
       coupon_code:
-        description: 'detail時に見るクーポンコード'
+        description: 'detail/copy時に見るクーポンコード'
+        required: false
+        default: ''
+      coupon_codes:
+        description: 'batch時のクーポンコード（カンマ区切りで複数指定）'
         required: false
         default: ''
       hits:
@@ -66,6 +72,7 @@ jobs:
           RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
           MODE: ${{ inputs.mode }}
           COUPON_CODE: ${{ inputs.coupon_code }}
+          COUPON_CODES: ${{ inputs.coupon_codes }}
           HITS: ${{ inputs.hits }}
           NEW_START: ${{ inputs.new_start }}
           NEW_END: ${{ inputs.new_end }}

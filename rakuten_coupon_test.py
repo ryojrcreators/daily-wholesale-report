@@ -16,11 +16,14 @@
 
 import os
 import base64
+from datetime import datetime, timezone, timedelta
 from xml.etree import ElementTree
 
 import requests
 
 from rakuten_coupon_api import auth_headers as _shared_auth_headers, search_all
+
+JST = timezone(timedelta(hours=9))
 
 SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
 LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
@@ -117,22 +120,44 @@ def list_coupons(hits: int):
         print(f"       期間: {start} 〜 {end}")
 
 
-def search_coupons_by_keyword(keyword_groups: list):
+def _is_active_now(coupon: dict) -> bool:
+    def parse(v):
+        try:
+            return datetime.fromisoformat(v)
+        except (ValueError, TypeError):
+            return None
+
+    start = parse(coupon.get("couponStartDate", ""))
+    end = parse(coupon.get("couponEndDate", ""))
+    if not start or not end:
+        return False
+    now = datetime.now(JST)
+    return start <= now <= end
+
+
+def search_coupons_by_keyword(keyword_groups: list, active_only: bool = False):
     """
     全クーポンをページングしながら取得し、クーポン名にキーワードを含むものだけ表示する（読み取りのみ）。
     keyword_groups は [["リポソーム型ビタミンC", "レビュー投稿で"], ["アルロース"]] のような形で、
     グループ内は全部含む（AND）、グループ同士は別々に集計する。
+    active_only=True の場合、現在時刻が有効期間内のものだけに絞る。
     """
     coupons = search_all(_shared_auth_headers(SERVICE_SECRET, LICENSE_KEY))
-    print(f"  既存クーポン総数: {len(coupons)}件\n")
+    print(f"  既存クーポン総数: {len(coupons)}件")
+    if active_only:
+        print(f"  （現在時刻 {datetime.now(JST).strftime('%Y-%m-%d %H:%M')} 時点で有効期間中のものだけに絞ります）")
+    print()
 
     for terms in keyword_groups:
         matches = [
             c for c in coupons
             if all(term in c.get("couponName", "") for term in terms)
         ]
+        if active_only:
+            matches = [c for c in matches if _is_active_now(c)]
         label = "」かつ「".join(terms)
-        print(f"「{label}」を含むクーポン: {len(matches)}件")
+        suffix = "（有効期間中のみ）" if active_only else ""
+        print(f"「{label}」を含むクーポン{suffix}: {len(matches)}件")
         for c in matches:
             print(f"    {c.get('couponCode')}  {c.get('couponName')}")
             print(f"      期間: {c.get('couponStartDate')} 〜 {c.get('couponEndDate')}")
@@ -388,7 +413,8 @@ if __name__ == "__main__":
         if not keyword_groups:
             print("KEYWORDS が指定されていません（例: リポソーム型ビタミンC+レビュー投稿で,アルロース+レビュー投稿で）。")
         else:
+            active_only = os.environ.get("ACTIVE_ONLY", "false").lower() == "true"
             print(f"=== 店舗（{SHOP_NAME}）: クーポン名キーワード検索 ===\n")
-            search_coupons_by_keyword(keyword_groups)
+            search_coupons_by_keyword(keyword_groups, active_only=active_only)
     else:
         print(f"不明なMODE: {mode}")

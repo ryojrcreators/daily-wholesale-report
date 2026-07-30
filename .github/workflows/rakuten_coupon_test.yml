@@ -27,6 +27,11 @@ on:
         description: 'search時のキーワード（,区切りでOR、+区切りでAND。例: リポソーム型ビタミンC+レビュー投稿で,アルロース+レビュー投稿で）'
         required: false
         default: ''
+      active_only:
+        description: 'search時、現在有効期間中のクーポンだけに絞る'
+        required: false
+        default: false
+        type: boolean
       new_start:
         description: 'copy時の新しい開始日時（例 2026-08-01T20:00:00+09:00）'
         required: false
@@ -56,4 +61,5 @@ jobs:
           NEW_START: ${{ inputs.new_start }}
           NEW_END: ${{ inputs.new_end }}
           KEYWORDS: ${{ inputs.keywords }}
+          ACTIVE_ONLY: ${{ inputs.active_only }}
         run: python -u rakuten_coupon_test.py

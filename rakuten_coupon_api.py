@@ -34,6 +34,7 @@ ISSUE_FIELD_ORDER = [
     "couponImage",
     "issueCount",
     "itemType",
+    "_items",
     "discountType",
     "discountFactor",
     "memberAvailMaxCount",
@@ -109,6 +110,13 @@ def get_coupon(headers: dict, coupon_code: str):
         "purchaseHistoryType": (coupon.findtext("purchaseHistoryCond/type") or "0").strip(),
         "ageLower": (age.findtext("lowerBound") if age is not None else "0") or "0",
         "ageUpper": (age.findtext("upperBound") if age is not None else "0") or "0",
+        # itemType=1（対象商品限定）のクーポンは対象商品の一覧が必須。
+        # coupon.get の itemUrl は商品管理番号なのでそのまま使う。
+        "itemUrls": [
+            (it.findtext("itemUrl") or "").strip()
+            for it in coupon.iter("item")
+            if (it.findtext("itemUrl") or "").strip()
+        ],
     }
     return src, nested
 
@@ -120,7 +128,13 @@ def build_issue_xml(src: dict, start: str, end: str, nested: dict) -> str:
 
     parts = []
     for field in ISSUE_FIELD_ORDER:
-        if field == "_purchaseHistoryCond":
+        if field == "_items":
+            # itemType=1（対象商品限定）のときだけ必要。対象商品が拾えていれば送る
+            item_urls = nested.get("itemUrls") or []
+            if item_urls:
+                inner = "".join(f"<item><itemUrl>{esc(u)}</itemUrl></item>" for u in item_urls)
+                parts.append(f"      <items>{inner}</items>")
+        elif field == "_purchaseHistoryCond":
             parts.append(
                 f"      <purchaseHistoryCond><type>"
                 f"{esc(nested.get('purchaseHistoryType', '0'))}</type></purchaseHistoryCond>"

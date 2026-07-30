@@ -212,6 +212,7 @@ ISSUE_FIELD_ORDER = [
     "couponImage",
     "issueCount",
     "itemType",
+    "_items",
     "discountType",
     "discountFactor",
     "memberAvailMaxCount",
@@ -242,6 +243,15 @@ def build_issue_xml(src: dict, start: str, end: str, nested: dict) -> str:
                 f"      <purchaseHistoryCond><type>"
                 f"{esc(nested.get('purchaseHistoryType', '0'))}</type></purchaseHistoryCond>"
             )
+            continue
+
+        if field == "_items":
+            # itemType=1（対象商品限定）のときだけ必要。念のためitemType=0でも
+            # 対象商品が拾えていれば送る（未検証のため挙動を見て調整する）
+            item_urls = nested.get("itemUrls") or []
+            if item_urls:
+                inner = "".join(f"<item><itemUrl>{esc(u)}</itemUrl></item>" for u in item_urls)
+                parts.append(f"      <items>{inner}</items>")
             continue
 
         if field == "_multiRankCond":
@@ -339,7 +349,16 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
         "purchaseHistoryType": (coupon.findtext("purchaseHistoryCond/type") or "0").strip(),
         "ageLower": (age.findtext("lowerBound") if age is not None else "0") or "0",
         "ageUpper": (age.findtext("upperBound") if age is not None else "0") or "0",
+        # itemType=1（対象商品限定）のクーポンは対象商品の一覧が必須。
+        # coupon.get の itemUrl は商品管理番号なのでそのまま使う。
+        "itemUrls": [
+            (it.findtext("itemUrl") or "").strip()
+            for it in coupon.iter("item")
+            if (it.findtext("itemUrl") or "").strip()
+        ],
     }
+    if nested["itemUrls"]:
+        print(f"    対象商品: {nested['itemUrls']}")
 
     if image_url:
         print(f"    クーポン画像を差し替えます（元の値: {src.get('couponImage')} → {image_url}）")

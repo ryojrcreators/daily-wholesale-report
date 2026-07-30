@@ -55,6 +55,22 @@ on:
         description: 'copy時、指定した画像URLに差し替えて発行する（no_imageより優先）'
         required: false
         default: ''
+      cw_room_id:
+        description: 'batch-issue時、結果を報告するChatworkルームid'
+        required: false
+        default: '60101971'
+      cw_mention:
+        description: 'batch-issue時のChatworkメンション（例: [To:2618849]Ryo Higuchiさん）'
+        required: false
+        default: ''
+      cw_title:
+        description: 'batch-issue時のChatwork報告タイトル'
+        required: false
+        default: '楽天クーポン更新'
+      cw_intro:
+        description: 'batch-issue時のChatwork報告の冒頭メッセージ'
+        required: false
+        default: '下記自社製品レビュークーポンを更新しました。\nテンプレートの更新をお願いします。'
 
 jobs:
   test:
@@ -70,6 +86,7 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
           RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
           MODE: ${{ inputs.mode }}
           COUPON_CODE: ${{ inputs.coupon_code }}
           COUPON_CODES: ${{ inputs.coupon_codes }}
@@ -80,4 +97,8 @@ jobs:
           ACTIVE_ONLY: ${{ inputs.active_only }}
           NO_IMAGE: ${{ inputs.no_image }}
           IMAGE_URL: ${{ inputs.image_url }}
+          CW_ROOM_ID: ${{ inputs.cw_room_id }}
+          CW_MENTION: ${{ inputs.cw_mention }}
+          CW_TITLE: ${{ inputs.cw_title }}
+          CW_INTRO: ${{ inputs.cw_intro }}
         run: python -u rakuten_coupon_test.py

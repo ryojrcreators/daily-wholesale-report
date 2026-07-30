@@ -29,6 +29,52 @@ SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
 LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
 SHOP_NAME = os.environ["RAKUTEN_SHOP_NAME_1"]
 
+CW_TOKEN = os.environ.get("CW_TOKEN", "")
+
+
+def post_chatwork(room_id: str, body: str):
+    if not room_id:
+        print("  Chatworkルームidが未指定のため通知しません。")
+        return
+    if not CW_TOKEN:
+        print("  CW_TOKENが未設定のため通知しません。")
+        return
+    try:
+        res = requests.post(
+            f"https://api.chatwork.com/v2/rooms/{room_id}/messages",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            data={"body": body},
+            timeout=30,
+        )
+        print(f"  Chatwork通知: status={res.status_code}")
+        if res.status_code >= 400:
+            print(f"    {res.text[:300]}")
+    except Exception as e:
+        print(f"  Chatwork通知に失敗しました: {e}")
+
+
+def build_batch_report(mention: str, title: str, intro: str, results: list) -> str:
+    """バッチ発行結果からChatwork報告メッセージを組み立てる（成功分のみ列挙）。"""
+    lines = [mention, f"[info][title]{title}[/title]", intro, ""]
+    for r in results:
+        if not r["success"]:
+            continue
+        lines.append(f"■ {r['name']}")
+        lines.append(f"クーポンコード: {r['code']}")
+        lines.append(f"取得URL: {r['url']}")
+        lines.append("")
+
+    failed = [r for r in results if not r["success"]]
+    if failed:
+        lines.append("---")
+        lines.append("以下は発行に失敗しました。手動で確認してください：")
+        for r in failed:
+            lines.append(f"・{r['name']}: {r['message']}")
+        lines.append("")
+
+    lines.append("[/info]")
+    return "\n".join(lines)
+
 
 def auth_headers() -> dict:
     token = base64.b64encode(f"{SERVICE_SECRET}:{LICENSE_KEY}".encode()).decode()
@@ -311,7 +357,13 @@ def build_issue_xml(src: dict, start: str, end: str, nested: dict) -> str:
 
 
 def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image: bool = False, image_url: str = ""):
-    """既存クーポンをコピーし、期間だけ差し替えて発行する"""
+    """
+    既存クーポンをコピーし、期間だけ差し替えて発行する。
+    戻り値は {"name", "success", "code", "url", "message"} の辞書
+    （Chatwork報告など、呼び出し側でまとめて使えるように）。
+    """
+    result = {"name": coupon_code, "success": False, "code": None, "url": None, "message": ""}
+
     res = requests.get(
         f"{BASE}/es/1.0/coupon/get",
         headers=auth_headers(),
@@ -321,14 +373,16 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
     if res.status_code >= 400:
         print(f"  コピー元の取得に失敗しました（{res.status_code}）")
         print(res.text[:500])
-        return
+        result["message"] = f"コピー元の取得に失敗（{res.status_code}）"
+        return result
 
     root = ElementTree.fromstring(res.content)
     coupon = root.find("coupon")
     if coupon is None:
         print("  コピー元のクーポンが見つかりません。")
         print(res.text[:500])
-        return
+        result["message"] = "コピー元のクーポンが見つかりません"
+        return result
 
     src = {}
     for child in coupon:
@@ -367,6 +421,8 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
         print(f"    クーポン画像を除外します（元の値: {src['couponImage']}）")
         src["couponImage"] = ""
 
+    result["name"] = src.get("couponName") or coupon_code
+
     print(f"  コピー元: {src.get('couponName')}")
     print(f"    元の期間: {src.get('couponStartDate')} 〜 {src.get('couponEndDate')}")
     print(f"    新しい期間: {start} 〜 {end}")
@@ -378,7 +434,8 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
 
     if not do_issue:
         print("  【確認のみ】実際には発行していません。発行するには MODE=copy-issue で実行してください。")
-        return
+        result["message"] = "確認のみ（未発行）"
+        return result
 
     issue_res = requests.post(
         f"{BASE}/es/1.0/coupon/issue",
@@ -388,6 +445,30 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image
     )
     print(f"  → ステータス: {issue_res.status_code}")
     print(f"  {issue_res.text[:1500]}")
+
+    if issue_res.status_code >= 400:
+        result["message"] = f"HTTP {issue_res.status_code}"
+        return result
+
+    issue_root = ElementTree.fromstring(issue_res.content)
+    errors = [
+        f"{e.findtext('code')}: {e.findtext('message')}"
+        for e in issue_root.iter("error")
+    ]
+    if errors:
+        result["message"] = " / ".join(errors)
+        return result
+
+    issued = issue_root.find("coupon")
+    if issued is None:
+        result["message"] = "応答にクーポン情報がありません"
+        return result
+
+    result["success"] = True
+    result["code"] = issued.findtext("couponCode")
+    result["url"] = issued.findtext("pcGetUrl")
+    result["message"] = "発行成功"
+    return result
 
 
 def validate_period(start: str, end: str):
@@ -437,11 +518,29 @@ if __name__ == "__main__":
         image_url = os.environ.get("IMAGE_URL", "").strip()
         print(f"=== 店舗（{SHOP_NAME}）: {len(codes)}件を一括コピー発行 ===")
         print(f"    新しい期間: {start} 〜 {end}\n")
+
+        results = []
         for i, code in enumerate(codes, start=1):
             print(f"--- [{i}/{len(codes)}] {code} ---")
-            copy_coupon(code, start, end, do_issue=(mode == "batch-issue"),
-                        no_image=no_image, image_url=image_url)
+            results.append(copy_coupon(code, start, end, do_issue=(mode == "batch-issue"),
+                                        no_image=no_image, image_url=image_url))
             print()
+
+        ok_count = sum(1 for r in results if r["success"])
+        print(f"=== 完了: {ok_count}/{len(results)}件 発行成功 ===")
+
+        if mode == "batch-issue":
+            room_id = os.environ.get("CW_ROOM_ID", "").strip()
+            mention = os.environ.get("CW_MENTION", "").strip()
+            title = os.environ.get("CW_TITLE", "楽天クーポン更新").strip()
+            intro = os.environ.get(
+                "CW_INTRO", "下記自社製品レビュークーポンを更新しました。\nテンプレートの更新をお願いします。"
+            ).strip().replace("\\n", "\n")
+            if room_id and mention:
+                body = build_batch_report(mention, title, intro, results)
+                post_chatwork(room_id, body)
+            else:
+                print("  CW_ROOM_ID / CW_MENTION が未指定のため、Chatworkへは通知しません。")
         raise SystemExit(0)
 
     if mode == "probe":

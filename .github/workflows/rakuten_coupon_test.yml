@@ -40,6 +40,15 @@ on:
         description: 'copy時の新しい終了日時（例 2026-08-08T01:59:59+09:00）'
         required: false
         default: ''
+      no_image:
+        description: 'copy時、コピー元のクーポン画像URLを除外して発行する'
+        required: false
+        default: false
+        type: boolean
+      image_url:
+        description: 'copy時、指定した画像URLに差し替えて発行する（no_imageより優先）'
+        required: false
+        default: ''
 
 jobs:
   test:
@@ -62,4 +71,6 @@ jobs:
           NEW_END: ${{ inputs.new_end }}
           KEYWORDS: ${{ inputs.keywords }}
           ACTIVE_ONLY: ${{ inputs.active_only }}
+          NO_IMAGE: ${{ inputs.no_image }}
+          IMAGE_URL: ${{ inputs.image_url }}
         run: python -u rakuten_coupon_test.py

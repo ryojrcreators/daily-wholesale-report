@@ -300,7 +300,7 @@ def build_issue_xml(src: dict, start: str, end: str, nested: dict) -> str:
     )
 
 
-def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
+def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool, no_image: bool = False, image_url: str = ""):
     """既存クーポンをコピーし、期間だけ差し替えて発行する"""
     res = requests.get(
         f"{BASE}/es/1.0/coupon/get",
@@ -340,6 +340,13 @@ def copy_coupon(coupon_code: str, start: str, end: str, do_issue: bool):
         "ageLower": (age.findtext("lowerBound") if age is not None else "0") or "0",
         "ageUpper": (age.findtext("upperBound") if age is not None else "0") or "0",
     }
+
+    if image_url:
+        print(f"    クーポン画像を差し替えます（元の値: {src.get('couponImage')} → {image_url}）")
+        src["couponImage"] = image_url
+    elif no_image and src.get("couponImage"):
+        print(f"    クーポン画像を除外します（元の値: {src['couponImage']}）")
+        src["couponImage"] = ""
 
     print(f"  コピー元: {src.get('couponName')}")
     print(f"    元の期間: {src.get('couponStartDate')} 〜 {src.get('couponEndDate')}")
@@ -386,8 +393,10 @@ if __name__ == "__main__":
         if start >= end:
             print(f"開始日時が終了日時以降になっています: {start} 〜 {end}")
             raise SystemExit(1)
+        no_image = os.environ.get("NO_IMAGE", "false").lower() == "true"
+        image_url = os.environ.get("IMAGE_URL", "").strip()
         print(f"=== 店舗（{SHOP_NAME}）: {code} をコピーして発行 ===\n")
-        copy_coupon(code, start, end, do_issue=(mode == "copy-issue"))
+        copy_coupon(code, start, end, do_issue=(mode == "copy-issue"), no_image=no_image, image_url=image_url)
         raise SystemExit(0)
 
     if mode == "probe":

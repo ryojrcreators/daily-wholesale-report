@@ -131,20 +131,32 @@ class TokenState:
         self.access_token = access_token
 
 
+MAX_RETRIES = 4
+SERVER_ERROR_WAIT = 15  # サーバーエラー時のリトライ待機（秒）。試行ごとに倍々に伸ばす
+
+
 def authed_get(spreadsheet, token_state: TokenState, url: str, params: dict, store_name: str, api_name: str):
     """
-    アクセストークンで認証しつつGETする。401が返ってきた場合は1回だけ
-    リフレッシュトークンでアクセストークンを取り直してリトライする
-    （カテゴリ数が多い店舗では全件取得に1時間以上かかり、その間にアクセストークンが
-    失効することがあるため）。
+    アクセストークンで認証しつつGETする。
+    - 401（アクセストークン失効）：リフレッシュトークンで取り直してリトライ
+      （カテゴリ数が多い店舗では全件取得に1時間以上かかり、その間に失効することがあるため）
+    - 5xx（Yahoo側の一時的なシステムエラー）：待機してリトライ
+      （2時間規模の処理の終盤で1回のシステムエラーのために全体を失敗させないため）
+    - それ以外の4xx（パラメータ不正など）：リトライしても直らないので即座に失敗させる
     """
-    for attempt in range(2):
+    for attempt in range(MAX_RETRIES):
         headers = {"Authorization": f"Bearer {token_state.access_token}"}
         res = requests.get(url, headers=headers, params=params, timeout=30)
 
-        if res.status_code == 401 and attempt == 0:
+        if res.status_code == 401 and attempt < MAX_RETRIES - 1:
             print(f"    [{store_name}] アクセストークンが失効したため再取得します...")
             token_state.access_token = refresh_access_token(spreadsheet)
+            continue
+
+        if res.status_code >= 500 and attempt < MAX_RETRIES - 1:
+            wait = SERVER_ERROR_WAIT * (2 ** attempt)
+            print(f"    [{store_name}] {api_name} サーバーエラー（status={res.status_code}）。{wait}秒待機してリトライします...")
+            time.sleep(wait)
             continue
 
         if res.status_code >= 400:
@@ -153,7 +165,7 @@ def authed_get(spreadsheet, token_state: TokenState, url: str, params: dict, sto
             )
         return res
 
-    raise RuntimeError(f"[{store_name}] {api_name}: アクセストークン再取得後も認証エラーが続きました。")
+    raise RuntimeError(f"[{store_name}] {api_name}: {MAX_RETRIES}回試行しましたが失敗し続けました。")
 
 
 # ── ストアカテゴリをツリー状に辿って全stcat_keyを集める ─

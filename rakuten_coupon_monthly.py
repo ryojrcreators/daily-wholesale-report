@@ -15,18 +15,23 @@
   取り漏らしに備えて、スプレッドシートに手動でイベント期間を書けるようにしてあり、
   そちらがあれば優先する。
 
-このスクリプトは発行のみを行う。LINEや商品ページへの取得URLの貼り替えは人の作業。
+このスクリプトは発行を行う。「ショップまたは商品レビュー投稿で1,000円クーポン」については、
+発行成功後に社内システム（app.jrcreators.com）のメールテンプレート（ID 259）も自動更新する
+（クーポンコード・期限・取得URLの3箇所）。LINE側の貼り替えは引き続き人の作業。
 """
 
 import os
+import re
 import sys
 import json
 import calendar
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
+from playwright.sync_api import sync_playwright
 
 from rakuten_coupon_api import auth_headers, search_all, get_coupon, build_issue_xml, issue_coupon
 
@@ -48,6 +53,17 @@ CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
 CW_ASSIGNEE_ID = "2158846"  # Yoko Matsusakaさん（[To:2158846]と同じアカウントID）
 CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
+
+# クーポン名 → 発行後に自動更新する社内システムのメールテンプレートID
+TEMPLATE_ID_BY_COUPON_NAME = {
+    "ショップまたは商品レビュー投稿で1,000円クーポン": "259",
+}
+
+APP_DOMAIN = os.environ.get("APP_DOMAIN", "")
+LOGIN_ID_1 = os.environ.get("LOGIN_ID_1", "")
+LOGIN_PASS_1 = os.environ.get("LOGIN_PASS_1", "")
+LOGIN_ID_2 = os.environ.get("LOGIN_ID_2", "")
+LOGIN_PASS_2 = os.environ.get("LOGIN_PASS_2", "")
 
 CONFIG_SHEET = "クーポン_月次設定"
 LOG_SHEET = "クーポン_発行ログ"
@@ -241,6 +257,73 @@ def parse_rms_datetime(value: str):
         return None
 
 
+# ══ 社内システムのメールテンプレート更新 ═══════════
+def format_template_date(value: str) -> str:
+    """
+    2026-08-01T00:00:00+09:00 → 2026/8/01 00:00 の形にする
+    （テンプレート本文の既存表記に合わせる：月はゼロ埋めなし、日・時・分はゼロ埋めあり）
+    """
+    dt = parse_rms_datetime(value)
+    if dt is None:
+        return value
+    return f"{dt.year}/{dt.month}/{dt.day:02d} {dt.hour:02d}:{dt.minute:02d}"
+
+
+def update_email_template(template_id: str, old_code: str, new_code: str,
+                           old_url: str, new_url: str, new_start: str, new_end: str):
+    """
+    社内システム（app.jrcreators.com）のメールテンプレートを開き、本文中の
+    クーポンコード・期限・取得URLを新しい値に書き換えて保存する。
+    本文の該当箇所が1つも見つからなかった場合は、テンプレートの文言が
+    変わっている可能性があるため、何も保存せず例外を投げる。
+    """
+    if not old_code or not old_url:
+        # 空文字列でreplace()すると全文字の間に挿入されて本文が壊れるため、先に弾く
+        raise RuntimeError(f"置き換え元の値が空です（old_code={old_code!r}, old_url={old_url!r}）")
+
+    login_id_1_enc = quote(LOGIN_ID_1, safe="")
+    login_pass_1_enc = quote(LOGIN_PASS_1, safe="")
+    login_url = f"https://{login_id_1_enc}:{login_pass_1_enc}@{APP_DOMAIN}/"
+    edit_url = f"https://{login_id_1_enc}:{login_pass_1_enc}@{APP_DOMAIN}/email-templates/edit/{template_id}"
+
+    new_period_line = f"期限：{format_template_date(new_start)}　～　{format_template_date(new_end)}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1800, "height": 900},
+            device_scale_factor=2,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+
+        page.goto(login_url, wait_until="networkidle")
+        page.click('a:has-text("Login"), button:has-text("Login")')
+        page.wait_for_load_state("networkidle")
+        page.fill('input[name="username"]', LOGIN_ID_2)
+        page.fill('input[type="password"]', LOGIN_PASS_2)
+        page.click('button[type="submit"], input[type="submit"]')
+        page.wait_for_load_state("networkidle")
+
+        page.goto(edit_url, wait_until="networkidle")
+        body = page.input_value('textarea[name="body"]')
+
+        updated = body.replace(old_code, new_code).replace(old_url, new_url)
+        updated, n_period = re.subn(r"期限：.*", new_period_line, updated)
+
+        if updated == body or n_period == 0:
+            browser.close()
+            raise RuntimeError(
+                "本文中に置き換え対象（クーポンコード／期限／URL）が見つかりませんでした。"
+                "テンプレートの文言が変わっている可能性があります。"
+            )
+
+        page.fill('textarea[name="body"]', updated)
+        page.click('button:has-text("SUBMIT"), input[value="SUBMIT"]')
+        page.wait_for_load_state("networkidle")
+        browser.close()
+
+
 def is_event_day(today: datetime, coupons: list, manual_events: list, target_names: list) -> tuple:
     """今日がイベント期間中かを判定する。(判定, 理由) を返す。"""
     date_str = today.strftime("%Y-%m-%d")
@@ -348,6 +431,9 @@ def main():
             print("  【DRY RUN】以下の内容で発行します：")
             print(f"    枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}"
                   f" / 条件: {nested['otherConditions']}")
+            template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
+            if template_id:
+                print(f"  【DRY RUN】テンプレートID {template_id} も更新予定（実際には更新しません）")
             print("  【DRY RUN】Chatworkに送る予定のメッセージ：")
             print(build_success_message(name, period_label, new_start, new_end,
                                         "（発行後に決まります）", "（発行後に決まります）",
@@ -360,8 +446,28 @@ def main():
         if success:
             print(f"    新クーポンコード: {code}")
             print(f"    取得URL: {url}")
+
+            template_note = ""
+            template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
+            if template_id:
+                print(f"    テンプレートID {template_id} を更新します...")
+                try:
+                    update_email_template(
+                        template_id,
+                        source.get("couponCode", ""), code,
+                        src.get("pcGetUrl", ""), url,
+                        new_start, new_end,
+                    )
+                    print(f"    テンプレートID {template_id} を更新しました。")
+                except Exception as e:
+                    print(f"    テンプレートID {template_id} の更新に失敗しました: {e}")
+                    template_note = (
+                        f"\n\n※ テンプレートID {template_id} の自動更新に失敗しました。"
+                        f"手動で更新してください。\n  理由: {e}"
+                    )
+
             post_chatwork_task(room_id, CW_ASSIGNEE_ID, build_success_message(
-                name, period_label, new_start, new_end, code, url, request_message),
+                name, period_label, new_start, new_end, code, url, request_message) + template_note,
                 due_days=CW_TASK_DUE_DAYS)
         else:
             # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
@@ -381,5 +487,53 @@ def main():
     print("=== 月次クーポン自動発行 完了 ===")
 
 
+# ══ テンプレートだけ同期する（発行済みクーポンに合わせて追いつかせる） ══
+def sync_template_only(name: str):
+    """
+    クーポンを新規発行せず、既に存在する最新2件（現在有効なもの＝new、その1つ前＝old）から
+    メールテンプレートだけを更新する。Chatworkへの通知も行わない。
+    月次自動発行が既にクーポンだけ発行済みで、テンプレート更新だけ追いつかせたい場合に使う。
+    """
+    template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
+    if not template_id:
+        print(f"「{name}」に対応するテンプレートIDが設定されていません。")
+        sys.exit(1)
+
+    headers = auth_headers(SERVICE_SECRET, LICENSE_KEY)
+    coupons = search_all(headers)
+    matches = sorted(
+        [c for c in coupons if c.get("couponName") == name],
+        key=lambda c: c.get("couponStartDate", ""),
+        reverse=True,
+    )
+    if len(matches) < 2:
+        print(f"「{name}」の過去クーポンが2件未満のため、新旧を判定できません（{len(matches)}件）。")
+        sys.exit(1)
+
+    new_summary, old_summary = matches[0], matches[1]
+    print(f"新（現在有効）: {new_summary.get('couponCode')}"
+          f"（{new_summary.get('couponStartDate')}〜{new_summary.get('couponEndDate')}）")
+    print(f"旧: {old_summary.get('couponCode')}"
+          f"（{old_summary.get('couponStartDate')}〜{old_summary.get('couponEndDate')}）")
+
+    new_src, _ = get_coupon(headers, new_summary["couponCode"])
+    old_src, _ = get_coupon(headers, old_summary["couponCode"])
+    if new_src is None or old_src is None:
+        print("クーポン詳細の取得に失敗しました。")
+        sys.exit(1)
+
+    update_email_template(
+        template_id,
+        old_src.get("couponCode", ""), new_src.get("couponCode", ""),
+        old_src.get("pcGetUrl", ""), new_src.get("pcGetUrl", ""),
+        new_src.get("couponStartDate", ""), new_src.get("couponEndDate", ""),
+    )
+    print(f"テンプレートID {template_id} を更新しました。")
+
+
 if __name__ == "__main__":
-    main()
+    sync_target = os.environ.get("SYNC_TEMPLATE_ONLY_FOR", "").strip()
+    if sync_target:
+        sync_template_only(sync_target)
+    else:
+        main()

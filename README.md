@@ -29,6 +29,20 @@
    - 在庫は実際の数量が取得できる（楽天のitems.searchと違い、myItemListは`stock=true`で数量を返す）
    - リフレッシュトークンは使うたびにローテーションされるため、GitHub Secretsではなく同スプレッドシートの非公開タブ「Yahoo_Config」に保存・毎回書き戻す方式
 
+### 楽天クーポン自動発行
+
+楽天RMS クーポンAPI（`/es/1.0/coupon/*`、共通処理は`rakuten_coupon_api.py`）を使って、既存クーポンをコピーして期間だけ差し替えた新クーポンを発行する仕組み。
+
+| スクリプト | ワークフロー | 内容 |
+|---|---|---|
+| `rakuten_coupon_monthly.py` | `rakuten_coupon_monthly.yml` | 常設クーポン2種（LINE登録限定・レビュー投稿）を毎月20日前後に翌月分として自動発行。「ショップまたは商品レビュー投稿で1,000円クーポン」は発行成功後、社内システムのメールテンプレート（ID 259）のクーポンコード・期限・取得URLもPlaywrightで自動書き換え |
+| `rakuten_coupon_review_batch.py` | `rakuten_coupon_review_batch.yml` | 自社製品レビュークーポン12件（リポソーム型ビタミンC・アルロース）を、クーポンごとの現在の終了日を起点に2ヶ月ごと自動更新。毎日チェックだけ走り、実際に発行するのは周期が来た日だけ |
+| `rakuten_coupon_test.py` | `rakuten_coupon_test.yml` | 調査・手動運用ツール（probe/list/detail/search/copy-preview/copy-issue/batch-preview/batch-issue）。クーポン名のキーワード検索や、複数件の手動一括コピー発行に使う |
+
+- 発行結果はChatworkの**タスク**として担当者に割り当てて通知（メッセージ投稿ではない）。期限は発行日から7日
+- どちらの自動発行も、`DRY_RUN`（既定true）・`FORCE`（日付/週末/イベント判定を無視）を`workflow_dispatch`で指定可能
+- 週末・セールイベント期間中（クーポン名に「先着」を含むものが有効期間中）は自動発行しない
+
 ### 社内システム連携レポート（Playwright）
 
 社内システム（ドメインは Secret `APP_DOMAIN` で管理）にPlaywrightで自動ログインし、CSVダウンロードやデータ抽出を行ってGoogle Sheets / Chatworkに連携するスクリプト群です。

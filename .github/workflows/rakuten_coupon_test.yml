@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目'
+        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目 / search=名前をキーワード検索'
         required: true
         default: 'list'
         type: choice
@@ -12,6 +12,7 @@ on:
           - 'probe'
           - 'list'
           - 'detail'
+          - 'search'
           - 'copy-preview'
           - 'copy-issue'
       coupon_code:
@@ -22,6 +23,10 @@ on:
         description: 'list時の取得件数'
         required: false
         default: '20'
+      keywords:
+        description: 'search時のキーワード（カンマ区切りで複数可）'
+        required: false
+        default: ''
       new_start:
         description: 'copy時の新しい開始日時（例 2026-08-01T20:00:00+09:00）'
         required: false
@@ -50,4 +55,5 @@ jobs:
           HITS: ${{ inputs.hits }}
           NEW_START: ${{ inputs.new_start }}
           NEW_END: ${{ inputs.new_end }}
+          KEYWORDS: ${{ inputs.keywords }}
         run: python -u rakuten_coupon_test.py

@@ -20,6 +20,8 @@ from xml.etree import ElementTree
 
 import requests
 
+from rakuten_coupon_api import auth_headers as _shared_auth_headers, search_all
+
 SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
 LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
 SHOP_NAME = os.environ["RAKUTEN_SHOP_NAME_1"]
@@ -113,6 +115,20 @@ def list_coupons(hits: int):
         print(f"  {i:>3}. {code}")
         print(f"       {name[:60]}")
         print(f"       期間: {start} 〜 {end}")
+
+
+def search_coupons_by_keyword(keywords: list):
+    """全クーポンをページングしながら取得し、クーポン名にキーワードを含むものだけ表示する（読み取りのみ）"""
+    coupons = search_all(_shared_auth_headers(SERVICE_SECRET, LICENSE_KEY))
+    print(f"  既存クーポン総数: {len(coupons)}件\n")
+
+    for keyword in keywords:
+        matches = [c for c in coupons if keyword in c.get("couponName", "")]
+        print(f"「{keyword}」を含むクーポン: {len(matches)}件")
+        for c in matches:
+            print(f"    {c.get('couponCode')}  {c.get('couponName')}")
+            print(f"      期間: {c.get('couponStartDate')} 〜 {c.get('couponEndDate')}")
+        print()
 
 
 def show_coupon(coupon_code: str):
@@ -353,5 +369,13 @@ if __name__ == "__main__":
         else:
             print(f"=== 店舗（{SHOP_NAME}）: クーポン {code} の全項目 ===\n")
             show_coupon(code)
+    elif mode == "search":
+        raw = os.environ.get("KEYWORDS", "").strip()
+        keywords = [k.strip() for k in raw.split(",") if k.strip()]
+        if not keywords:
+            print("KEYWORDS が指定されていません（カンマ区切りで複数指定可）。")
+        else:
+            print(f"=== 店舗（{SHOP_NAME}）: クーポン名キーワード検索 ===\n")
+            search_coupons_by_keyword(keywords)
     else:
         print(f"不明なMODE: {mode}")

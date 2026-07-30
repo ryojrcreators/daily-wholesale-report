@@ -117,14 +117,22 @@ def list_coupons(hits: int):
         print(f"       期間: {start} 〜 {end}")
 
 
-def search_coupons_by_keyword(keywords: list):
-    """全クーポンをページングしながら取得し、クーポン名にキーワードを含むものだけ表示する（読み取りのみ）"""
+def search_coupons_by_keyword(keyword_groups: list):
+    """
+    全クーポンをページングしながら取得し、クーポン名にキーワードを含むものだけ表示する（読み取りのみ）。
+    keyword_groups は [["リポソーム型ビタミンC", "レビュー投稿で"], ["アルロース"]] のような形で、
+    グループ内は全部含む（AND）、グループ同士は別々に集計する。
+    """
     coupons = search_all(_shared_auth_headers(SERVICE_SECRET, LICENSE_KEY))
     print(f"  既存クーポン総数: {len(coupons)}件\n")
 
-    for keyword in keywords:
-        matches = [c for c in coupons if keyword in c.get("couponName", "")]
-        print(f"「{keyword}」を含むクーポン: {len(matches)}件")
+    for terms in keyword_groups:
+        matches = [
+            c for c in coupons
+            if all(term in c.get("couponName", "") for term in terms)
+        ]
+        label = "」かつ「".join(terms)
+        print(f"「{label}」を含むクーポン: {len(matches)}件")
         for c in matches:
             print(f"    {c.get('couponCode')}  {c.get('couponName')}")
             print(f"      期間: {c.get('couponStartDate')} 〜 {c.get('couponEndDate')}")
@@ -371,11 +379,16 @@ if __name__ == "__main__":
             show_coupon(code)
     elif mode == "search":
         raw = os.environ.get("KEYWORDS", "").strip()
-        keywords = [k.strip() for k in raw.split(",") if k.strip()]
-        if not keywords:
-            print("KEYWORDS が指定されていません（カンマ区切りで複数指定可）。")
+        # カンマ区切りでグループ（OR）、グループ内は + 区切りで全部含む（AND）
+        keyword_groups = [
+            [term.strip() for term in group.split("+") if term.strip()]
+            for group in raw.split(",")
+        ]
+        keyword_groups = [g for g in keyword_groups if g]
+        if not keyword_groups:
+            print("KEYWORDS が指定されていません（例: リポソーム型ビタミンC+レビュー投稿で,アルロース+レビュー投稿で）。")
         else:
             print(f"=== 店舗（{SHOP_NAME}）: クーポン名キーワード検索 ===\n")
-            search_coupons_by_keyword(keywords)
+            search_coupons_by_keyword(keyword_groups)
     else:
         print(f"不明なMODE: {mode}")

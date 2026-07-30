@@ -24,7 +24,7 @@ on:
         required: false
         default: '20'
       keywords:
-        description: 'search時のキーワード（カンマ区切りで複数可）'
+        description: 'search時のキーワード（,区切りでOR、+区切りでAND。例: リポソーム型ビタミンC+レビュー投稿で,アルロース+レビュー投稿で）'
         required: false
         default: ''
       new_start:

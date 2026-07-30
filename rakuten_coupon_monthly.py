@@ -46,6 +46,8 @@ SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 # 通知の宛先。Chatworkの記法なのでそのまま送る
 CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
+CW_ASSIGNEE_ID = "2158846"  # Yoko Matsusakaさん（[To:2158846]と同じアカウントID）
+CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 
 CONFIG_SHEET = "クーポン_月次設定"
 LOG_SHEET = "クーポン_発行ログ"
@@ -168,6 +170,43 @@ def post_chatwork(room_id: str, body: str):
             print(f"    {res.text[:300]}")
     except Exception as e:
         print(f"  Chatwork通知に失敗しました: {e}")
+
+
+def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = None):
+    """
+    普通のメッセージではなく、Chatworkの「タスク」として作成する
+    （担当者に割り当てられ、Chatwork上のタスク一覧にも表示される）。
+    """
+    if not room_id or not to_ids:
+        print("  Chatworkルームid/担当者idが未指定のためタスクを作成しません。")
+        return
+    if not CW_TOKEN:
+        print("  CW_TOKENが未設定のためタスクを作成しません。")
+        return
+
+    data = {"body": body, "to_ids": to_ids}
+    if due_days is not None:
+        # 時刻を含めたまま計算すると、limit_type=date側でのタイムゾーン解釈次第で
+        # 日付が前後にずれることがあるため、対象日のJST 0時ちょうどに正規化する
+        due = (datetime.now(JST) + timedelta(days=due_days)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        data["limit"] = int(due.timestamp())
+        data["limit_type"] = "date"
+        print(f"    タスク期限: {due.strftime('%Y-%m-%d')}（limit={data['limit']}）")
+
+    try:
+        res = requests.post(
+            f"https://api.chatwork.com/v2/rooms/{room_id}/tasks",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            data=data,
+            timeout=30,
+        )
+        print(f"  Chatworkタスク作成: status={res.status_code}")
+        if res.status_code >= 400:
+            print(f"    {res.text[:300]}")
+    except Exception as e:
+        print(f"  Chatworkタスク作成に失敗しました: {e}")
 
 
 def build_success_message(name, period_label, start, end, code, url, request_message) -> str:
@@ -321,13 +360,16 @@ def main():
         if success:
             print(f"    新クーポンコード: {code}")
             print(f"    取得URL: {url}")
-            post_chatwork(room_id, build_success_message(
-                name, period_label, new_start, new_end, code, url, request_message))
+            post_chatwork_task(room_id, CW_ASSIGNEE_ID, build_success_message(
+                name, period_label, new_start, new_end, code, url, request_message),
+                due_days=CW_TASK_DUE_DAYS)
         else:
             # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
-            post_chatwork(room_id, f"{CW_MENTION}\n"
-                                   f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
-                                   f"{name}\n{message}\n手動での対応をお願いします。[/info]")
+            post_chatwork_task(room_id, CW_ASSIGNEE_ID,
+                                f"{CW_MENTION}\n"
+                                f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
+                                f"{name}\n{message}\n手動での対応をお願いします。[/info]",
+                                due_days=CW_TASK_DUE_DAYS)
         log_rows.append([now_label, name, period_label, message, code or "", url or ""])
 
     try:

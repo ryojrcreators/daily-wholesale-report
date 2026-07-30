@@ -106,9 +106,14 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = Non
 
     data = {"body": body, "to_ids": to_ids}
     if due_days is not None:
-        due = datetime.now(JST) + timedelta(days=due_days)
+        # 時刻を含めたまま計算すると、limit_type=date側でのタイムゾーン解釈次第で
+        # 日付が前後にずれることがあるため、対象日のJST 0時ちょうどに正規化する
+        due = (datetime.now(JST) + timedelta(days=due_days)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         data["limit"] = int(due.timestamp())
         data["limit_type"] = "date"
+        print(f"    タスク期限: {due.strftime('%Y-%m-%d')}（limit={data['limit']}）")
 
     try:
         res = requests.post(
@@ -264,9 +269,11 @@ def process_one(name: str, coupons: list, today: datetime, headers: dict,
         print(f"      新しい期間: {start_str} 〜 {end_str}")
         result["status"] = "issued"
         # 実際には発行しないので、確認しやすいようコピー元（＝現在有効なクーポン）の
-        # コード・URLをそのまま表示する
+        # コード・URL・期間をそのまま表示する（本文とタイトルの期間表示を一致させるため）
         result["code"] = f"（DRY RUN・コピー元: {src.get('couponCode')}）"
         result["url"] = src.get("pcGetUrl")
+        result["start"] = src.get("couponStartDate", start_str)
+        result["end"] = src.get("couponEndDate", end_str)
         return result
 
     success, message, code, url = issue_coupon(headers, xml)

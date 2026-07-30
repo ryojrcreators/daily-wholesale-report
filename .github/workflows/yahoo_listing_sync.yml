@@ -33,4 +33,4 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
-        run: python yahoo_listing_sync.py
+        run: python -u yahoo_listing_sync.py

@@ -1,0 +1,42 @@
+name: 自社製品レビュークーポン 隔月自動発行
+
+on:
+  schedule:
+    # 日本時間 10:00 に毎日実行（UTC表記）。実際に発行するかはスクリプト内部で判定する
+    - cron: '0 1 * * *'   # JST 10:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'DRY RUN（true = 実際には発行しない）'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      force:
+        description: '日付判定（20日以降・週末・イベント中）を無視して実行する'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  issue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: 自社製品レビュークーポン発行
+        env:
+          RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
+          RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          FORCE: ${{ inputs.force || 'false' }}
+        run: python -u rakuten_coupon_review_batch.py

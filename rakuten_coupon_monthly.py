@@ -1,11 +1,12 @@
 """
 毎月更新している常設クーポン（LINE登録限定・レビュー投稿）を、翌月分として自動発行する。
+楽天の複数店舗（STORES）に対応しており、店舗ごとに別のRMS認証情報・別のテンプレートIDを持てる。
 
 運用ルール（ヒアリング内容）:
   - 期間は「翌月1日 00:00:00 〜 翌月末日 23:59:59」
   - 作成は毎月20日前後
   - ただし週末は避ける
-  - さらに「イベント（セール）期間中」も避ける
+  - さらに「イベント（セール）期間中」も避ける（店舗ごとに、その店舗のクーポン一覧で判定）
       イベント中に取得URLを翌月分へ貼り替えると、その場で使えず利用機会を逃すため。
       実際の貼り替えは人が行うので、このスクリプトは「貼り替えてよい日」にだけ発行する。
 
@@ -16,7 +17,8 @@
   そちらがあれば優先する。
 
 このスクリプトは発行を行う。「ショップまたは商品レビュー投稿で1,000円クーポン」については、
-発行成功後に社内システム（app.jrcreators.com）のメールテンプレート（ID 259）も自動更新する
+発行成功後に社内システム（app.jrcreators.com）のメールテンプレート
+（Americana: ID 259、Founder: ID 260、TEMPLATE_ID_BY_TARGETで対応付け）も自動更新する
 （クーポンコード・期限・取得URLの3箇所）。LINE側の貼り替えは引き続き人の作業。
 """
 
@@ -41,8 +43,18 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 # 手動実行で日付の判定を飛ばしたいとき用（週末・イベント・20日前後の判定を無視する）
 FORCE = os.environ.get("FORCE", "false").lower() == "true"
 
-SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
-LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
+# 店舗キー → RMS認証情報。店舗を増やす場合はここに追加する。
+STORES = {
+    "americana": {
+        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"],
+        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_1"],
+    },
+    "founder": {
+        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"],
+        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_2"],
+    },
+}
+DEFAULT_STORE = "americana"  # 設定タブに店舗列が無い/空の既存行はこの店舗扱いにする
 
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
 SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
@@ -54,9 +66,11 @@ CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
 CW_ASSIGNEE_ID = "2158846"  # Yoko Matsusakaさん（[To:2158846]と同じアカウントID）
 CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 
-# クーポン名 → 発行後に自動更新する社内システムのメールテンプレートID
-TEMPLATE_ID_BY_COUPON_NAME = {
-    "ショップまたは商品レビュー投稿で1,000円クーポン": "259",
+# (店舗キー, クーポン名) → 発行後に自動更新する社内システムのメールテンプレートID
+# クーポン名は店舗をまたいで同じ場合があるため、店舗キーと組み合わせて一意にする。
+TEMPLATE_ID_BY_TARGET = {
+    ("americana", "ショップまたは商品レビュー投稿で1,000円クーポン"): "259",
+    ("founder", "ショップまたは商品レビュー投稿で1,000円クーポン"): "260",
 }
 
 APP_DOMAIN = os.environ.get("APP_DOMAIN", "")
@@ -71,10 +85,12 @@ LOG_HEADER = ["実行日時(JST)", "クーポン名", "対象期間", "結果", 
 
 # 設定タブの既定値。タブが無い場合はこの内容で作成する。
 # 依頼メッセージは、発行後のChatwork通知の末尾にそのまま入る。
+# 3列目（店舗）が空の行は DEFAULT_STORE（americana）扱いにする。
 DEFAULT_CONFIG = [
-    ["対象クーポン名（この名前の最新のものをコピー元にします）", "更新後の依頼メッセージ"],
-    ["アメリカーナLINE登録限定1,000円OFFクーポン", "LINEとロボチンのテンプレ更新をお願いします。"],
-    ["ショップまたは商品レビュー投稿で1,000円クーポン", "サーバーテンプレート自動更新済み。\nLINEの更新をお願いします。"],
+    ["対象クーポン名（この名前の最新のものをコピー元にします）", "更新後の依頼メッセージ", "店舗"],
+    ["アメリカーナLINE登録限定1,000円OFFクーポン", "LINEとロボチンのテンプレ更新をお願いします。", "americana"],
+    ["ショップまたは商品レビュー投稿で1,000円クーポン", "サーバーテンプレート自動更新済み。\nLINEの更新をお願いします。", "americana"],
+    ["ショップまたは商品レビュー投稿で1,000円クーポン", "サーバーテンプレート自動更新済みです。", "founder"],
     [""],
     ["Chatworkルームid", "60101971"],
     [""],
@@ -103,7 +119,9 @@ def get_spreadsheet():
 def parse_config(rows: list):
     """
     設定タブの内容を読み解く。
-    戻り値は (対象クーポン [(名前, 依頼メッセージ)], イベント期間 [(開始, 終了)], Chatworkルームid)
+    戻り値は (対象クーポン [(店舗, 名前, 依頼メッセージ)], イベント期間 [(開始, 終了)], Chatworkルームid)
+
+    店舗列（3列目）が無い/空の行は DEFAULT_STORE 扱いにする（後方互換）。
     """
     targets, events, room_id = [], [], ""
     section = None
@@ -111,6 +129,7 @@ def parse_config(rows: list):
     for row in rows:
         first = row[0].strip() if row else ""
         second = row[1].strip() if len(row) > 1 else ""
+        third = row[2].strip() if len(row) > 2 else ""
 
         if not first:
             continue
@@ -128,7 +147,8 @@ def parse_config(rows: list):
             continue
 
         if section == "targets":
-            targets.append((first, second))
+            store = third or DEFAULT_STORE
+            targets.append((store, first, second))
         elif section == "events" and second:
             events.append((first, second))
 
@@ -372,111 +392,127 @@ def main():
 
     spreadsheet = get_spreadsheet()
     targets, manual_events, room_id = load_config(spreadsheet)
-    target_names = [name for name, _ in targets]
-    print(f"対象クーポン: {target_names}")
+    print(f"対象クーポン: {[(store, name) for store, name, _ in targets]}")
     print(f"Chatwork通知先ルームid: {room_id or '（未設定）'}")
-
-    headers = auth_headers(SERVICE_SECRET, LICENSE_KEY)
-    try:
-        coupons = search_all(headers)
-    except Exception as e:
-        print(f"クーポン一覧の取得に失敗しました: {e}")
-        sys.exit(1)
-    print(f"既存クーポン: {len(coupons)}件")
-
-    ok, reason = check_today(today, coupons, manual_events, target_names)
-    print(f"本日の判定: {reason}")
-    if not ok and not FORCE:
-        print("今日は発行しません。終了。")
-        return
-    if not ok and FORCE:
-        print("※ FORCE指定のため、判定を無視して発行します。")
 
     new_start, new_end, period_label = next_month_period(today)
     print(f"作成する期間: {new_start} 〜 {new_end}（{period_label}）")
 
+    # 同じ店舗のクーポン一覧取得を使い回すため、店舗ごとにグループ化する
+    targets_by_store = {}
+    for store, name, request_message in targets:
+        targets_by_store.setdefault(store, []).append((name, request_message))
+
     log_rows = []
     now_label = today.strftime("%Y/%m/%d %H:%M")
 
-    for name, request_message in targets:
-        print(f"\n--- {name} ---")
-        matches = [c for c in coupons if c.get("couponName") == name]
-        if not matches:
-            print("  同名のクーポンが見つかりません。名前が変わっていないか確認してください。")
-            log_rows.append([now_label, name, period_label, "コピー元が見つかりません", "", ""])
+    for store, store_targets in targets_by_store.items():
+        print(f"\n=== 店舗: {store} ===")
+        store_creds = STORES.get(store)
+        if not store_creds:
+            print(f"  未知の店舗キーです: {store}。スキップします。")
+            for name, _ in store_targets:
+                log_rows.append([now_label, name, period_label, f"未知の店舗キー（{store}）", "", ""])
             continue
 
-        # すでに翌月分を作っていないか確認（二重発行の防止）
-        already = [c for c in matches if c.get("couponStartDate", "").startswith(new_start[:7])]
-        if already:
-            print(f"  すでに{period_label}分が存在します（{already[0].get('couponCode')}）。スキップ。")
-            log_rows.append([now_label, name, period_label, "既に作成済みのためスキップ",
-                             already[0].get("couponCode", ""), ""])
+        headers = auth_headers(store_creds["service_secret"], store_creds["license_key"])
+        try:
+            coupons = search_all(headers)
+        except Exception as e:
+            print(f"  クーポン一覧の取得に失敗しました: {e}")
+            for name, _ in store_targets:
+                log_rows.append([now_label, name, period_label, "クーポン一覧の取得に失敗", "", ""])
             continue
+        print(f"  既存クーポン: {len(coupons)}件")
 
-        # 最新のものをコピー元にする
-        source = max(matches, key=lambda c: c.get("couponStartDate", ""))
-        print(f"  コピー元: {source.get('couponCode')}"
-              f"（{source.get('couponStartDate')}〜{source.get('couponEndDate')}）")
-
-        src, nested = get_coupon(headers, source["couponCode"])
-        if src is None:
-            print("  コピー元の詳細取得に失敗しました。")
-            log_rows.append([now_label, name, period_label, "コピー元の取得に失敗", "", ""])
+        store_target_names = [name for name, _ in store_targets]
+        ok, reason = check_today(today, coupons, manual_events, store_target_names)
+        print(f"  本日の判定: {reason}")
+        if not ok and not FORCE:
+            print("  今日は発行しません。この店舗をスキップします。")
             continue
+        if not ok and FORCE:
+            print("  ※ FORCE指定のため、判定を無視して発行します。")
 
-        xml = build_issue_xml(src, new_start, new_end, nested)
+        for name, request_message in store_targets:
+            print(f"\n--- [{store}] {name} ---")
+            matches = [c for c in coupons if c.get("couponName") == name]
+            if not matches:
+                print("  同名のクーポンが見つかりません。名前が変わっていないか確認してください。")
+                log_rows.append([now_label, name, period_label, "コピー元が見つかりません", "", ""])
+                continue
 
-        if DRY_RUN:
-            print("  【DRY RUN】以下の内容で発行します：")
-            print(f"    枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}"
-                  f" / 条件: {nested['otherConditions']}")
-            template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
-            if template_id:
-                print(f"  【DRY RUN】テンプレートID {template_id} も更新予定（実際には更新しません）")
-            print("  【DRY RUN】Chatworkに送る予定のメッセージ：")
-            print(build_success_message(name, period_label, new_start, new_end,
-                                        "（発行後に決まります）", "（発行後に決まります）",
-                                        request_message))
-            log_rows.append([now_label, name, period_label, "【DRY RUN】発行対象", "", ""])
-            continue
+            # すでに翌月分を作っていないか確認（二重発行の防止）
+            already = [c for c in matches if c.get("couponStartDate", "").startswith(new_start[:7])]
+            if already:
+                print(f"  すでに{period_label}分が存在します（{already[0].get('couponCode')}）。スキップ。")
+                log_rows.append([now_label, name, period_label, "既に作成済みのためスキップ",
+                                 already[0].get("couponCode", ""), ""])
+                continue
 
-        success, message, code, url = issue_coupon(headers, xml)
-        print(f"  → {message}")
-        if success:
-            print(f"    新クーポンコード: {code}")
-            print(f"    取得URL: {url}")
+            # 最新のものをコピー元にする
+            source = max(matches, key=lambda c: c.get("couponStartDate", ""))
+            print(f"  コピー元: {source.get('couponCode')}"
+                  f"（{source.get('couponStartDate')}〜{source.get('couponEndDate')}）")
 
-            template_note = ""
-            template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
-            if template_id:
-                print(f"    テンプレートID {template_id} を更新します...")
-                try:
-                    update_email_template(
-                        template_id,
-                        source.get("couponCode", ""), code,
-                        src.get("pcGetUrl", ""), url,
-                        new_start, new_end,
-                    )
-                    print(f"    テンプレートID {template_id} を更新しました。")
-                except Exception as e:
-                    print(f"    テンプレートID {template_id} の更新に失敗しました: {e}")
-                    template_note = (
-                        f"\n\n※ テンプレートID {template_id} の自動更新に失敗しました。"
-                        f"手動で更新してください。\n  理由: {e}"
-                    )
+            src, nested = get_coupon(headers, source["couponCode"])
+            if src is None:
+                print("  コピー元の詳細取得に失敗しました。")
+                log_rows.append([now_label, name, period_label, "コピー元の取得に失敗", "", ""])
+                continue
 
-            post_chatwork_task(room_id, CW_ASSIGNEE_ID, build_success_message(
-                name, period_label, new_start, new_end, code, url, request_message) + template_note,
-                due_days=CW_TASK_DUE_DAYS)
-        else:
-            # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
-            post_chatwork_task(room_id, CW_ASSIGNEE_ID,
-                                f"{CW_MENTION}\n"
-                                f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
-                                f"{name}\n{message}\n手動での対応をお願いします。[/info]",
-                                due_days=CW_TASK_DUE_DAYS)
-        log_rows.append([now_label, name, period_label, message, code or "", url or ""])
+            xml = build_issue_xml(src, new_start, new_end, nested)
+
+            if DRY_RUN:
+                print("  【DRY RUN】以下の内容で発行します：")
+                print(f"    枚数: {src.get('issueCount')} / 割引: {src.get('discountFactor')}"
+                      f" / 条件: {nested['otherConditions']}")
+                template_id = TEMPLATE_ID_BY_TARGET.get((store, name))
+                if template_id:
+                    print(f"  【DRY RUN】テンプレートID {template_id} も更新予定（実際には更新しません）")
+                print("  【DRY RUN】Chatworkに送る予定のメッセージ：")
+                print(build_success_message(name, period_label, new_start, new_end,
+                                            "（発行後に決まります）", "（発行後に決まります）",
+                                            request_message))
+                log_rows.append([now_label, name, period_label, "【DRY RUN】発行対象", "", ""])
+                continue
+
+            success, message, code, url = issue_coupon(headers, xml)
+            print(f"  → {message}")
+            if success:
+                print(f"    新クーポンコード: {code}")
+                print(f"    取得URL: {url}")
+
+                template_note = ""
+                template_id = TEMPLATE_ID_BY_TARGET.get((store, name))
+                if template_id:
+                    print(f"    テンプレートID {template_id} を更新します...")
+                    try:
+                        update_email_template(
+                            template_id,
+                            source.get("couponCode", ""), code,
+                            src.get("pcGetUrl", ""), url,
+                            new_start, new_end,
+                        )
+                        print(f"    テンプレートID {template_id} を更新しました。")
+                    except Exception as e:
+                        print(f"    テンプレートID {template_id} の更新に失敗しました: {e}")
+                        template_note = (
+                            f"\n\n※ テンプレートID {template_id} の自動更新に失敗しました。"
+                            f"手動で更新してください。\n  理由: {e}"
+                        )
+
+                post_chatwork_task(room_id, CW_ASSIGNEE_ID, build_success_message(
+                    name, period_label, new_start, new_end, code, url, request_message) + template_note,
+                    due_days=CW_TASK_DUE_DAYS)
+            else:
+                # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
+                post_chatwork_task(room_id, CW_ASSIGNEE_ID,
+                                    f"{CW_MENTION}\n"
+                                    f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
+                                    f"{name}\n{message}\n手動での対応をお願いします。[/info]",
+                                    due_days=CW_TASK_DUE_DAYS)
+            log_rows.append([now_label, name, period_label, message, code or "", url or ""])
 
     try:
         append_log(spreadsheet, log_rows)
@@ -488,18 +524,23 @@ def main():
 
 
 # ══ テンプレートだけ同期する（発行済みクーポンに合わせて追いつかせる） ══
-def sync_template_only(name: str):
+def sync_template_only(store: str, name: str):
     """
     クーポンを新規発行せず、既に存在する最新2件（現在有効なもの＝new、その1つ前＝old）から
     メールテンプレートだけを更新する。Chatworkへの通知も行わない。
     月次自動発行が既にクーポンだけ発行済みで、テンプレート更新だけ追いつかせたい場合に使う。
     """
-    template_id = TEMPLATE_ID_BY_COUPON_NAME.get(name)
+    template_id = TEMPLATE_ID_BY_TARGET.get((store, name))
     if not template_id:
-        print(f"「{name}」に対応するテンプレートIDが設定されていません。")
+        print(f"「{store} / {name}」に対応するテンプレートIDが設定されていません。")
         sys.exit(1)
 
-    headers = auth_headers(SERVICE_SECRET, LICENSE_KEY)
+    store_creds = STORES.get(store)
+    if not store_creds:
+        print(f"未知の店舗キーです: {store}")
+        sys.exit(1)
+
+    headers = auth_headers(store_creds["service_secret"], store_creds["license_key"])
     coupons = search_all(headers)
     matches = sorted(
         [c for c in coupons if c.get("couponName") == name],
@@ -534,6 +575,7 @@ def sync_template_only(name: str):
 if __name__ == "__main__":
     sync_target = os.environ.get("SYNC_TEMPLATE_ONLY_FOR", "").strip()
     if sync_target:
-        sync_template_only(sync_target)
+        sync_store = os.environ.get("SYNC_TEMPLATE_ONLY_STORE", DEFAULT_STORE).strip() or DEFAULT_STORE
+        sync_template_only(sync_store, sync_target)
     else:
         main()

@@ -23,6 +23,10 @@ on:
         description: '発行はせず、指定したクーポン名のメールテンプレートだけ最新2件から同期する（空なら通常実行）'
         required: false
         default: ''
+      sync_template_only_store:
+        description: 'sync_template_only_for使用時の店舗キー（americana/founder。省略時はamericana）'
+        required: false
+        default: ''
 
 jobs:
   issue:
@@ -54,6 +58,8 @@ jobs:
         env:
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
@@ -65,4 +71,5 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           FORCE: ${{ inputs.force }}
           SYNC_TEMPLATE_ONLY_FOR: ${{ inputs.sync_template_only_for }}
+          SYNC_TEMPLATE_ONLY_STORE: ${{ inputs.sync_template_only_store }}
         run: python -u rakuten_coupon_monthly.py

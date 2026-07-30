@@ -35,7 +35,7 @@
 
 | スクリプト | ワークフロー | 内容 |
 |---|---|---|
-| `rakuten_coupon_monthly.py` | `rakuten_coupon_monthly.yml` | 常設クーポン2種（LINE登録限定・レビュー投稿）を毎月20日前後に翌月分として自動発行。「ショップまたは商品レビュー投稿で1,000円クーポン」は発行成功後、社内システムのメールテンプレート（ID 259）のクーポンコード・期限・取得URLもPlaywrightで自動書き換え |
+| `rakuten_coupon_monthly.py` | `rakuten_coupon_monthly.yml` | 常設クーポン（LINE登録限定・レビュー投稿）を毎月20日前後に翌月分として自動発行。**楽天2店舗（Americana / Founder）に対応**、店舗ごとに別のRMS認証情報・別のメールテンプレートID（259 / 260）を持てる。「ショップまたは商品レビュー投稿で1,000円クーポン」は発行成功後、社内システムのメールテンプレートのクーポンコード・期限・取得URLもPlaywrightで自動書き換え |
 | `rakuten_coupon_review_batch.py` | `rakuten_coupon_review_batch.yml` | 自社製品レビュークーポン12件（リポソーム型ビタミンC・アルロース）を、クーポンごとの現在の終了日を起点に2ヶ月ごと自動更新。毎日チェックだけ走り、実際に発行するのは周期が来た日だけ |
 | `rakuten_coupon_test.py` | `rakuten_coupon_test.yml` | 調査・手動運用ツール（probe/list/detail/search/copy-preview/copy-issue/batch-preview/batch-issue）。クーポン名のキーワード検索や、複数件の手動一括コピー発行に使う |
 

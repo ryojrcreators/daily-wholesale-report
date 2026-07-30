@@ -25,9 +25,11 @@ from rakuten_coupon_api import auth_headers as _shared_auth_headers, search_all
 
 JST = timezone(timedelta(hours=9))
 
-SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"]
-LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
-SHOP_NAME = os.environ["RAKUTEN_SHOP_NAME_1"]
+# STORE=1 (既定, Americana) または STORE=2 (Founder) で対象店舗を切り替える
+STORE = os.environ.get("STORE", "1").strip() or "1"
+SERVICE_SECRET = os.environ[f"RAKUTEN_RMS_SERVICE_SECRET_{STORE}"]
+LICENSE_KEY = os.environ[f"RAKUTEN_RMS_LICENSE_KEY_{STORE}"]
+SHOP_NAME = os.environ[f"RAKUTEN_SHOP_NAME_{STORE}"]
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 

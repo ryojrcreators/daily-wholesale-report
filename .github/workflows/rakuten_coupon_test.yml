@@ -3,6 +3,14 @@ name: 楽天クーポンAPI 調査（読み取りのみ）
 on:
   workflow_dispatch:
     inputs:
+      store:
+        description: '対象店舗（1=Americana, 2=Founder）'
+        required: true
+        default: '1'
+        type: choice
+        options:
+          - '1'
+          - '2'
       mode:
         description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目 / search=名前をキーワード検索 / batch-preview,batch-issue=複数件一括コピー発行'
         required: true
@@ -86,6 +94,10 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
           RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+          STORE: ${{ inputs.store }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           MODE: ${{ inputs.mode }}
           COUPON_CODE: ${{ inputs.coupon_code }}

@@ -37,9 +37,11 @@ LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_1"]
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_ROOM_ID = "60101971"
+CW_ASSIGNEE_ID = "2618849"  # Ryo Higuchiさん（[To:2618849]と同じアカウントID）
 CW_MENTION = "[To:2618849]Ryo Higuchiさん"
 CW_TITLE_PREFIX = "楽天クーポン更新"
 CW_INTRO = "下記自社製品レビュークーポンを更新しました。\nテンプレートの更新をお願いします。"
+CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 
 # コピー先の画像URL。元のcouponImageは「couponImage.not_available_url」エラーになるため、
 # RMS管理画面のR-Cabinet（cabinet/フォルダ）に登録し直した画像に統一して差し替える。
@@ -88,6 +90,38 @@ def post_chatwork(room_id: str, body: str):
             print(f"    {res.text[:300]}")
     except Exception as e:
         print(f"  Chatwork通知に失敗しました: {e}")
+
+
+def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = None):
+    """
+    普通のメッセージではなく、Chatworkの「タスク」として作成する
+    （担当者に割り当てられ、Chatwork上のタスク一覧にも表示される）。
+    """
+    if not room_id or not to_ids:
+        print("  Chatworkルームid/担当者idが未指定のためタスクを作成しません。")
+        return
+    if not CW_TOKEN:
+        print("  CW_TOKENが未設定のためタスクを作成しません。")
+        return
+
+    data = {"body": body, "to_ids": to_ids}
+    if due_days is not None:
+        due = datetime.now(JST) + timedelta(days=due_days)
+        data["limit"] = int(due.timestamp())
+        data["limit_type"] = "date"
+
+    try:
+        res = requests.post(
+            f"https://api.chatwork.com/v2/rooms/{room_id}/tasks",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            data=data,
+            timeout=30,
+        )
+        print(f"  Chatworkタスク作成: status={res.status_code}")
+        if res.status_code >= 400:
+            print(f"    {res.text[:300]}")
+    except Exception as e:
+        print(f"  Chatworkタスク作成に失敗しました: {e}")
 
 
 def format_period_label(start: str, end: str) -> str:
@@ -229,8 +263,10 @@ def process_one(name: str, coupons: list, today: datetime, headers: dict,
         print(f"    【DRY RUN】発行対象: {name}")
         print(f"      新しい期間: {start_str} 〜 {end_str}")
         result["status"] = "issued"
-        result["code"] = "（DRY RUN）"
-        result["url"] = "（DRY RUN）"
+        # 実際には発行しないので、確認しやすいようコピー元（＝現在有効なクーポン）の
+        # コード・URLをそのまま表示する
+        result["code"] = f"（DRY RUN・コピー元: {src.get('couponCode')}）"
+        result["url"] = src.get("pcGetUrl")
         return result
 
     success, message, code, url = issue_coupon(headers, xml)
@@ -281,7 +317,7 @@ def main():
           f"対象外{len(results) - len(issued) - len(errored)}件 ===")
 
     if issued or errored:
-        post_chatwork(CW_ROOM_ID, build_report(results))
+        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(results), due_days=CW_TASK_DUE_DAYS)
     else:
         print("発行対象・エラーとも無かったため、Chatworkへは通知しません。")
 

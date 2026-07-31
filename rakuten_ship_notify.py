@@ -185,9 +185,8 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.wait_for_timeout(300)
 
     # ボタンclick()のイベント伝播に頼らず、フォームのsubmit()を直接呼んで確実に送信する
-    page.evaluate("document.getElementById('searchform').submit()"
-    )
-    page.wait_for_load_state("networkidle")
+    with page.expect_navigation(wait_until="networkidle"):
+        page.evaluate("document.getElementById('searchform').submit()")
     page.wait_for_timeout(2000)
 
     if os.environ.get("DEBUG_SO_SEARCH"):

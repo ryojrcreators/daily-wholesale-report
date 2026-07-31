@@ -141,10 +141,15 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
 
     /so-heads はURLクエリだけでは検索結果が更新されず、フォームの入力欄を埋めて
     Searchボタンをクリックする必要がある（so_sheets.pyの検索と同じ挙動）。
+    さらに検索フォーム自体が既定で非表示（.search-div）になっており、
+    .search-toggle をクリックして展開しないとフィールドを操作できない。
     """
     url = f"{SO_HEADS_URL}?SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(1000)
+
+    page.click(".search-toggle")
+    page.wait_for_timeout(500)
 
     ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first
     ship_date_input.fill(ship_date_str)

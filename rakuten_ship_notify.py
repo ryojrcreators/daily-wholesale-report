@@ -4,9 +4,11 @@
 
 処理の流れ:
   1. Playwrightで app.jrcreators.com にログイン（Basic認証 + フォームログインの2段階）
-  2. 直近数日分について /so-heads?SoHeads[sales_account_id]=3&ship_date=YYYY-MM-DD
-     （sales_account_id=3 が楽天チャネルの絞り込み）にアクセスし、CSVをダウンロードする
-     （so_sheets.pyと同じ「Downloadリンクのhrefを取得→Cookie付きrequestsで取得」方式）
+  2. 直近数日分について /so-heads?ship_date=YYYY-MM-DD にアクセスし、CSVをダウンロードする
+     （so_sheets.pyと同じ「Downloadリンクのhrefを取得→Cookie付きrequestsで取得」方式）。
+     sales_account_id等の非日付系フィルターはbotセッションだと常に0件になる既知のクセが
+     あるため使わず、全チャネル分を取得してからPython側でorder_numberのプレフィックスに
+     より楽天チャネルだけに絞り込む
   3. order_number単位に集約し、プレフィックスで店舗（Americana/Founder）を判定、
      ship_methodを配送会社コードに変換する（対象外・変換不能なものはスキップ）
   4. 店舗ごとに getOrder でまとめて取得し、PackageModelList[].ShippingModelList が
@@ -139,15 +141,20 @@ def login(page):
 
 
 def fetch_shipped_csv(page, context, ship_date_str: str):
-    """指定日にsales_account_id=3（楽天）で発送済みの注文CSVを取得する。
+    """指定日に発送済みの注文CSVを取得する（全チャネル分。楽天だけへの絞り込みは
+    呼び出し側でorder_numberのプレフィックス判定により行う）。
     (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
 
     /so-heads はURLクエリだけでは検索結果が更新されず、フォームの入力欄を埋めて
     Searchボタンをクリックする必要がある（so_sheets.pyの検索と同じ挙動）。
     さらに検索フォーム自体が既定で非表示（.search-div）になっており、
     .search-toggle をクリックして展開しないとフィールドを操作できない。
+
+    注意：sales_account_id（非日付系フィルター）を付けて検索すると、bot
+    セッションでは常に0件になる既知のクセがあるため、日付フィルター（ship_date/
+    end_date）だけを使い、チャネルの絞り込みはPython側で行う。
     """
-    url = f"{SO_HEADS_URL}?SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
+    url = f"{SO_HEADS_URL}?ship_date={ship_date_str}"
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(1000)
 
@@ -168,10 +175,6 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
             shipInput.value = shipDate;
             shipInput.dispatchEvent(new Event('input', {bubbles: true}));
             shipInput.dispatchEvent(new Event('change', {bubbles: true}));
-
-            const salesSelect = document.getElementById('soheads-sales-account-id');
-            salesSelect.value = '3';
-            salesSelect.dispatchEvent(new Event('change', {bubbles: true}));
 
             const endInput = document.getElementById('end-date');
             if (!endInput.value) {

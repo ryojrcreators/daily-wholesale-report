@@ -148,7 +148,9 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    page.click(".search-toggle")
+    # 通常のclick()は要素の可視性判定で反応しないことがあるため、
+    # JSの直接clickイベント発火（実ブラウザで動作確認済み）で確実に展開する
+    page.locator(".search-toggle").first.dispatch_event("click")
     page.wait_for_timeout(500)
 
     ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first

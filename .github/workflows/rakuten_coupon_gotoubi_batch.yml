@@ -36,6 +36,7 @@ jobs:
         env:
           RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
           FORCE: ${{ inputs.force || 'false' }}

@@ -32,6 +32,7 @@ FORCE = os.environ.get("FORCE", "false").lower() == "true"
 
 SERVICE_SECRET = os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"]
 LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_2"]
+SHOP_NAME = os.environ["RAKUTEN_SHOP_NAME_2"]
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_ROOM_ID = "60101971"
@@ -41,7 +42,9 @@ CW_TITLE_PREFIX = "楽天クーポン更新（5,0の付く日）"
 CW_INTRO = "下記クーポンを更新しました。"
 CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 
-TARGET_COUPON_NAME = "5,0の付く日クーポン"
+# 実際のクーポン名は「（店舗名）で使える5,0の付く日クーポン」。店舗名を直書きしないよう
+# GitHub Secretsの店舗名から組み立てる。
+TARGET_COUPON_NAME = f"{SHOP_NAME}で使える5,0の付く日クーポン"
 TARGET_DAYS = [5, 10, 15, 20, 25, 30]
 
 CREATE_FROM_DAY = 20  # 現在の終了日が属する月の、何日以降に作成するか

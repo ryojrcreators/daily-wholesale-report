@@ -4,11 +4,13 @@
 
 処理の流れ:
   1. Playwrightで app.jrcreators.com にログイン（Basic認証 + フォームログインの2段階）
-  2. 直近数日分について /so-heads?ship_date=YYYY-MM-DD にアクセスし、CSVをダウンロードする
-     （so_sheets.pyと同じ「Downloadリンクのhrefを取得→Cookie付きrequestsで取得」方式）。
-     sales_account_id等の非日付系フィルターはbotセッションだと常に0件になる既知のクセが
-     あるため使わず、全チャネル分を取得してからPython側でorder_numberのプレフィックスに
-     より楽天チャネルだけに絞り込む
+  2. so_sheets.pyと全く同じ検索方式（/so-heads を素のURLで開き、start_date/end_date
+     ＝created_time範囲だけをフォームに入力してSearch→Downloadリンクのhrefを取得→
+     Cookie付きrequestsでCSV取得）で、広めの期間（既定60日分）のCSVを1回取得する。
+     ship_dateやsales_account_idといった他のフィルターはbotセッションだと検索結果が
+     常に0件になる既知のクセがあるため使わず、取得したCSVの中からPython側でship_time
+     列を見て対象期間（LOOKBACK_DAYS）に発送されたものだけを、order_numberのプレフィックス
+     で楽天チャネルだけに絞り込む
   3. order_number単位に集約し、プレフィックスで店舗（Americana/Founder）を判定、
      ship_methodを配送会社コードに変換する（対象外・変換不能なものはスキップ）
   4. 店舗ごとに getOrder でまとめて取得し、PackageModelList[].ShippingModelList が
@@ -32,7 +34,10 @@ from rakuten_coupon_api import auth_headers
 JST = timezone(timedelta(hours=9))
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分を対象にするか
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
+# created_time（注文日）の検索範囲。ship_dateフィルターが使えないため広めに取り、
+# 取得したCSVをPython側でship_time列を見てLOOKBACK_DAYS分に絞り込む
+CREATED_TIME_LOOKBACK_DAYS = int(os.environ.get("CREATED_TIME_LOOKBACK_DAYS", "60"))
 # テスト用：指定した場合、この注文番号だけを対象にする（カンマ区切りで複数可）
 ONLY_ORDER_NUMBERS = {
     s.strip() for s in os.environ.get("ONLY_ORDER_NUMBERS", "").split(",") if s.strip()
@@ -140,82 +145,28 @@ def login(page):
     print("ログイン完了")
 
 
-def fetch_shipped_csv(page, context, ship_date_str: str):
-    """指定日に発送済みの注文CSVを取得する（全チャネル分。楽天だけへの絞り込みは
-    呼び出し側でorder_numberのプレフィックス判定により行う）。
+def fetch_so_range(page, context, start_date: str, end_date: str):
+    """so_sheets.pyの_fetch_so_rangeと全く同じ方式（本番で実績あり）でCSVを取得する。
     (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
 
-    /so-heads はURLクエリだけでは検索結果が更新されず、フォームの入力欄を埋めて
-    Searchボタンをクリックする必要がある（so_sheets.pyの検索と同じ挙動）。
-    さらに検索フォーム自体が既定で非表示（.search-div）になっており、
-    .search-toggle をクリックして展開しないとフィールドを操作できない。
-
-    注意：sales_account_id（非日付系フィルター）を付けて検索すると、bot
-    セッションでは常に0件になる既知のクセがあるため、日付フィルター（ship_date/
-    end_date）だけを使い、チャネルの絞り込みはPython側で行う。
+    ship_dateやsales_account_idのようなフィルターを使うと、bot（Playwright）
+    セッションでは検索結果が常に0件になる既知のクセがあるため使わない。
+    start_date/end_date（created_time範囲）だけをフォームに入力して検索する。
     """
-    url = f"{SO_HEADS_URL}?ship_date={ship_date_str}"
-    page.goto(url, wait_until="networkidle")
-    page.wait_for_timeout(1000)
-
-    # 検索フォーム（.search-div）は既定で非表示、各日付欄はjQuery UI datepicker制御。
-    # Playwrightの通常のclick/fillはCI環境でイベントが正しく伝播せず反応しないことが
-    # あったため、実ブラウザで動作確認済みの「JSで直接値をセット→ネイティブclick()」
-    # 方式で確実に検索を実行する。
-    end_date_str = datetime.now(JST).strftime("%Y-%m-%d")
-
-    # 実ブラウザでの検証では「パネル表示→(間を置く)→値セット→(間を置く)→Searchクリック」
-    # の順で確実に動いた。1回のJS実行にまとめると反応しないことがあったため分割する。
-    page.evaluate("document.querySelector('.search-div').style.display = 'block'")
-    page.wait_for_timeout(300)
-
-    page.evaluate(
-        """({shipDate, endDate}) => {
-            const shipInput = document.getElementById('ship-date');
-            shipInput.value = shipDate;
-            shipInput.dispatchEvent(new Event('input', {bubbles: true}));
-            shipInput.dispatchEvent(new Event('change', {bubbles: true}));
-
-            const endInput = document.getElementById('end-date');
-            if (!endInput.value) {
-                endInput.value = endDate;
-                endInput.dispatchEvent(new Event('input', {bubbles: true}));
-                endInput.dispatchEvent(new Event('change', {bubbles: true}));
-            }
-        }""",
-        {"shipDate": ship_date_str, "endDate": end_date_str},
-    )
-    page.wait_for_timeout(300)
-
-    # ボタンclick()のイベント伝播に頼らず、フォームのsubmit()を直接呼んで確実に送信する
-    with page.expect_navigation(wait_until="networkidle"):
-        page.evaluate("document.getElementById('searchform').submit()")
+    page.goto(SO_HEADS_URL, wait_until="networkidle")
     page.wait_for_timeout(2000)
 
-    if os.environ.get("DEBUG_SO_SEARCH"):
-        debug = page.evaluate(
-            """() => {
-                const body = document.body.innerText;
-                const showingIdx = body.indexOf('Showing');
-                return {
-                    url: location.href,
-                    shipDateValue: document.getElementById('ship-date') ? document.getElementById('ship-date').value : null,
-                    salesAccountValue: document.getElementById('soheads-sales-account-id') ? document.getElementById('soheads-sales-account-id').value : null,
-                    endDateValue: document.getElementById('end-date') ? document.getElementById('end-date').value : null,
-                    hasDownloadText: body.includes('Download'),
-                    orderLinkCount: document.querySelectorAll('a[href*="/sales/view/"]').length,
-                    tableRowCount: document.querySelectorAll('table tr').length,
-                    showingSnippet: showingIdx >= 0 ? body.slice(showingIdx, showingIdx + 80) : null,
-                    tailSnippet: body.slice(-600),
-                };
-            }"""
-        )
-        print(f"    デバッグ({ship_date_str}): {debug}")
+    start_input = page.locator('input[name="start_date"], input[placeholder*="Start"], input[id*="start"]').first
+    start_input.fill(start_date)
+    end_input = page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first
+    end_input.fill(end_date)
 
-    # 「Download」の完全一致リンクを探す（「Profit Download」等の部分一致は除外する）
-    download_link = page.get_by_role("link", name="Download", exact=True).first
+    page.click('button:has-text("Search"), input[value="Search"]')
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(2000)
+
+    download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
     if download_link.count() == 0:
-        print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
         return None, []
     href = download_link.get_attribute("href")
     if not href:
@@ -230,7 +181,7 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
         auth=(LOGIN_ID_1, LOGIN_PASS_1),
     )
     if response.status_code != 200:
-        print(f"  {ship_date_str}: CSVダウンロード失敗 status={response.status_code}")
+        print(f"  CSVダウンロード失敗 status={response.status_code}")
         return None, []
 
     text = response.content.decode("utf-8-sig", errors="replace")
@@ -241,42 +192,57 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
 
 
 def collect_shipped_orders(page, context) -> list:
-    """直近LOOKBACK_DAYS日分のCSVを取得し、order_number単位に集約したリストを返す。
+    """CREATED_TIME_LOOKBACK_DAYS分のCSVを1回取得し、ship_time列が直近LOOKBACK_DAYS日
+    以内のものだけをorder_number単位に集約して返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
     """
     today = datetime.now(JST).date()
+    created_start = (today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    created_end = today.strftime("%Y-%m-%d")
+    print(f"検索期間（created_time基準）: {created_start} 〜 {created_end}")
+
+    header, rows = fetch_so_range(page, context, created_start, created_end)
+    if not header:
+        print("該当データがありませんでした。")
+        return []
+    print(f"取得した全チャネル分: {len(rows)}行")
+
+    ship_from = today - timedelta(days=LOOKBACK_DAYS - 1)
     seen = {}
-    header = None
-    for i in range(LOOKBACK_DAYS):
-        d = today - timedelta(days=i)
-        d_str = d.strftime("%Y-%m-%d")
-        print(f"取得中: {d_str}")
-        h, rows = fetch_shipped_csv(page, context, d_str)
-        if h:
-            header = h
-        for row in rows:
-            if not any(row):
-                continue
-            record = dict(zip(h or header, row))
-            order_number = record.get("order_number", "").strip()
-            if not order_number or order_number in seen:
-                continue
-            seen[order_number] = {
-                "order_number": order_number,
-                "ship_method": record.get("ship_method", "").strip(),
-                "tracking_num": record.get("tracking_num", "").strip(),
-                "ship_time": record.get("ship_time", "").strip(),
-            }
+    for row in rows:
+        if not any(row):
+            continue
+        record = dict(zip(header, row))
+        order_number = record.get("order_number", "").strip()
+        if not order_number or order_number in seen:
+            continue
+        ship_time = record.get("ship_time", "").strip()
+        ship_dt = parse_ship_datetime(ship_time)
+        if ship_dt is None or not (ship_from <= ship_dt.date() <= today):
+            continue
+        seen[order_number] = {
+            "order_number": order_number,
+            "ship_method": record.get("ship_method", "").strip(),
+            "tracking_num": record.get("tracking_num", "").strip(),
+            "ship_time": ship_time,
+        }
     return list(seen.values())
 
 
-def parse_ship_date(ship_time: str) -> str:
-    """CSVの ship_time（例 "2/4/26, 11:43 AM"）から YYYY-MM-DD を返す。"""
+def parse_ship_datetime(ship_time: str):
+    """CSVの ship_time（例 "2/4/26, 11:43 AM"）をdatetimeに変換する。失敗時はNone。"""
     try:
-        dt = datetime.strptime(ship_time.strip(), "%m/%d/%y, %I:%M %p")
-        return dt.strftime("%Y-%m-%d")
+        return datetime.strptime(ship_time.strip(), "%m/%d/%y, %I:%M %p")
     except Exception:
-        return datetime.now(JST).strftime("%Y-%m-%d")
+        return None
+
+
+def parse_ship_date(ship_time: str) -> str:
+    """CSVの ship_time から YYYY-MM-DD を返す（updateOrderShippingのshippingDate用）。"""
+    dt = parse_ship_datetime(ship_time)
+    if dt is not None:
+        return dt.strftime("%Y-%m-%d")
+    return datetime.now(JST).strftime("%Y-%m-%d")
 
 
 def resolve_store(order_number: str):

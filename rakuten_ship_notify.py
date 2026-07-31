@@ -184,12 +184,8 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     )
     page.wait_for_timeout(300)
 
-    page.evaluate(
-        """() => {
-            const searchBtn = [...document.querySelectorAll('button[type="submit"]')]
-                .find(b => b.textContent.includes('Search'));
-            if (searchBtn) searchBtn.click();
-        }"""
+    # ボタンclick()のイベント伝播に頼らず、フォームのsubmit()を直接呼んで確実に送信する
+    page.evaluate("document.getElementById('searchform').submit()"
     )
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)

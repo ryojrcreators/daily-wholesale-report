@@ -37,7 +37,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
 # created_time（注文日）の検索範囲。ship_dateフィルターが使えないため広めに取り、
 # 取得したCSVをPython側でship_time列を見てLOOKBACK_DAYS分に絞り込む
-CREATED_TIME_LOOKBACK_DAYS = int(os.environ.get("CREATED_TIME_LOOKBACK_DAYS", "60"))
+CREATED_TIME_LOOKBACK_DAYS = int(os.environ.get("CREATED_TIME_LOOKBACK_DAYS", "21"))
 # テスト用：指定した場合、この注文番号だけを対象にする（カンマ区切りで複数可）
 ONLY_ORDER_NUMBERS = {
     s.strip() for s in os.environ.get("ONLY_ORDER_NUMBERS", "").split(",") if s.strip()
@@ -204,7 +204,7 @@ def fetch_so_range(page, context, start_date: str, end_date: str):
     return rows[0], rows[1:]
 
 
-CHUNK_DAYS = 7  # created_time範囲を1回に検索する日数（広すぎると結果が0件になることがあるため分割する）
+CHUNK_DAYS = 1  # created_time範囲を1回に検索する日数（複数日の範囲では検索結果が0件になることを確認したため、so_sheets.pyの通常運用と同じ単日ずつにする）
 
 
 def collect_shipped_orders(page, context) -> list:

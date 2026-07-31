@@ -35,7 +35,8 @@ LICENSE_KEY = os.environ["RAKUTEN_RMS_LICENSE_KEY_2"]
 SHOP_NAME = os.environ["RAKUTEN_SHOP_NAME_2"]
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
-CW_ROOM_ID = "60101971"
+# テスト実行時に本番ルームへ誤報告しないよう、環境変数で上書きできるようにする（空文字なら本番既定値）
+CW_ROOM_ID = os.environ.get("CW_ROOM_ID") or "60101971"
 CW_ASSIGNEE_ID = "2158846"  # Yoko Matsusakaさん（[To:2158846]と同じアカウントID）
 CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
 CW_TITLE_PREFIX = "楽天クーポン更新（5,0の付く日）"

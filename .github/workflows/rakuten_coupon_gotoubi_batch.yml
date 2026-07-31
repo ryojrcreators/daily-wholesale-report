@@ -22,6 +22,10 @@ on:
         options:
           - 'false'
           - 'true'
+      cw_room_id:
+        description: 'Chatwork報告先ルームid（テスト時は本番以外を指定）'
+        required: false
+        default: ''
 
 jobs:
   issue:
@@ -40,4 +44,5 @@ jobs:
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
           FORCE: ${{ inputs.force || 'false' }}
+          CW_ROOM_ID: ${{ inputs.cw_room_id }}
         run: python -u rakuten_coupon_gotoubi_batch.py

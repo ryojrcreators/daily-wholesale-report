@@ -31,6 +31,12 @@ JST = timezone(timedelta(hours=9))
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分を対象にするか
+# テスト用：指定した場合、この注文番号だけを対象にする（カンマ区切りで複数可）
+ONLY_ORDER_NUMBERS = {
+    s.strip() for s in os.environ.get("ONLY_ORDER_NUMBERS", "").split(",") if s.strip()
+}
+# テスト用：処理する件数の上限（登録対象になった注文の数。既登録スキップはカウントしない）
+MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "0")) or None
 
 # ── 社内システム ──────────────────────────────────
 APP_DOMAIN = os.environ["APP_DOMAIN"]
@@ -276,6 +282,10 @@ def main():
 
     print(f"取得した発送済み注文（重複除去後）: {len(orders)}件")
 
+    if ONLY_ORDER_NUMBERS:
+        orders = [o for o in orders if o["order_number"] in ONLY_ORDER_NUMBERS]
+        print(f"ONLY_ORDER_NUMBERS指定により絞り込み: {len(orders)}件（対象: {sorted(ONLY_ORDER_NUMBERS)}）")
+
     by_store = {"americana": [], "founder": []}
     ignored_store = 0
     missing_info = 0
@@ -314,6 +324,10 @@ def main():
         order_map = get_orders(headers, order_numbers)
 
         for t in targets:
+            if MAX_PER_RUN is not None and registered >= MAX_PER_RUN:
+                print(f"  MAX_PER_RUN={MAX_PER_RUN}に達したため、残りは今回スキップします。")
+                break
+
             order = order_map.get(t["order_number"])
             if order is None:
                 not_found += 1

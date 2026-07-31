@@ -24,6 +24,14 @@ on:
         description: 'Chatwork報告先ルームid（テスト時は本番以外を指定）'
         required: false
         default: ''
+      only_order_numbers:
+        description: 'テスト用：この注文番号だけ対象にする（カンマ区切りで複数可）'
+        required: false
+        default: ''
+      max_per_run:
+        description: 'テスト用：処理する件数の上限（0=無制限）'
+        required: false
+        default: '0'
 
 jobs:
   notify:
@@ -65,6 +73,8 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
           CW_ROOM_ID: ${{ inputs.cw_room_id }}
+          ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
+          MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
         run: python -u rakuten_ship_notify.py
 
       - name: デバッグ用スクリーンショット保存

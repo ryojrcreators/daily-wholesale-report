@@ -32,6 +32,14 @@ on:
         description: 'テスト用：処理する件数の上限（0=無制限）'
         required: false
         default: '0'
+      debug_so_search:
+        description: 'テスト用：SO検索ページの詳細デバッグログを出力する'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   notify:
@@ -75,6 +83,7 @@ jobs:
           CW_ROOM_ID: ${{ inputs.cw_room_id }}
           ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
           MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
+          DEBUG_SO_SEARCH: ${{ inputs.debug_so_search }}
         run: python -u rakuten_ship_notify.py
 
       - name: デバッグ用スクリーンショット保存

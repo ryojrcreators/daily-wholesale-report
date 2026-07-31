@@ -168,6 +168,22 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)
 
+    if os.environ.get("DEBUG_SO_SEARCH"):
+        debug = page.evaluate(
+            """() => {
+                const body = document.body.innerText;
+                return {
+                    url: location.href,
+                    shipDateValue: document.getElementById('ship-date') ? document.getElementById('ship-date').value : null,
+                    salesAccountValue: document.getElementById('soheads-sales-account-id') ? document.getElementById('soheads-sales-account-id').value : null,
+                    hasDownloadText: body.includes('Download'),
+                    recordsLine: (body.match(/Showing[^\\n]*/) || [null])[0],
+                    bodySnippet: body.slice(0, 600),
+                };
+            }"""
+        )
+        print(f"    デバッグ({ship_date_str}): {debug}")
+
     # 「Download」の完全一致リンクを探す（「Profit Download」等の部分一致は除外する）
     download_link = page.get_by_role("link", name="Download", exact=True).first
     if download_link.count() == 0:

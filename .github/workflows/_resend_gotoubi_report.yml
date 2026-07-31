@@ -1,0 +1,17 @@
+name: （一時）5,0の付く日クーポン報告 再送信
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  resend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - env:
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+        run: python -u _resend_gotoubi_report.py

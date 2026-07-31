@@ -153,6 +153,21 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.locator(".search-toggle").first.dispatch_event("click")
     page.wait_for_timeout(500)
 
+    debug = page.evaluate(
+        """() => {
+            const toggles = document.querySelectorAll('.search-toggle');
+            const div = document.querySelector('.search-div');
+            return {
+                url: location.href,
+                title: document.title,
+                toggleCount: toggles.length,
+                searchDivStyle: div ? div.getAttribute('style') : 'NOT_FOUND',
+                shipDateExists: !!document.getElementById('ship-date'),
+            };
+        }"""
+    )
+    print(f"    デバッグ: {debug}")
+
     ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first
     ship_date_input.fill(ship_date_str)
     sales_account_select = page.locator('#soheads-sales-account-id, select[name="SoHeads[sales_account_id]"]').first

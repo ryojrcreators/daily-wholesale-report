@@ -148,25 +148,16 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    # 通常のclick()は要素の可視性判定で反応しないことがあるため、
-    # JSの直接clickイベント発火（実ブラウザで動作確認済み）で確実に展開する
-    page.locator(".search-toggle").first.dispatch_event("click")
-    page.wait_for_timeout(500)
-
-    debug = page.evaluate(
+    # .search-toggle のクリックイベント発火はCI環境ではJSの初期化タイミング次第で
+    # 反応しないことがあったため、隠れている .search-div のstyleを直接書き換えて
+    # 確実に展開する（クリックハンドラの実行結果として最終的にこの状態になることを確認済み）
+    page.evaluate(
         """() => {
-            const toggles = document.querySelectorAll('.search-toggle');
             const div = document.querySelector('.search-div');
-            return {
-                url: location.href,
-                title: document.title,
-                toggleCount: toggles.length,
-                searchDivStyle: div ? div.getAttribute('style') : 'NOT_FOUND',
-                shipDateExists: !!document.getElementById('ship-date'),
-            };
+            if (div) div.style.display = 'block';
         }"""
     )
-    print(f"    デバッグ: {debug}")
+    page.wait_for_timeout(300)
 
     ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first
     ship_date_input.fill(ship_date_str)

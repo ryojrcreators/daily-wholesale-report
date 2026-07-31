@@ -125,6 +125,9 @@ def build_report(unmapped_carriers: list, errors: list) -> str:
 # ══ 社内システム：CSV取得 ═════════════════════════
 def login(page):
     print("社内システムにログイン中...")
+    if os.environ.get("DEBUG_SO_SEARCH"):
+        page.on("console", lambda msg: print(f"    [console.{msg.type}] {msg.text}"))
+        page.on("pageerror", lambda exc: print(f"    [pageerror] {exc}"))
     page.goto(LOGIN_URL, wait_until="networkidle")
     page.click('a:has-text("Login"), button:has-text("Login")')
     page.wait_for_load_state("networkidle")
@@ -177,13 +180,17 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
         debug = page.evaluate(
             """() => {
                 const body = document.body.innerText;
+                const showingIdx = body.indexOf('Showing');
                 return {
                     url: location.href,
                     shipDateValue: document.getElementById('ship-date') ? document.getElementById('ship-date').value : null,
                     salesAccountValue: document.getElementById('soheads-sales-account-id') ? document.getElementById('soheads-sales-account-id').value : null,
+                    endDateValue: document.getElementById('end-date') ? document.getElementById('end-date').value : null,
                     hasDownloadText: body.includes('Download'),
-                    recordsLine: (body.match(/Showing[^\\n]*/) || [null])[0],
-                    bodySnippet: body.slice(0, 600),
+                    orderLinkCount: document.querySelectorAll('a[href*="/sales/view/"]').length,
+                    tableRowCount: document.querySelectorAll('table tr').length,
+                    showingSnippet: showingIdx >= 0 ? body.slice(showingIdx, showingIdx + 80) : null,
+                    tailSnippet: body.slice(-600),
                 };
             }"""
         )

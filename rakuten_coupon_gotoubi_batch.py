@@ -91,7 +91,17 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = Non
 
 def build_report(results: list) -> str:
     """発行結果からChatwork報告メッセージを組み立てる（対象日の順に、発行済み/既に更新済みを並べる）。"""
-    lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", CW_INTRO, ""]
+    # 対象月は issued/already の中から拾う（通常は全グループとも同じ月になる）
+    month_label = ""
+    for r in results:
+        if r["status"] in ("issued", "already") and r.get("start"):
+            dt = parse_rms_datetime(r["start"])
+            if dt:
+                month_label = f"{dt.month}月分を"
+                break
+
+    intro = f"{month_label}{CW_INTRO}"
+    lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", intro, ""]
     for r in results:
         if r["status"] == "issued":
             lines.append(f"■ {r['day']}日分")
@@ -181,6 +191,8 @@ def process_one(day: int, group: list, today: datetime, headers: dict) -> dict:
         return result
 
     new_start, new_end = next_period(current_start, current_end)
+    start_str, end_str = to_rms_str(new_start), to_rms_str(new_end)
+    result["start"], result["end"] = start_str, end_str
 
     # すでに次周期分を作っていないか確認（年月日まで一致するかで判定＝二重発行の防止）
     target_date_str = new_start.strftime("%Y-%m-%d")
@@ -189,9 +201,6 @@ def process_one(day: int, group: list, today: datetime, headers: dict) -> dict:
         result["status"] = "already"
         result["message"] = f"既に{target_date_str}分が存在します（{already[0].get('couponCode')}）"
         return result
-
-    start_str, end_str = to_rms_str(new_start), to_rms_str(new_end)
-    result["start"], result["end"] = start_str, end_str
 
     src, nested = get_coupon(headers, source["couponCode"])
     if src is None:

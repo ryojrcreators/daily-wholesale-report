@@ -4,13 +4,10 @@
 
 処理の流れ:
   1. Playwrightで app.jrcreators.com にログイン（Basic認証 + フォームログインの2段階）
-  2. so_sheets.pyと全く同じ検索方式（/so-heads を素のURLで開き、start_date/end_date
-     ＝created_time範囲だけをフォームに入力してSearch→Downloadリンクのhrefを取得→
-     Cookie付きrequestsでCSV取得）で、広めの期間（既定60日分）のCSVを1回取得する。
-     ship_dateやsales_account_idといった他のフィルターはbotセッションだと検索結果が
-     常に0件になる既知のクセがあるため使わず、取得したCSVの中からPython側でship_time
-     列を見て対象期間（LOOKBACK_DAYS）に発送されたものだけを、order_numberのプレフィックス
-     で楽天チャネルだけに絞り込む
+  2. 直近LOOKBACK_DAYS日分について、/so-heads?start_date=...&SoHeads[sales_account_id]=3&
+     ship_date=YYYY-MM-DD というURLを直接開き（フォーム操作は一切不要。この形のURLを
+     そのままgotoするのが確実に動くことを検証済み。sales_account_id=3が楽天チャネルの
+     絞り込み）、Downloadリンクのhrefを取得→Cookie付きrequestsでCSV取得する
   3. order_number単位に集約し、プレフィックスで店舗（Americana/Founder）を判定、
      ship_methodを配送会社コードに変換する（対象外・変換不能なものはスキップ）
   4. 店舗ごとに getOrder でまとめて取得し、PackageModelList[].ShippingModelList が
@@ -34,10 +31,7 @@ from rakuten_coupon_api import auth_headers
 JST = timezone(timedelta(hours=9))
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
-# created_time（注文日）の検索範囲。ship_dateフィルターが使えないため広めに取り、
-# 取得したCSVをPython側でship_time列を見てLOOKBACK_DAYS分に絞り込む
-CREATED_TIME_LOOKBACK_DAYS = int(os.environ.get("CREATED_TIME_LOOKBACK_DAYS", "21"))
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_date基準）を対象にするか
 # テスト用：指定した場合、この注文番号だけを対象にする（カンマ区切りで複数可）
 ONLY_ORDER_NUMBERS = {
     s.strip() for s in os.environ.get("ONLY_ORDER_NUMBERS", "").split(",") if s.strip()
@@ -145,41 +139,25 @@ def login(page):
     print("ログイン完了")
 
 
-def fetch_so_range(page, context, start_date: str, end_date: str):
-    """so_sheets.pyの_fetch_so_rangeと全く同じ方式（本番で実績あり）でCSVを取得する。
+# created_time側の下限として使うだけの固定値（過去の日付であれば良く、この値自体に意味は
+# ない。この形のURL・パラメータの組み合わせでの直接gotoが確実に動くことを検証済み）
+START_DATE_FLOOR = "2026-04-30"
+
+
+def fetch_shipped_csv(page, context, ship_date_str: str):
+    """指定日にsales_account_id=3（楽天チャネル、両店舗）で発送済みの注文CSVを取得する。
     (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
-
-    ship_dateやsales_account_idのようなフィルターを使うと、bot（Playwright）
-    セッションでは検索結果が常に0件になる既知のクセがあるため使わない。
-    start_date/end_date（created_time範囲）だけをフォームに入力して検索する。
     """
-    page.goto(SO_HEADS_URL, wait_until="networkidle")
+    url = (
+        f"{SO_HEADS_URL}?start_date={START_DATE_FLOOR}"
+        f"&SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
+    )
+    page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(2000)
-
-    start_input = page.locator('input[name="start_date"], input[placeholder*="Start"], input[id*="start"]').first
-    start_input.fill(start_date)
-    end_input = page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first
-    end_input.fill(end_date)
-
-    if os.environ.get("DEBUG_SO_SEARCH"):
-        print(f"    デバッグ: start_input.value={start_input.input_value()!r} end_input.value={end_input.input_value()!r}")
-
-    page.click('button:has-text("Search"), input[value="Search"]')
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(2000)
-
-    if os.environ.get("DEBUG_SO_SEARCH"):
-        debug = page.evaluate(
-            """() => ({
-                url: location.href,
-                orderLinkCount: document.querySelectorAll('a[href*="/sales/view/"]').length,
-                bodyTail: document.body.innerText.slice(-500),
-            })"""
-        )
-        print(f"    デバッグ(検索後): {debug}")
 
     download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
     if download_link.count() == 0:
+        print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
         return None, []
     href = download_link.get_attribute("href")
     if not href:
@@ -194,7 +172,7 @@ def fetch_so_range(page, context, start_date: str, end_date: str):
         auth=(LOGIN_ID_1, LOGIN_PASS_1),
     )
     if response.status_code != 200:
-        print(f"  CSVダウンロード失敗 status={response.status_code}")
+        print(f"  {ship_date_str}: CSVダウンロード失敗 status={response.status_code}")
         return None, []
 
     text = response.content.decode("utf-8-sig", errors="replace")
@@ -204,50 +182,33 @@ def fetch_so_range(page, context, start_date: str, end_date: str):
     return rows[0], rows[1:]
 
 
-CHUNK_DAYS = 1  # created_time範囲を1回に検索する日数（複数日の範囲では検索結果が0件になることを確認したため、so_sheets.pyの通常運用と同じ単日ずつにする）
-
-
 def collect_shipped_orders(page, context) -> list:
-    """CREATED_TIME_LOOKBACK_DAYS分をCHUNK_DAYSずつ区切って検索し、ship_time列が
-    直近LOOKBACK_DAYS日以内のものだけをorder_number単位に集約して返す。
+    """直近LOOKBACK_DAYS日分のCSVを取得し、order_number単位に集約したリストを返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
     """
     today = datetime.now(JST).date()
-    ship_from = today - timedelta(days=LOOKBACK_DAYS - 1)
-    range_start = today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)
-
     seen = {}
-    chunk_end = today
-    while chunk_end >= range_start:
-        chunk_start = max(range_start, chunk_end - timedelta(days=CHUNK_DAYS - 1))
-        start_str, end_str = chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")
-        print(f"検索中（created_time基準）: {start_str} 〜 {end_str}")
-
-        header, rows = fetch_so_range(page, context, start_str, end_str)
-        if header:
-            print(f"  取得: {len(rows)}行")
-            for row in rows:
-                if not any(row):
-                    continue
-                record = dict(zip(header, row))
-                order_number = record.get("order_number", "").strip()
-                if not order_number or order_number in seen:
-                    continue
-                ship_time = record.get("ship_time", "").strip()
-                ship_dt = parse_ship_datetime(ship_time)
-                if ship_dt is None or not (ship_from <= ship_dt.date() <= today):
-                    continue
-                seen[order_number] = {
-                    "order_number": order_number,
-                    "ship_method": record.get("ship_method", "").strip(),
-                    "tracking_num": record.get("tracking_num", "").strip(),
-                    "ship_time": ship_time,
-                }
-        else:
-            print("  該当データなし")
-
-        chunk_end = chunk_start - timedelta(days=1)
-
+    for i in range(LOOKBACK_DAYS):
+        d = today - timedelta(days=i)
+        d_str = d.strftime("%Y-%m-%d")
+        print(f"取得中: {d_str}")
+        header, rows = fetch_shipped_csv(page, context, d_str)
+        if not header:
+            continue
+        print(f"  取得: {len(rows)}行")
+        for row in rows:
+            if not any(row):
+                continue
+            record = dict(zip(header, row))
+            order_number = record.get("order_number", "").strip()
+            if not order_number or order_number in seen:
+                continue
+            seen[order_number] = {
+                "order_number": order_number,
+                "ship_method": record.get("ship_method", "").strip(),
+                "tracking_num": record.get("tracking_num", "").strip(),
+                "ship_time": record.get("ship_time", "").strip(),
+            }
     return list(seen.values())
 
 
@@ -332,7 +293,11 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1800, "height": 900}, user_agent=USER_AGENT)
+        context = browser.new_context(
+            viewport={"width": 1800, "height": 900},
+            device_scale_factor=2,
+            user_agent=USER_AGENT,
+        )
         page = context.new_page()
         login(page)
         orders = collect_shipped_orders(page, context)

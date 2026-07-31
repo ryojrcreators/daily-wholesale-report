@@ -1,0 +1,19 @@
+name: （一時）SOタブ列名確認（読み取り専用）
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  peek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth
+      - env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          PO_SO_SPREADSHEET_ID: ${{ secrets.PO_SO_SPREADSHEET_ID }}
+        run: python -u _peek_so_headers.py

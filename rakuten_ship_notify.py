@@ -161,9 +161,22 @@ def fetch_so_range(page, context, start_date: str, end_date: str):
     end_input = page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first
     end_input.fill(end_date)
 
+    if os.environ.get("DEBUG_SO_SEARCH"):
+        print(f"    デバッグ: start_input.value={start_input.input_value()!r} end_input.value={end_input.input_value()!r}")
+
     page.click('button:has-text("Search"), input[value="Search"]')
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)
+
+    if os.environ.get("DEBUG_SO_SEARCH"):
+        debug = page.evaluate(
+            """() => ({
+                url: location.href,
+                orderLinkCount: document.querySelectorAll('a[href*="/sales/view/"]').length,
+                bodyTail: document.body.innerText.slice(-500),
+            })"""
+        )
+        print(f"    デバッグ(検索後): {debug}")
 
     download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
     if download_link.count() == 0:

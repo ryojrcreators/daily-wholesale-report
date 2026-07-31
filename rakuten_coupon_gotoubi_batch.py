@@ -39,8 +39,8 @@ CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_ROOM_ID = os.environ.get("CW_ROOM_ID") or "60101971"
 CW_ASSIGNEE_ID = "2158846"  # Yoko Matsusakaさん（[To:2158846]と同じアカウントID）
 CW_MENTION = "[To:2158846]Yoko Matsusakaさん"
-CW_TITLE_PREFIX = "楽天クーポン更新（5,0の付く日）"
-CW_INTRO = "下記クーポンを更新しました。"
+CW_TITLE = "楽天クーポン更新（Founder 5,0の付く日）"
+CW_INTRO = "下記の通り更新しました。"
 CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 
 # 実際のクーポン名は「（店舗名）で使える5,0の付く日クーポン」。店舗名を直書きしないよう
@@ -89,25 +89,18 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = Non
         print(f"  Chatworkタスク作成に失敗しました: {e}")
 
 
-def format_period_label(start: str, end: str) -> str:
-    def fmt(v):
-        dt = parse_rms_datetime(v)
-        return dt.strftime("%Y-%m-%d %H:%M") if dt else v
-    return f"{fmt(start)} 〜 {fmt(end)}"
-
-
 def build_report(results: list) -> str:
-    """発行結果からChatwork報告メッセージを組み立てる。"""
-    issued = [r for r in results if r["status"] == "issued"]
-    periods = {format_period_label(r["start"], r["end"]) for r in issued}
-    title = f"{CW_TITLE_PREFIX}（{'・'.join(sorted(periods))}）" if periods else CW_TITLE_PREFIX
-
-    lines = [CW_MENTION, f"[info][title]{title}[/title]", CW_INTRO, ""]
-    for r in issued:
-        lines.append(f"■ {r['day']}日分")
-        lines.append(f"クーポンコード: {r['code']}")
-        lines.append(f"取得URL: {r['url']}")
-        lines.append("")
+    """発行結果からChatwork報告メッセージを組み立てる（対象日の順に、発行済み/既に更新済みを並べる）。"""
+    lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", CW_INTRO, ""]
+    for r in results:
+        if r["status"] == "issued":
+            lines.append(f"■ {r['day']}日分")
+            lines.append(f"クーポンコード: {r['code']}")
+            lines.append(f"取得URL: {r['url']}")
+            lines.append("")
+        elif r["status"] == "already":
+            lines.append(f"■ {r['day']}日分  既に更新済みでした")
+            lines.append("")
 
     failed = [r for r in results if r["status"] == "error"]
     if failed:
@@ -263,11 +256,12 @@ def main():
         results.append(r)
 
     issued = [r for r in results if r["status"] == "issued"]
+    already = [r for r in results if r["status"] == "already"]
     errored = [r for r in results if r["status"] == "error"]
-    print(f"\n=== 完了: 発行{len(issued)}件 / エラー{len(errored)}件 / "
-          f"対象外{len(results) - len(issued) - len(errored)}件 ===")
+    print(f"\n=== 完了: 発行{len(issued)}件 / 既に更新済み{len(already)}件 / エラー{len(errored)}件 / "
+          f"対象外{len(results) - len(issued) - len(already) - len(errored)}件 ===")
 
-    if issued or errored:
+    if issued or already or errored:
         post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(results), due_days=CW_TASK_DUE_DAYS)
     else:
         print("発行対象・エラーとも無かったため、Chatworkへは通知しません。")

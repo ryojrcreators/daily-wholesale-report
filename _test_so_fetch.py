@@ -76,6 +76,17 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     print("ログイン完了")
 
+    # 別ルートのテスト：/shipping-codes/edit/{id} は以前の調査でbotセッションでも
+    # 安定して動くことを確認済み（shipping_code_id=3450973は先に確認済みの実データ）
+    test_url = f"https://{DOMAIN}/shipping-codes/edit/3450973"
+    print(f"別ルートをテスト: {test_url}")
+    page.goto(test_url, wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    body_text = page.evaluate("document.body.innerText.slice(0, 800)")
+    print(f"本文冒頭800文字:\n{body_text}")
+    has_view_link = page.evaluate("!!document.querySelector('a[href*=\"/sales/view/\"]')")
+    print(f"/sales/view/ へのリンクが存在するか: {has_view_link}")
+
     today = date.today().strftime("%Y-%m-%d")
     print(f"検索: {today} 〜 {today}")
     status, rows = _fetch_so_range(page, context, today, today)

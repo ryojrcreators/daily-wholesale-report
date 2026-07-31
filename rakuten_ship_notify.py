@@ -163,6 +163,11 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     ship_date_input.fill(ship_date_str)
     sales_account_select = page.locator('#soheads-sales-account-id, select[name="SoHeads[sales_account_id]"]').first
     sales_account_select.select_option("3")
+    # end_dateが空のままだと検索結果が0件になる可能性があるため、念のため埋めておく
+    # （start_dateはページ既定値のまま。created_time側は広めに取り、ship_dateで絞り込む）
+    end_date_input = page.locator('#end-date, input[name="end_date"]').first
+    if not end_date_input.input_value():
+        end_date_input.fill(datetime.now(JST).strftime("%Y-%m-%d"))
 
     page.click('button[type="submit"]:has-text("Search")')
     page.wait_for_load_state("networkidle")

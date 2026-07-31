@@ -151,28 +151,38 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    # .search-toggle のクリックイベント発火はCI環境ではJSの初期化タイミング次第で
-    # 反応しないことがあったため、隠れている .search-div のstyleを直接書き換えて
-    # 確実に展開する（クリックハンドラの実行結果として最終的にこの状態になることを確認済み）
+    # 検索フォーム（.search-div）は既定で非表示、各日付欄はjQuery UI datepicker制御。
+    # Playwrightの通常のclick/fillはCI環境でイベントが正しく伝播せず反応しないことが
+    # あったため、実ブラウザで動作確認済みの「JSで直接値をセット→ネイティブclick()」
+    # 方式で確実に検索を実行する。
+    end_date_str = datetime.now(JST).strftime("%Y-%m-%d")
     page.evaluate(
-        """() => {
+        """({shipDate, endDate}) => {
             const div = document.querySelector('.search-div');
             if (div) div.style.display = 'block';
-        }"""
+
+            const shipInput = document.getElementById('ship-date');
+            shipInput.value = shipDate;
+            shipInput.dispatchEvent(new Event('input', {bubbles: true}));
+            shipInput.dispatchEvent(new Event('change', {bubbles: true}));
+
+            const salesSelect = document.getElementById('soheads-sales-account-id');
+            salesSelect.value = '3';
+            salesSelect.dispatchEvent(new Event('change', {bubbles: true}));
+
+            const endInput = document.getElementById('end-date');
+            if (!endInput.value) {
+                endInput.value = endDate;
+                endInput.dispatchEvent(new Event('input', {bubbles: true}));
+                endInput.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+
+            const searchBtn = [...document.querySelectorAll('button[type="submit"]')]
+                .find(b => b.textContent.includes('Search'));
+            if (searchBtn) searchBtn.click();
+        }""",
+        {"shipDate": ship_date_str, "endDate": end_date_str},
     )
-    page.wait_for_timeout(300)
-
-    ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first
-    ship_date_input.fill(ship_date_str)
-    sales_account_select = page.locator('#soheads-sales-account-id, select[name="SoHeads[sales_account_id]"]').first
-    sales_account_select.select_option("3")
-    # end_dateが空のままだと検索結果が0件になる可能性があるため、念のため埋めておく
-    # （start_dateはページ既定値のまま。created_time側は広めに取り、ship_dateで絞り込む）
-    end_date_input = page.locator('#end-date, input[name="end_date"]').first
-    if not end_date_input.input_value():
-        end_date_input.fill(datetime.now(JST).strftime("%Y-%m-%d"))
-
-    page.click('button[type="submit"]:has-text("Search")')
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)
 

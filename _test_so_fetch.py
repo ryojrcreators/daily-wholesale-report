@@ -76,6 +76,13 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     print("ログイン完了")
 
+    # ログイン後のナビゲーション部分にアカウント名が表示されるはずなので、
+    # 実際の値は出力せずスクリーンショットとしてのみ保存する
+    page.goto(f"https://{DOMAIN}/so-heads", wait_until="networkidle")
+    page.wait_for_timeout(1000)
+    page.screenshot(path="logged_in_account.png", full_page=False)
+    print("ログイン後画面のスクリーンショットを保存しました: logged_in_account.png")
+
     # 別ルートのテスト：/shipping-codes/edit/{id} は以前の調査でbotセッションでも
     # 安定して動くことを確認済み（shipping_code_id=3450973は先に確認済みの実データ）
     test_url = f"https://{DOMAIN}/shipping-codes/edit/3450973"

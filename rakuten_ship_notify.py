@@ -138,12 +138,25 @@ def login(page):
 def fetch_shipped_csv(page, context, ship_date_str: str):
     """指定日にsales_account_id=3（楽天）で発送済みの注文CSVを取得する。
     (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
+
+    /so-heads はURLクエリだけでは検索結果が更新されず、フォームの入力欄を埋めて
+    Searchボタンをクリックする必要がある（so_sheets.pyの検索と同じ挙動）。
     """
     url = f"{SO_HEADS_URL}?SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
     page.goto(url, wait_until="networkidle")
+    page.wait_for_timeout(1000)
+
+    ship_date_input = page.locator('#ship-date, input[name="ship_date"]').first
+    ship_date_input.fill(ship_date_str)
+    sales_account_select = page.locator('#soheads-sales-account-id, select[name="SoHeads[sales_account_id]"]').first
+    sales_account_select.select_option("3")
+
+    page.click('button[type="submit"]:has-text("Search")')
+    page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)
 
-    download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
+    # 「Download」の完全一致リンクを探す（「Profit Download」等の部分一致は除外する）
+    download_link = page.get_by_role("link", name="Download", exact=True).first
     if download_link.count() == 0:
         print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
         return None, []

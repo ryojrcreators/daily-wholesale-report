@@ -204,41 +204,50 @@ def fetch_so_range(page, context, start_date: str, end_date: str):
     return rows[0], rows[1:]
 
 
+CHUNK_DAYS = 7  # created_time範囲を1回に検索する日数（広すぎると結果が0件になることがあるため分割する）
+
+
 def collect_shipped_orders(page, context) -> list:
-    """CREATED_TIME_LOOKBACK_DAYS分のCSVを1回取得し、ship_time列が直近LOOKBACK_DAYS日
-    以内のものだけをorder_number単位に集約して返す。
+    """CREATED_TIME_LOOKBACK_DAYS分をCHUNK_DAYSずつ区切って検索し、ship_time列が
+    直近LOOKBACK_DAYS日以内のものだけをorder_number単位に集約して返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
     """
     today = datetime.now(JST).date()
-    created_start = (today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    created_end = today.strftime("%Y-%m-%d")
-    print(f"検索期間（created_time基準）: {created_start} 〜 {created_end}")
-
-    header, rows = fetch_so_range(page, context, created_start, created_end)
-    if not header:
-        print("該当データがありませんでした。")
-        return []
-    print(f"取得した全チャネル分: {len(rows)}行")
-
     ship_from = today - timedelta(days=LOOKBACK_DAYS - 1)
+    range_start = today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)
+
     seen = {}
-    for row in rows:
-        if not any(row):
-            continue
-        record = dict(zip(header, row))
-        order_number = record.get("order_number", "").strip()
-        if not order_number or order_number in seen:
-            continue
-        ship_time = record.get("ship_time", "").strip()
-        ship_dt = parse_ship_datetime(ship_time)
-        if ship_dt is None or not (ship_from <= ship_dt.date() <= today):
-            continue
-        seen[order_number] = {
-            "order_number": order_number,
-            "ship_method": record.get("ship_method", "").strip(),
-            "tracking_num": record.get("tracking_num", "").strip(),
-            "ship_time": ship_time,
-        }
+    chunk_end = today
+    while chunk_end >= range_start:
+        chunk_start = max(range_start, chunk_end - timedelta(days=CHUNK_DAYS - 1))
+        start_str, end_str = chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")
+        print(f"検索中（created_time基準）: {start_str} 〜 {end_str}")
+
+        header, rows = fetch_so_range(page, context, start_str, end_str)
+        if header:
+            print(f"  取得: {len(rows)}行")
+            for row in rows:
+                if not any(row):
+                    continue
+                record = dict(zip(header, row))
+                order_number = record.get("order_number", "").strip()
+                if not order_number or order_number in seen:
+                    continue
+                ship_time = record.get("ship_time", "").strip()
+                ship_dt = parse_ship_datetime(ship_time)
+                if ship_dt is None or not (ship_from <= ship_dt.date() <= today):
+                    continue
+                seen[order_number] = {
+                    "order_number": order_number,
+                    "ship_method": record.get("ship_method", "").strip(),
+                    "tracking_num": record.get("tracking_num", "").strip(),
+                    "ship_time": ship_time,
+                }
+        else:
+            print("  該当データなし")
+
+        chunk_end = chunk_start - timedelta(days=1)
+
     return list(seen.values())
 
 

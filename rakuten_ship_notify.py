@@ -156,11 +156,14 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     # あったため、実ブラウザで動作確認済みの「JSで直接値をセット→ネイティブclick()」
     # 方式で確実に検索を実行する。
     end_date_str = datetime.now(JST).strftime("%Y-%m-%d")
+
+    # 実ブラウザでの検証では「パネル表示→(間を置く)→値セット→(間を置く)→Searchクリック」
+    # の順で確実に動いた。1回のJS実行にまとめると反応しないことがあったため分割する。
+    page.evaluate("document.querySelector('.search-div').style.display = 'block'")
+    page.wait_for_timeout(300)
+
     page.evaluate(
         """({shipDate, endDate}) => {
-            const div = document.querySelector('.search-div');
-            if (div) div.style.display = 'block';
-
             const shipInput = document.getElementById('ship-date');
             shipInput.value = shipDate;
             shipInput.dispatchEvent(new Event('input', {bubbles: true}));
@@ -176,12 +179,17 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
                 endInput.dispatchEvent(new Event('input', {bubbles: true}));
                 endInput.dispatchEvent(new Event('change', {bubbles: true}));
             }
+        }""",
+        {"shipDate": ship_date_str, "endDate": end_date_str},
+    )
+    page.wait_for_timeout(300)
 
+    page.evaluate(
+        """() => {
             const searchBtn = [...document.querySelectorAll('button[type="submit"]')]
                 .find(b => b.textContent.includes('Search'));
             if (searchBtn) searchBtn.click();
-        }""",
-        {"shipDate": ship_date_str, "endDate": end_date_str},
+        }"""
     )
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)

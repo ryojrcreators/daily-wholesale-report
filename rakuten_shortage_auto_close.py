@@ -78,6 +78,7 @@ MAKER_EXCLUDE_KEYWORDS = [
 # 組み合わせの両方が商品名に含まれる場合だけ除外する（AND条件）
 MAKER_EXCLUDE_COMBOS = [
     (["Secret", "シークレット"], ["Deodorant", "デオドラント"]),  # Secret（デオドラントブランド）
+    (["Old Spice", "オールドスパイス"], ["Deodorant", "デオドラント"]),  # Old Spice（デオドラントブランド）
 ]
 
 

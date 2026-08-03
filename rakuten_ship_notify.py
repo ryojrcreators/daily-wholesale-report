@@ -186,9 +186,12 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     return rows[0], rows[1:]
 
 
-def collect_shipped_orders(page, context) -> list:
+def collect_shipped_orders(context) -> list:
     """直近LOOKBACK_DAYS日分のCSVを取得し、order_number単位に集約したリストを返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
+
+    日付ごとに新しいページを開いて検索する（同じページで検索を繰り返すと、
+    2回目以降の検索結果が空になることを確認したため）。
     """
     today = datetime.now(JST).date()
     seen = {}
@@ -196,7 +199,11 @@ def collect_shipped_orders(page, context) -> list:
         d = today - timedelta(days=i)
         d_str = d.strftime("%Y-%m-%d")
         print(f"取得中: {d_str}")
-        header, rows = fetch_shipped_csv(page, context, d_str)
+        page = context.new_page()
+        try:
+            header, rows = fetch_shipped_csv(page, context, d_str)
+        finally:
+            page.close()
         if not header:
             continue
         print(f"  取得: {len(rows)}行")
@@ -302,9 +309,10 @@ def main():
             device_scale_factor=2,
             user_agent=USER_AGENT,
         )
-        page = context.new_page()
-        login(page)
-        orders = collect_shipped_orders(page, context)
+        login_page = context.new_page()
+        login(login_page)
+        login_page.close()
+        orders = collect_shipped_orders(context)
         browser.close()
 
     print(f"取得した発送済み注文（重複除去後）: {len(orders)}件")

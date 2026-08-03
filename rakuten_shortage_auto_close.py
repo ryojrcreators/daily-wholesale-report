@@ -94,6 +94,8 @@ def main():
 
     header = shortage_ws.row_values(1)
     if len(header) <= COL_DONE or header[COL_DONE].strip() != "対応済み":
+        if shortage_ws.col_count <= COL_DONE:
+            shortage_ws.add_cols(COL_DONE + 1 - shortage_ws.col_count)
         shortage_ws.update_cell(1, COL_DONE + 1, "対応済み")
         print("H列にヘッダー「対応済み」を設定しました。")
 

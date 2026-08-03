@@ -27,8 +27,8 @@ KEEPA_API_KEY = os.environ["KEEPA_API_KEY"]
 PROFIT_RATE = float(os.environ["PROFIT_RATE"])
 COMMISSION_RATE = float(os.environ["COMMISSION_RATE"])
 
-BATCH_SIZE = 100     # Keepaバッチ最大件数
-BATCHES_PER_RUN = 5  # 1回の実行で何バッチ処理するか（500件）
+BATCH_SIZE = 100      # Keepaバッチ最大件数
+BATCHES_PER_RUN = 36  # 1回の実行で何バッチ処理するか（3,600件。Keepaプラン増強後、全件を約2日で一巡する想定）
 
 SHEET_WRITE_INTERVAL = 1.2  # Sheets書き込み1件ごとの待機（秒）。Sheets APIの書き込み回数制限対策
 SHEET_WRITE_RETRIES = 5     # 429エラー時のリトライ回数

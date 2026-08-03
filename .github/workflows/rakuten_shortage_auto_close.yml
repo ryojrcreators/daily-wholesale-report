@@ -1,4 +1,4 @@
-name: 仕入不可商品 自動Close（楽天・Yahoo）
+name: 仕入不可商品 自動Close/再開（楽天・Yahoo）
 
 on:
   workflow_dispatch:
@@ -19,6 +19,10 @@ on:
         description: 'テスト用：この商品管理番号だけ対象にする（カンマ区切りで複数可）'
         required: false
         default: ''
+      restock_quantity:
+        description: '再開時にYahooへ設定する在庫数'
+        required: false
+        default: '100'
 
 jobs:
   close:
@@ -29,11 +33,12 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - name: 仕入不可商品 自動Close実行
+      - name: 仕入不可商品 自動Close/再開実行
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           MAX_PER_RUN: ${{ inputs.max_per_run }}
           ONLY_ITEM_NUMBERS: ${{ inputs.only_item_numbers }}
+          RESTOCK_QUANTITY: ${{ inputs.restock_quantity }}
           # 赤字チェックシート
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}

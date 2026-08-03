@@ -229,6 +229,54 @@ def rakuten_hide(manage_number: str) -> list:
     return results
 
 
+def rakuten_reopen(manage_number: str) -> list:
+    """
+    rakuten_hideの逆。2店舗を順に確認し、hideItem=trueになっている店舗だけ
+    hideItem=falseに戻す（＝販売再開）。戻り値の形式はrakuten_hideと同じ。
+    """
+    results = []
+    for store in RAKUTEN_STORES:
+        headers = rakuten_auth_headers(store)
+        url = f"{RMS_BASE}/{manage_number}"
+
+        try:
+            res = requests.get(url, headers=headers, timeout=30)
+        except Exception as e:
+            results.append((store["name"], f"取得エラー: {e}", False))
+            continue
+        finally:
+            time.sleep(API_INTERVAL)
+
+        if res.status_code == 404:
+            continue  # この店舗には存在しない
+        if res.status_code >= 400:
+            results.append((store["name"], f"取得エラー({res.status_code})", False))
+            continue
+
+        if res.json().get("hideItem") is not True:
+            results.append((store["name"], "すでに公開中", True))
+            continue
+
+        if DRY_RUN:
+            results.append((store["name"], "【DRY RUN】販売再開の対象", True))
+            continue
+
+        try:
+            patch = requests.patch(url, headers=headers, json={"hideItem": False}, timeout=30)
+            if patch.status_code == 204:
+                results.append((store["name"], "販売を再開しました", True))
+            else:
+                results.append((store["name"], f"再開失敗({patch.status_code}) {patch.text[:100]}", False))
+        except Exception as e:
+            results.append((store["name"], f"再開エラー: {e}", False))
+        finally:
+            time.sleep(API_INTERVAL)
+
+    if not results:
+        results.append(("-", "楽天には出品が見つかりませんでした", True))
+    return results
+
+
 def strip_yahoo_suffix(item_code: str) -> str:
     """
     Yahooの商品コードから接尾辞を外して、楽天の商品管理番号（基準コード）を推測する。
@@ -316,6 +364,58 @@ def yahoo_close(token: str, candidates: list) -> list:
 
     if not found_any:
         # Yahooに出品が無い商品も普通にあるため、失敗ではなく情報として扱う
+        results.append(("-", "Yahooには出品が見つかりませんでした", True))
+    return results
+
+
+def yahoo_restock(token: str, candidates: list, quantity: int = 100) -> list:
+    """
+    yahoo_closeの逆。候補の商品コードを2店舗それぞれで実在確認し、
+    在庫が0になっているものだけ指定数量（既定100）に戻す。
+    """
+    results = []
+    found_any = False
+
+    for store in YAHOO_STORES:
+        for item_code in candidates:
+            try:
+                item = yahoo_get_item(token, store, item_code)
+            except Exception as e:
+                results.append((store["name"], f"{item_code}: 取得エラー: {e}", False))
+                continue
+            finally:
+                time.sleep(API_INTERVAL)
+
+            if item is None:
+                continue  # この店舗にこのコードは無い（候補の外れ。正常）
+
+            found_any = True
+
+            if item.get("Quantity") != "0":
+                results.append((store["name"], f"{item_code}: 在庫{item.get('Quantity')}のため対象外", True))
+                continue
+
+            if DRY_RUN:
+                results.append((store["name"], f"{item_code}: 【DRY RUN】在庫0→{quantity}の対象", True))
+                continue
+
+            try:
+                res = requests.post(
+                    f"{YAHOO_BASE}/setStock",
+                    headers={"Authorization": f"Bearer {token}"},
+                    data={"seller_id": store["seller_id"], "item_code": item_code, "quantity": str(quantity)},
+                    timeout=30,
+                )
+                if res.status_code < 400:
+                    results.append((store["name"], f"{item_code}: 在庫0→{quantity}にしました", True))
+                else:
+                    results.append((store["name"], f"{item_code}: 在庫更新失敗({res.status_code})", False))
+            except Exception as e:
+                results.append((store["name"], f"{item_code}: 在庫更新エラー: {e}", False))
+            finally:
+                time.sleep(API_INTERVAL)
+
+    if not found_any:
         results.append(("-", "Yahooには出品が見つかりませんでした", True))
     return results
 

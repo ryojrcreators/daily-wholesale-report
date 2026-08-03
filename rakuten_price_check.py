@@ -1,8 +1,14 @@
 """
 楽天赤字・仕入不可チェックスクリプト
 - Google Sheetsからデータ読み込み
-- Keepa APIで価格・在庫チェック（100件バッチ×2回 = 200件/実行）
+- Keepa APIで価格・在庫チェック（100件バッチ×5回 = 500件/実行）
 - 結果を在庫チェック列・価格チェック列に書き込み
+
+チェック済みかどうかに関わらず、ASINが入っている行を上から順に巡回し続ける
+（末尾まで行ったら先頭に戻ってまたチェックする）。これにより、一度チェックした
+商品も定期的に再チェックされ、廃盤→再入荷のような変化を検知できる。
+巡回位置（カーソル）は「チェック進捗」タブのA1セルに保存し、次回実行時に
+そこから再開する。
 """
 
 import os
@@ -36,8 +42,11 @@ COL_STOCK_CHECK = 4   # 在庫チェック（書き込み先）
 COL_PRICE_CHECK = 5   # 価格チェック（書き込み先）
 COL_PROPER_PRICE = 6  # 適正価格（書き込み先）
 
+CURSOR_SHEET_NAME = "チェック進捗"
+
+
 # ── Google Sheets 認証 ────────────────────────────
-def get_sheet():
+def get_spreadsheet():
     creds_json = os.environ["GOOGLE_CREDENTIALS_JSON"]
     creds_dict = json.loads(creds_json)
     scopes = [
@@ -46,10 +55,34 @@ def get_sheet():
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+    return gc.open_by_key(SPREADSHEET_ID)
 
 
-    return spreadsheet.worksheet(SHEET_NAME)
+def get_sheet():
+    return get_spreadsheet().worksheet(SHEET_NAME)
+
+
+# ── 巡回カーソル（前回どこまでチェックしたか） ──────
+def get_cursor(spreadsheet) -> int:
+    """対象プール内でのインデックス（0始まり）を返す。無ければ0。"""
+    try:
+        ws = spreadsheet.worksheet(CURSOR_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        return 0
+    value = ws.acell("A1").value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def save_cursor(spreadsheet, cursor: int):
+    try:
+        ws = spreadsheet.worksheet(CURSOR_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=CURSOR_SHEET_NAME, rows=2, cols=1)
+        ws.update_cell(1, 1, "0")
+    ws.update_cell(1, 1, str(cursor))
 
 # ── 為替レート取得 ────────────────────────────────
 def get_exchange_rate() -> float:
@@ -191,7 +224,8 @@ def judge(product: dict, rakuten_price_jpy: int, exchange_rate: float) -> tuple:
 def main():
     print("=== 楽天赤字チェック開始 ===")
 
-    sheet = get_sheet()
+    spreadsheet = get_spreadsheet()
+    sheet = spreadsheet.worksheet(SHEET_NAME)
     exchange_rate = get_exchange_rate()
 
     all_rows = sheet.get_all_values()
@@ -199,21 +233,28 @@ def main():
 
     print(f"総行数: {len(rows)}")
 
-    unchecked = [
+    # チェック済みかどうかに関わらず、ASINが入っている行すべてを対象プールにする
+    pool = [
         (i + 1, row)
         for i, row in enumerate(rows)
-        if len(row) > COL_STOCK_CHECK and row[COL_STOCK_CHECK].strip() == ""
-        and len(row) > COL_ASIN and row[COL_ASIN].strip() != ""
+        if len(row) > COL_ASIN and row[COL_ASIN].strip() != ""
     ]
+    total = len(pool)
+    print(f"巡回対象プール: {total}件")
 
-    print(f"未チェック件数: {len(unchecked)}")
-
-    if not unchecked:
-        print("未チェック商品なし。終了。")
+    if total == 0:
+        print("ASINが入っている行がありません。終了。")
         return
 
-    target = unchecked[:BATCH_SIZE * BATCHES_PER_RUN]
-    print(f"今回処理: {len(target)}件")
+    cursor = get_cursor(spreadsheet) % total
+    print(f"前回のカーソル位置: {cursor}")
+
+    want = BATCH_SIZE * BATCHES_PER_RUN
+    count = min(want, total)
+    target = [pool[(cursor + i) % total] for i in range(count)]
+    print(f"今回処理: {len(target)}件（末尾まで行ったら先頭に戻って巡回します）")
+
+    processed_count = 0
 
     for batch_start in range(0, len(target), BATCH_SIZE):
         # バッチ投入前にトークン残量を確認し、処理件数を動的に調整
@@ -270,6 +311,7 @@ def main():
 
             print(f"  {asin}: {stock_result} / {price_result} / {proper_price_result}")
 
+            processed_count += 1
             time.sleep(SHEET_WRITE_INTERVAL)
 
         print(f"バッチ書き込み完了")
@@ -277,6 +319,10 @@ def main():
         if batch_start + BATCH_SIZE < len(target):
             print("次のバッチまで30秒待機...")
             time.sleep(30)
+
+    new_cursor = (cursor + processed_count) % total
+    save_cursor(spreadsheet, new_cursor)
+    print(f"カーソル位置を更新: {cursor} → {new_cursor}（{processed_count}件処理）")
 
     # フォントをArialに設定（在庫・価格チェック列）
     sheet.format("E2:G10000", {"textFormat": {"fontFamily": "Arial"}})

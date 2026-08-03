@@ -1,0 +1,24 @@
+name: （一時）Close状態の監査（読み取り専用）
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install gspread google-auth requests
+      - env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+          RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
+          RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+        run: python -u _audit_close_status.py

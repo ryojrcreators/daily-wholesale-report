@@ -92,6 +92,20 @@ def has_excluded_maker(name: str) -> bool:
     return False
 
 
+def find_row_by_item_number(ws, item_number: str):
+    """A列（商品管理番号）を検索し、その行番号（1始まり）を返す。見つからなければNone。
+
+    処理開始時に読み込んだ行番号をそのまま書き込みに使うと、実行中にシートの行が
+    追加・削除された場合に書き込み先がズレる（別商品の行を上書きしてしまう）ため、
+    書き込み直前に必ずこの関数で現在の行番号を確認してから使う。
+    """
+    try:
+        cell = ws.find(item_number, in_column=COL_ITEM_NUMBER + 1)
+    except gspread.exceptions.CellNotFound:
+        return None
+    return cell.row if cell else None
+
+
 def get_shortage_sheet():
     creds_json = os.environ["GOOGLE_CREDENTIALS_JSON"]
     creds = Credentials.from_service_account_info(
@@ -200,8 +214,12 @@ def main():
             continue
 
         try:
-            shortage_ws.update_cell(row_num, COL_DONE + 1, now)  # gspreadは1始まり列番号
-            print(f"  ✅ H列に在庫対応済み（{now}）を記録しました。")
+            current_row = find_row_by_item_number(shortage_ws, item_number)
+            if current_row is None:
+                print(f"  ⚠️ シート上で{item_number}が見つからず、H列を更新できませんでした（モール側は停止済み）。")
+            else:
+                shortage_ws.update_cell(current_row, COL_DONE + 1, now)
+                print(f"  ✅ H列（{current_row}行目）に在庫対応済み（{now}）を記録しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は停止済み）: {e}")
 
@@ -237,8 +255,12 @@ def main():
             continue
 
         try:
-            shortage_ws.update_cell(row_num, COL_DONE + 1, "")
-            print("  ✅ H列の在庫対応済みを解除しました。")
+            current_row = find_row_by_item_number(shortage_ws, item_number)
+            if current_row is None:
+                print(f"  ⚠️ シート上で{item_number}が見つからず、H列を更新できませんでした（モール側は再開済み）。")
+            else:
+                shortage_ws.update_cell(current_row, COL_DONE + 1, "")
+                print(f"  ✅ H列（{current_row}行目）の在庫対応済みを解除しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は再開済み）: {e}")
 

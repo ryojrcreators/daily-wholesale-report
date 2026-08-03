@@ -74,10 +74,21 @@ MAKER_EXCLUDE_KEYWORDS = [
     "オバジ",
 ]
 
+# 単独の単語だと誤マッチしやすいメーカー（例："Secret"は一般的すぎる）は、
+# 組み合わせの両方が商品名に含まれる場合だけ除外する（AND条件）
+MAKER_EXCLUDE_COMBOS = [
+    (["Secret", "シークレット"], ["Deodorant", "デオドラント"]),  # Secret（デオドラントブランド）
+]
+
 
 def has_excluded_maker(name: str) -> bool:
     lowered = name.lower()
-    return any(keyword.lower() in lowered for keyword in MAKER_EXCLUDE_KEYWORDS)
+    if any(keyword.lower() in lowered for keyword in MAKER_EXCLUDE_KEYWORDS):
+        return True
+    for group_a, group_b in MAKER_EXCLUDE_COMBOS:
+        if any(a.lower() in lowered for a in group_a) and any(b.lower() in lowered for b in group_b):
+            return True
+    return False
 
 
 def get_shortage_sheet():

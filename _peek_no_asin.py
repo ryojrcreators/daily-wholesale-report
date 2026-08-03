@@ -30,3 +30,10 @@ for i, col in enumerate(header):
     if "asin" in col.lower() or "ASIN" in col:
         filled = sum(1 for row in values[1:] if len(row) > i and row[i].strip())
         print(f"列[{i}]『{col}』に値がある行数: {filled} / {len(values)-1}")
+
+from collections import Counter
+conf_counts = Counter(row[4].strip() if len(row) > 4 else "" for row in values[1:])
+print("信頼度の内訳:", conf_counts)
+
+asin_counts = Counter(row[3].strip().upper() if len(row) > 3 else "" for row in values[1:] if not row[3].strip() or row[3].strip().upper() in ("NOT FOUND", "N/A", "NONE", "-"))
+print("ASIN列に「NOT FOUND」系が入っている値の内訳:", asin_counts)

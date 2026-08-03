@@ -3,7 +3,7 @@
 楽天・Yahooの出品を自動的にClose/再開する。
 
 Close処理:
-  1. E列（在庫チェック）が「⚠️ 仕入不可」かつH列（対応済み）が空の行を対象にする
+  1. E列（在庫チェック）が「⚠️ 仕入不可」かつH列（在庫対応済み）が空の行を対象にする
   2. case_orders_auto_close.pyのrakuten_hide/yahoo_closeを再利用し、
      楽天はhideItem=true、YahooはsetStock=0にする
      （このシートには店舗名が無いため、両モールとも登録されている全店舗を試す）
@@ -11,7 +11,7 @@ Close処理:
      （1つでも失敗したら空のまま残し、次回再挑戦させる）
 
 再開処理（Closeの逆）:
-  1. H列（対応済み）に値があり、かつE列が「✅ 正常」または「🟡 3rdパーティ」に
+  1. H列（在庫対応済み）に値があり、かつE列が「✅ 正常」または「🟡 3rdパーティ」に
      変わった行（＝一度は仕入不可でCloseしたが、再チェックで仕入れ可能に戻った）を対象にする
   2. case_orders_auto_close.pyのrakuten_reopen/yahoo_restockを再利用し、
      楽天はhideItem=false、Yahooは在庫をRESTOCK_QUANTITY（既定100）に戻す
@@ -56,7 +56,7 @@ SHORTAGE_SHEET_NAME = "ASINあり"
 
 COL_ITEM_NUMBER = 0     # A列：商品管理番号
 COL_STOCK_CHECK = 4     # E列：在庫チェック
-COL_DONE = 7            # H列：対応済み（このスクリプトが書き込む）
+COL_DONE = 7            # H列：在庫対応済み（このスクリプトが書き込む）
 SHORTAGE_LABEL = "⚠️ 仕入不可"
 AVAILABLE_LABELS = ("✅ 正常", "🟡 3rdパーティ")
 
@@ -96,7 +96,7 @@ def find_reopen_targets(values: list) -> list:
     targets = []
     for i, row in enumerate(values[1:], start=2):
         if len(row) <= COL_DONE or not row[COL_DONE].strip():
-            continue  # 対応済み（Close済み）でなければ対象外
+            continue  # 在庫対応済み（Close済み）でなければ対象外
         if len(row) <= COL_STOCK_CHECK or row[COL_STOCK_CHECK].strip() not in AVAILABLE_LABELS:
             continue
         item_number = row[COL_ITEM_NUMBER].strip()
@@ -118,11 +118,17 @@ def main():
     shortage_ws = get_shortage_sheet()
 
     header = shortage_ws.row_values(1)
-    if len(header) <= COL_DONE or header[COL_DONE].strip() != "対応済み":
+    if len(header) <= COL_DONE or header[COL_DONE].strip() != "在庫対応済み":
         if shortage_ws.col_count <= COL_DONE:
             shortage_ws.add_cols(COL_DONE + 1 - shortage_ws.col_count)
-        shortage_ws.update_cell(1, COL_DONE + 1, "対応済み")
-        print("H列にヘッダー「対応済み」を設定しました。")
+        shortage_ws.update_cell(1, COL_DONE + 1, "在庫対応済み")
+        print("H列にヘッダー「在庫対応済み」を設定しました。")
+    # I列（価格調整対応済み）は今後の価格調整自動化用に予約しておく（今回は何も書き込まない）
+    if len(header) <= COL_DONE + 1 or header[COL_DONE + 1].strip() != "価格調整対応済み":
+        if shortage_ws.col_count <= COL_DONE + 1:
+            shortage_ws.add_cols(COL_DONE + 2 - shortage_ws.col_count)
+        shortage_ws.update_cell(1, COL_DONE + 2, "価格調整対応済み")
+        print("I列にヘッダー「価格調整対応済み」を設定しました（予約列、未使用）。")
 
     values = shortage_ws.get_all_values()
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
@@ -156,12 +162,12 @@ def main():
 
         closed += 1
         if DRY_RUN:
-            print("  【DRY RUN】本番ならここでH列に対応済みを記録します。")
+            print("  【DRY RUN】本番ならここでH列に在庫対応済みを記録します。")
             continue
 
         try:
             shortage_ws.update_cell(row_num, COL_DONE + 1, now)  # gspreadは1始まり列番号
-            print(f"  ✅ H列に対応済み（{now}）を記録しました。")
+            print(f"  ✅ H列に在庫対応済み（{now}）を記録しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は停止済み）: {e}")
 
@@ -188,17 +194,17 @@ def main():
                 all_ok = False
 
         if not all_ok:
-            print("  ⚠️ 失敗があったため、対応済みのまま残します（次回再挑戦）。")
+            print("  ⚠️ 失敗があったため、在庫対応済みのまま残します（次回再挑戦）。")
             continue
 
         reopened += 1
         if DRY_RUN:
-            print("  【DRY RUN】本番ならここでH列の対応済みを解除します。")
+            print("  【DRY RUN】本番ならここでH列の在庫対応済みを解除します。")
             continue
 
         try:
             shortage_ws.update_cell(row_num, COL_DONE + 1, "")
-            print("  ✅ H列の対応済みを解除しました。")
+            print("  ✅ H列の在庫対応済みを解除しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は再開済み）: {e}")
 

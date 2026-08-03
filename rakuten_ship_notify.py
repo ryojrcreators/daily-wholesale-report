@@ -155,12 +155,16 @@ def fetch_shipped_csv(page, context, ship_date_str: str):
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(2000)
 
-    download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
-    if download_link.count() == 0:
-        print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
-        return None, []
-    href = download_link.get_attribute("href")
+    # Playwrightのlocator().count()ではなく、動作確認済みのJS直接評価でhrefを取得する
+    # （「Download」の完全一致のみを対象にし、「Profit Download」等は除外する）
+    href = page.evaluate(
+        """() => {
+            const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
+            return a ? a.getAttribute('href') : null;
+        }"""
+    )
     if not href:
+        print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
         return None, []
     download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
 

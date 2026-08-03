@@ -55,10 +55,29 @@ SHORTAGE_SPREADSHEET_ID = os.environ["RAKUTEN_SPREADSHEET_ID"]
 SHORTAGE_SHEET_NAME = "ASINあり"
 
 COL_ITEM_NUMBER = 0     # A列：商品管理番号
+COL_NAME = 1            # B列：商品名
 COL_STOCK_CHECK = 4     # E列：在庫チェック
 COL_DONE = 7            # H列：在庫対応済み（このスクリプトが書き込む）
 SHORTAGE_LABEL = "⚠️ 仕入不可"
 AVAILABLE_LABELS = ("✅ 正常", "🟡 3rdパーティ")
+
+# これらのメーカーはAmazon仕入れではないため、⚠️仕入不可と判定されてもCloseしない
+# （メーカー列が無いシートのため、商品名に含まれるキーワードで判定する）
+MAKER_EXCLUDE_KEYWORDS = [
+    "Bath & Body Works", "Bath and Body Works", "Bath&Body Works",
+    "バス&ボディワークス", "バス＆ボディワークス", "バスアンドボディワークス", "バスボディワークス",
+    "Victoria's Secret", "Victorias Secret", "Victoria’s Secret",
+    "ヴィクトリアズシークレット", "ビクトリアズシークレット", "ヴィクトリアシークレット", "ビクトリアシークレット",
+    "Trader Joe's", "Trader Joes", "Trader Joe’s",
+    "トレーダージョーズ", "トレージョーズ", "トレーダージョーズ",
+    "Obagi",
+    "オバジ",
+]
+
+
+def has_excluded_maker(name: str) -> bool:
+    lowered = name.lower()
+    return any(keyword.lower() in lowered for keyword in MAKER_EXCLUDE_KEYWORDS)
 
 
 def get_shortage_sheet():
@@ -84,6 +103,9 @@ def find_close_targets(values: list) -> list:
             continue
         item_number = row[COL_ITEM_NUMBER].strip()
         if not item_number:
+            continue
+        name = row[COL_NAME].strip() if len(row) > COL_NAME else ""
+        if has_excluded_maker(name):
             continue
         if ONLY_ITEM_NUMBERS and item_number not in ONLY_ITEM_NUMBERS:
             continue

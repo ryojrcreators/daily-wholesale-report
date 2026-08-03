@@ -144,54 +144,67 @@ def login(page):
 START_DATE_FLOOR = "2026-04-30"
 
 
-def fetch_shipped_csv(page, context, ship_date_str: str):
+def fetch_shipped_csv(p, ship_date_str: str):
     """指定日にsales_account_id=3（楽天チャネル、両店舗）で発送済みの注文CSVを取得する。
     (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
+
+    毎回ログインからやり直す新しいブラウザで実行する（同じセッションで検索を
+    繰り返すと、2回目以降の検索結果が必ず空になることを確認したため。1回の
+    ログインにつき検索は1回だけ、という制約があるとみられる）。
     """
-    url = (
-        f"{SO_HEADS_URL}?start_date={START_DATE_FLOOR}"
-        f"&SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
-    )
-    page.goto(url, wait_until="networkidle")
-    page.wait_for_timeout(2000)
+    browser = p.chromium.launch(headless=True)
+    try:
+        context = browser.new_context(
+            viewport={"width": 1800, "height": 900},
+            device_scale_factor=2,
+            user_agent=USER_AGENT,
+        )
+        page = context.new_page()
+        login(page)
 
-    # Playwrightのlocator().count()ではなく、動作確認済みのJS直接評価でhrefを取得する
-    # （「Download」の完全一致のみを対象にし、「Profit Download」等は除外する）
-    href = page.evaluate(
-        """() => {
-            const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
-            return a ? a.getAttribute('href') : null;
-        }"""
-    )
-    if not href:
-        print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
-        return None, []
-    download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
+        url = (
+            f"{SO_HEADS_URL}?start_date={START_DATE_FLOOR}"
+            f"&SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
+        )
+        page.goto(url, wait_until="networkidle")
+        page.wait_for_timeout(2000)
 
-    cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
-    response = requests.get(
-        download_url,
-        cookies=cookie_dict,
-        headers={"User-Agent": USER_AGENT},
-        auth=(LOGIN_ID_1, LOGIN_PASS_1),
-    )
-    if response.status_code != 200:
-        print(f"  {ship_date_str}: CSVダウンロード失敗 status={response.status_code}")
-        return None, []
+        # Playwrightのlocator().count()ではなく、動作確認済みのJS直接評価でhrefを取得する
+        # （「Download」の完全一致のみを対象にし、「Profit Download」等は除外する）
+        href = page.evaluate(
+            """() => {
+                const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
+                return a ? a.getAttribute('href') : null;
+            }"""
+        )
+        if not href:
+            print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
+            return None, []
+        download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
 
-    text = response.content.decode("utf-8-sig", errors="replace")
-    rows = list(csv.reader(text.splitlines()))
-    if not rows:
-        return None, []
-    return rows[0], rows[1:]
+        cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
+        response = requests.get(
+            download_url,
+            cookies=cookie_dict,
+            headers={"User-Agent": USER_AGENT},
+            auth=(LOGIN_ID_1, LOGIN_PASS_1),
+        )
+        if response.status_code != 200:
+            print(f"  {ship_date_str}: CSVダウンロード失敗 status={response.status_code}")
+            return None, []
+
+        text = response.content.decode("utf-8-sig", errors="replace")
+        rows = list(csv.reader(text.splitlines()))
+        if not rows:
+            return None, []
+        return rows[0], rows[1:]
+    finally:
+        browser.close()
 
 
-def collect_shipped_orders(context) -> list:
+def collect_shipped_orders(p) -> list:
     """直近LOOKBACK_DAYS日分のCSVを取得し、order_number単位に集約したリストを返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
-
-    日付ごとに新しいページを開いて検索する（同じページで検索を繰り返すと、
-    2回目以降の検索結果が空になることを確認したため）。
     """
     today = datetime.now(JST).date()
     seen = {}
@@ -199,11 +212,7 @@ def collect_shipped_orders(context) -> list:
         d = today - timedelta(days=i)
         d_str = d.strftime("%Y-%m-%d")
         print(f"取得中: {d_str}")
-        page = context.new_page()
-        try:
-            header, rows = fetch_shipped_csv(page, context, d_str)
-        finally:
-            page.close()
+        header, rows = fetch_shipped_csv(p, d_str)
         if not header:
             continue
         print(f"  取得: {len(rows)}行")
@@ -303,17 +312,7 @@ def main():
         print("※ DRY RUN モード：updateOrderShippingは呼びません")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1800, "height": 900},
-            device_scale_factor=2,
-            user_agent=USER_AGENT,
-        )
-        login_page = context.new_page()
-        login(login_page)
-        login_page.close()
-        orders = collect_shipped_orders(context)
-        browser.close()
+        orders = collect_shipped_orders(p)
 
     print(f"取得した発送済み注文（重複除去後）: {len(orders)}件")
 

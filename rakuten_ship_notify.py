@@ -209,6 +209,10 @@ def collect_shipped_orders(p) -> list:
     today = datetime.now(JST).date()
     seen = {}
     for i in range(LOOKBACK_DAYS):
+        if i > 0:
+            wait_sec = int(os.environ.get("INTER_REQUEST_WAIT_SEC", "90"))
+            print(f"（同一IPからの連続リクエストを避けるため{wait_sec}秒待機します）")
+            time.sleep(wait_sec)
         d = today - timedelta(days=i)
         d_str = d.strftime("%Y-%m-%d")
         print(f"取得中: {d_str}")

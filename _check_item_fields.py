@@ -28,7 +28,32 @@ for store in STORES:
     print(f"=== {store['name']} status={res.status_code} ===")
     if res.status_code == 200:
         data = res.json()
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:6000])
+        print("トップレベルキー一覧:", list(data.keys()))
+
+        def find_price_keys(obj, path=""):
+            found = []
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    p = f"{path}.{k}" if path else k
+                    if "price" in k.lower():
+                        found.append((p, v if not isinstance(v, (dict, list)) else type(v).__name__))
+                    found.extend(find_price_keys(v, p))
+            elif isinstance(obj, list):
+                for i, v in enumerate(obj[:2]):  # サンプルとして先頭2件だけ
+                    found.extend(find_price_keys(v, f"{path}[{i}]"))
+            return found
+
+        for path, val in find_price_keys(data):
+            print(f"  {path} = {val}")
+
+        # variantsの中身を丸ごと見る（価格情報が入っている想定）
+        if "variants" in data:
+            print("\nvariants抜粋（先頭1件）:")
+            variants = data["variants"]
+            first_key = next(iter(variants)) if isinstance(variants, dict) else None
+            if first_key is not None:
+                print(f"  variantId={first_key}")
+                print(json.dumps(variants[first_key], ensure_ascii=False, indent=2)[:3000])
         break  # 1店舗分見れれば十分
     elif res.status_code != 404:
         print(res.text[:500])

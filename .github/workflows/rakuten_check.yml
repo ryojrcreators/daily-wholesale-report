@@ -31,4 +31,7 @@ jobs:
           RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
           PROFIT_RATE: ${{ secrets.PROFIT_RATE }}
           COMMISSION_RATE: ${{ secrets.COMMISSION_RATE }}
+          # D列（楽天販売価格）を最新化するため「楽天_出品データ」タブを読み込む用
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
         run: python rakuten_price_check.py

@@ -62,6 +62,61 @@ def get_sheet():
     return get_spreadsheet().worksheet(SHEET_NAME)
 
 
+# ── 楽天の現在販売価格（D列の最新化用） ────────────
+# rakuten_price_check.py自体はKeepa APIしか呼ばないため、楽天RMS APIをライブでは叩かない
+# （商品ごとにGETすると3,600件/実行で実行時間が大幅に悪化する）。代わりに
+# rakuten_listing_sync.pyが毎日1回取得している「楽天_出品データ」タブのスナップショットを
+# 再利用する。GOOGLE_CREDENTIALS/RAKUTEN_LISTING_SPREADSHEET_IDは、このタブを読み書きする
+# 他のスクリプト（rakuten_listing_sync.py, case_orders_auto_close.py）と同じペアの環境変数。
+LISTING_SHEET_NAME = "楽天_出品データ"
+
+
+def load_current_prices() -> dict | None:
+    """
+    {商品管理番号: 最安値} を返す。取得できなければNone（呼び出し側はD列更新を諦め、
+    在庫・価格チェック自体は従来通り続行する）。
+    """
+    try:
+        creds = Credentials.from_service_account_info(
+            json.loads(os.environ["GOOGLE_CREDENTIALS"]),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        gc = gspread.authorize(creds)
+        ws = gc.open_by_key(os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]).worksheet(LISTING_SHEET_NAME)
+        rows = ws.get_all_values()
+    except Exception as e:
+        print(f"「{LISTING_SHEET_NAME}」タブの取得に失敗したため、D列の更新はスキップします: {e}")
+        return None
+
+    if len(rows) <= 1:
+        return None
+
+    header = rows[0]
+    try:
+        idx_item = header.index("商品管理番号")
+        idx_price = header.index("販売価格")
+    except ValueError:
+        print(f"「{LISTING_SHEET_NAME}」タブの列構成が想定と異なるため、D列の更新はスキップします。")
+        return None
+
+    prices: dict = {}
+    for row in rows[1:]:
+        if len(row) <= max(idx_item, idx_price):
+            continue
+        item_number = row[idx_item].strip()
+        price_str = row[idx_price].strip()
+        if not item_number or not price_str:
+            continue
+        try:
+            price = float(price_str)
+        except ValueError:
+            continue
+        if item_number not in prices or price < prices[item_number]:
+            prices[item_number] = price
+
+    return prices
+
+
 # ── 巡回カーソル（前回どこまでチェックしたか） ──────
 def get_cursor(spreadsheet) -> int:
     """対象プール内でのインデックス（0始まり）を返す。無ければ0。"""
@@ -228,6 +283,12 @@ def main():
     sheet = spreadsheet.worksheet(SHEET_NAME)
     exchange_rate = get_exchange_rate()
 
+    current_prices = load_current_prices()
+    if current_prices is None:
+        print("楽天の現在価格スナップショットを取得できなかったため、D列は更新せず従来のシート値のみ使用します。")
+    else:
+        print(f"楽天の現在価格スナップショット: {len(current_prices)}件読み込みました。")
+
     all_rows = sheet.get_all_values()
     rows = all_rows[1:]
 
@@ -284,10 +345,22 @@ def main():
 
         for sheet_row_idx, row in batch:
             asin = row[COL_ASIN]
+            item_number = row[COL_ITEM_ID].strip() if len(row) > COL_ITEM_ID else ""
             try:
-                rakuten_price = int(str(row[COL_PRICE_JPY]).replace(",", ""))
+                sheet_price = int(str(row[COL_PRICE_JPY]).replace(",", ""))
             except ValueError:
-                rakuten_price = 0
+                sheet_price = 0
+
+            # D列（楽天販売価格）が最新スナップショットとズレていれば、今回の判定にも
+            # 反映した上でD列自体も書き直す（古い価格のまま損益分岐点を計算し続けない）
+            fresh_price = current_prices.get(item_number) if current_prices else None
+            price_updates = []
+            if fresh_price is not None and int(fresh_price) != sheet_price:
+                rakuten_price = int(fresh_price)
+                price_jpy_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PRICE_JPY + 1)
+                price_updates.append({"range": price_jpy_cell, "values": [[rakuten_price]]})
+            else:
+                rakuten_price = sheet_price
 
             product = keepa_data.get(asin)
 
@@ -303,13 +376,14 @@ def main():
             stock_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_STOCK_CHECK + 1)
             price_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PRICE_CHECK + 1)
             proper_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PROPER_PRICE + 1)
-            write_with_retry(sheet, [
+            write_with_retry(sheet, price_updates + [
                 {"range": stock_cell, "values": [[stock_result]]},
                 {"range": price_cell, "values": [[price_result]]},
                 {"range": proper_cell, "values": [[proper_price_result]]},
             ])
 
-            print(f"  {asin}: {stock_result} / {price_result} / {proper_price_result}")
+            print(f"  {asin}: {stock_result} / {price_result} / {proper_price_result}"
+                  + (f"（D列 ¥{sheet_price:,}→¥{rakuten_price:,} に更新）" if price_updates else ""))
 
             processed_count += 1
             time.sleep(SHEET_WRITE_INTERVAL)

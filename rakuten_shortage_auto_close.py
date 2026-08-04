@@ -26,6 +26,7 @@ Close処理:
 import os
 import sys
 import json
+import time
 from datetime import datetime, timezone, timedelta
 
 import gspread
@@ -162,7 +163,18 @@ def main():
         print("※ DRY RUN モード：モール側もシート側も一切変更しません")
 
     spreadsheet = get_spreadsheet()
-    yahoo_token = get_yahoo_access_token(spreadsheet)
+    # Yahooのアクセストークンは短時間（目安1時間）で失効する。MAX_PER_RUNが大きいと
+    # 1回の実行が数時間かかることがあるため、定期的に再取得して401エラーを防ぐ。
+    yahoo_token_state = {"token": get_yahoo_access_token(spreadsheet), "fetched_at": time.time()}
+    YAHOO_TOKEN_REFRESH_SEC = 40 * 60  # 40分ごとに再取得（失効目安1時間より十分早める）
+
+    def get_fresh_yahoo_token():
+        if time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
+            print("  （Yahooアクセストークンを再取得します）")
+            yahoo_token_state["token"] = get_yahoo_access_token(spreadsheet)
+            yahoo_token_state["fetched_at"] = time.time()
+        return yahoo_token_state["token"]
+
     shortage_ws = get_shortage_sheet()
 
     header = shortage_ws.row_values(1)
@@ -198,7 +210,7 @@ def main():
                 all_ok = False
 
         candidates = [item_number + suffix for suffix in YAHOO_SUFFIXES]
-        for store_name, message, ok in yahoo_close(yahoo_token, candidates):
+        for store_name, message, ok in yahoo_close(get_fresh_yahoo_token(), candidates):
             print(f"    [Yahoo] {store_name}: {message}")
             log_rows.append([now, "-", "仕入不可自動Close", "Yahoo", store_name, item_number, message])
             if not ok:
@@ -239,7 +251,7 @@ def main():
                 all_ok = False
 
         candidates = [item_number + suffix for suffix in YAHOO_SUFFIXES]
-        for store_name, message, ok in yahoo_restock(yahoo_token, candidates, RESTOCK_QUANTITY):
+        for store_name, message, ok in yahoo_restock(get_fresh_yahoo_token(), candidates, RESTOCK_QUANTITY):
             print(f"    [Yahoo] {store_name}: {message}")
             log_rows.append([now, "-", "仕入可能化・自動再開", "Yahoo", store_name, item_number, message])
             if not ok:

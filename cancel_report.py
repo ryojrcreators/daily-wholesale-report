@@ -81,6 +81,11 @@ COL_OWN_AMOUNT = "弊社都合キャンセル金額"
 COL_OWN_COUNT = "弊社都合キャンセル件数"
 COL_STORE = "店舗名"
 
+# 書き込まないが、数式が正しく計算されているかの確認には使う列
+COL_SALES = "売上高（円）"
+COL_REFUND_PCT = "返金額 （％）"
+COL_OWN_PCT = "弊社都合キャンセル金額（％）"
+
 
 def target_month():
     """対象月を (年, 月) で返す。未指定なら前月。"""
@@ -258,6 +263,92 @@ def find_rows(grid, header_index, store_col, month_label):
     return found
 
 
+def to_number(value):
+    """セルの値を数値にする。数値でなければ None"""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    text = str(value).replace(",", "").replace("¥", "").replace("%", "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def check_percent_formulas(ws, header_index, headers, rows_by_store):
+    """パーセント2列がシートの数式で正しく計算されているか確認する。
+
+    ここは書き込まない列だが、数式の分母が別の行を指しているといった壊れ方をすると
+    間違った数字が資料に載ってしまうため、実行のたびに検算して警告する。
+
+    シートに入っている 売上高・返金額・弊社都合キャンセル金額 から期待値を出し、
+    実際のパーセント列の値と突き合わせる（％列は 0.55 形式でも 55 形式でも通す）。
+    """
+    pct_cols = {
+        COL_REFUND_PCT: (col_of(headers, COL_REFUND_PCT), COL_REFUND_AMOUNT, COL_SALES),
+        COL_OWN_PCT: (col_of(headers, COL_OWN_PCT), COL_OWN_AMOUNT, COL_REFUND_AMOUNT),
+    }
+    amount_cols = {
+        COL_SALES: col_of(headers, COL_SALES),
+        COL_REFUND_AMOUNT: col_of(headers, COL_REFUND_AMOUNT),
+        COL_OWN_AMOUNT: col_of(headers, COL_OWN_AMOUNT),
+    }
+    if any(v is None for v in amount_cols.values()) or \
+       any(c[0] is None for c in pct_cols.values()):
+        print("  パーセント列または金額列が見つからないため、検算はスキップします")
+        return []
+
+    try:
+        grid_raw = ws.get_all_values(value_render_option="UNFORMATTED_VALUE")
+    except Exception as e:
+        print(f"  生の値を取得できなかったため、検算はスキップします（{e}）")
+        return []
+
+    problems = []
+    for store, row_number in rows_by_store.items():
+        if row_number - 1 >= len(grid_raw):
+            continue
+        row = grid_raw[row_number - 1]
+
+        def cell(index):
+            return row[index] if index < len(row) else ""
+
+        for pct_name, (pct_col, numer_name, denom_name) in pct_cols.items():
+            actual_raw = cell(pct_col)
+            numer = to_number(cell(amount_cols[numer_name]))
+            denom = to_number(cell(amount_cols[denom_name]))
+
+            if not denom:
+                # 分母が未入力なら #DIV/0! は当然なので、これは異常ではない
+                if str(actual_raw).startswith("#"):
+                    print(f"  {store} {pct_name}: {actual_raw}"
+                          f"（{denom_name}が未入力のため。値が入れば解消します）")
+                continue
+
+            if str(actual_raw).startswith("#"):
+                problems.append(
+                    f"{store} {pct_name}（{a1(pct_col, row_number)}）が {actual_raw} になっています")
+                continue
+
+            actual = to_number(actual_raw)
+            if actual is None:
+                problems.append(
+                    f"{store} {pct_name}（{a1(pct_col, row_number)}）が数値ではありません: {actual_raw!r}")
+                continue
+
+            expected = (numer or 0) / denom * 100
+            # シートの保存形式が 0.55 でも 55 でも正解とみなす
+            ok = min(abs(actual - expected), abs(actual * 100 - expected)) <= max(expected * 0.01, 0.05)
+            if not ok:
+                # 生の値をそのまま見せる（0.737と73.7のどちらで保存されているか断定できないため）
+                problems.append(
+                    f"{store} {pct_name}（{a1(pct_col, row_number)}）が "
+                    f"{numer_name} ÷ {denom_name} = {expected:.1f}% になっていません"
+                    f"（セルの値: {actual_raw}）"
+                )
+
+    return problems
+
+
 def a1(col_index, row_number):
     """0始まりの列インデックスと1始まりの行番号を A1 表記にする"""
     col, name = col_index + 1, ""
@@ -365,18 +456,29 @@ def main():
             print("  " + s)
         print("  ※ 上書きしたい場合は OVERWRITE=1 を付けて実行してください")
 
-    if not updates:
-        print("\n書き込む項目がありませんでした。")
-        return
-
     # 4) 書き込み
-    if not WRITE:
+    if not updates:
+        print("\n書き込む項目はありませんでした。")
+    elif not WRITE:
         print(f"\nドライランのため書き込みません（{len(updates)}セル）。"
               "実際に書き込むには WRITE=1 を付けて実行してください")
+    else:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        print(f"\n{len(updates)}セルを書き込みました。")
+
+    # 5) パーセント列の数式が正しく計算されているか検算する
+    print("\n--- パーセント列の検算 ---")
+    problems = check_percent_formulas(ws, header_index, headers, rows_by_store)
+    if not problems:
+        print("  問題ありません")
         return
 
-    ws.batch_update(updates, value_input_option="USER_ENTERED")
-    print(f"\n{len(updates)}セルを書き込みました。")
+    print("  ⚠️ 数式がおかしい可能性があります:")
+    for p in problems:
+        print("    " + p)
+        # GitHub Actionsの実行結果に警告として表示する
+        print(f"::warning title=パーセント列の数式::{p}")
+    print("  → 分母が別の行を指していないか、該当セルの数式を確認してください")
 
 
 if __name__ == "__main__":

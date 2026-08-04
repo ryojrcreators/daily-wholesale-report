@@ -315,15 +315,15 @@ def set_stock(token: str, store: dict, item_code: str, quantity: str) -> bool:
     return res.status_code < 400
 
 
-def publish(token: str, store: dict):
-    """編集内容を実店舗に反映する"""
+def publish(token: str, store: dict, item_code: str):
+    """編集内容を実店舗に反映する（商品個別反映API・submitItem。seller_id+item_codeが必須）"""
     res = requests.post(
-        f"{BASE}/publish",
+        f"{BASE}/submitItem",
         headers={"Authorization": f"Bearer {token}"},
-        data={"seller_id": store["seller_id"]},
+        data={"seller_id": store["seller_id"], "item_code": item_code},
         timeout=60,
     )
-    print(f"  反映API → ステータス: {res.status_code}")
+    print(f"  反映API(submitItem) → ステータス: {res.status_code}")
     print(f"  {res.text[:600]}")
 
 
@@ -372,7 +372,7 @@ def main():
         print_state("現在", before)
 
         if MODE == "publish":
-            publish(token, store)
+            publish(token, store, TARGET_ITEM_CODE)
             continue
 
         if MODE == "probe-edit":

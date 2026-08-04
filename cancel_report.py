@@ -11,10 +11,13 @@
        Price合計 = Σ(qty × price) を小数点以下切り上げ
   3. スプレッドシートの該当月・該当店舗の行へ書き込む
 
+書き込むのは「返金額 / キャンセル件数 / 弊社都合キャンセル金額 / 弊社都合キャンセル件数」の
+4列だけ。パーセントの2列はシート側の数式で計算されるため、値を入れて数式を壊さないよう
+意図的に触らない。
+
 安全策:
   - 既定はドライラン。実際に書き込むのは WRITE=1 のときだけ。
   - すでに値が入っているセルは書き換えない（OVERWRITE=1 で明示的に許可した場合のみ上書き）。
-  - パーセント列は、前月の行の生値から「0.55形式か55形式か」を自動判定して合わせる。
   - CSVの取得に失敗したら、シートには一切触れずに終了する。
 
 環境変数:
@@ -71,13 +74,11 @@ STORE_MAP = {
 }
 
 # 書き込む列（シートの見出し名で探す）
+# ※「返金額（％）」「弊社都合キャンセル金額（％）」はシートの数式で計算されるため書き込まない
 COL_REFUND_AMOUNT = "返金額"
-COL_REFUND_PCT = "返金額 （％）"
 COL_CANCEL_COUNT = "キャンセル件数"
 COL_OWN_AMOUNT = "弊社都合キャンセル金額"
 COL_OWN_COUNT = "弊社都合キャンセル件数"
-COL_OWN_PCT = "弊社都合キャンセル金額（％）"
-COL_SALES = "売上高（円）"
 COL_STORE = "店舗名"
 
 
@@ -257,45 +258,6 @@ def find_rows(grid, header_index, store_col, month_label):
     return found
 
 
-def to_number(value):
-    """セルの値を数値にする。数値でなければ None"""
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).replace(",", "").replace("¥", "").replace("%", "").strip()
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-def percent_convention(grid_raw, header_index, pct_col, own_col, refund_col):
-    """パーセント列が 0.55 形式か 55 形式かを、過去の行の「表示ではない実際の値」から判定する。
-
-    返り値: 1.0（55形式＝そのまま書く）または 0.01（0.55形式＝100で割って書く）。
-    判定できなければ None（呼び出し側で「73.7%」という文字列として書く）。
-    """
-    if grid_raw is None:
-        return None
-
-    for i in range(len(grid_raw) - 1, header_index, -1):
-        row = grid_raw[i]
-        if len(row) <= max(pct_col, own_col, refund_col):
-            continue
-        pct = to_number(row[pct_col])
-        own = to_number(row[own_col])
-        refund = to_number(row[refund_col])
-        if not pct or not own or not refund:
-            continue
-        ratio = own / refund          # 例 0.5513
-        if abs(pct - ratio) < abs(pct - ratio * 100):
-            print(f"  パーセント列は小数で保存されています（例 {ratio:.4f}）")
-            return 0.01
-        print(f"  パーセント列は数値で保存されています（例 {ratio * 100:.2f}）")
-        return 1.0
-
-    return None
-
-
 def a1(col_index, row_number):
     """0始まりの列インデックスと1始まりの行番号を A1 表記にする"""
     col, name = col_index + 1, ""
@@ -325,8 +287,8 @@ def main():
 
     cols = {}
     missing = []
-    for name in (COL_STORE, COL_SALES, COL_REFUND_AMOUNT, COL_REFUND_PCT,
-                 COL_CANCEL_COUNT, COL_OWN_AMOUNT, COL_OWN_COUNT, COL_OWN_PCT):
+    for name in (COL_STORE, COL_REFUND_AMOUNT, COL_CANCEL_COUNT,
+                 COL_OWN_AMOUNT, COL_OWN_COUNT):
         index = col_of(headers, name)
         if index is None:
             missing.append(name)
@@ -342,17 +304,7 @@ def main():
     if not rows_by_store:
         raise SystemExit(f"{month_label} の行がシートに見つかりません。先に行を用意してください")
     print("対象行: " + ", ".join(f"{k}={v}行目" for k, v in rows_by_store.items()))
-
-    # パーセント列の保存形式は「表示上の値」では分からないので、生の値を取り直して判定する
-    try:
-        grid_raw = ws.get_all_values(value_render_option="UNFORMATTED_VALUE")
-    except Exception as e:
-        print(f"  生の値の取得に失敗しました（{e}）")
-        grid_raw = None
-    pct_factor = percent_convention(
-        grid_raw, header_index, cols[COL_OWN_PCT], cols[COL_OWN_AMOUNT], cols[COL_REFUND_AMOUNT])
-    if pct_factor is None:
-        print("  パーセント列の形式を判定できないため、「73.7%」のような文字列で書き込みます")
+    print("※ パーセントの2列はシートの数式で計算されるため書き込みません")
 
     # 2) CSVを取得して集計する
     with sync_playwright() as p:
@@ -391,28 +343,12 @@ def main():
         a_count, a_amount = all_agg.get(csv_name, (0, 0))
         s_count, s_amount = shop_agg.get(csv_name, (0, 0))
 
-        def as_percent(numerator, denominator):
-            """シートの保存形式に合わせたパーセント値を返す"""
-            pct = numerator / denominator * 100
-            if pct_factor is None:
-                return f"{pct:.2f}%"          # USER_ENTEREDならシート側が解釈してくれる
-            return round(pct * pct_factor, 6)
-
         values = {
             COL_REFUND_AMOUNT: a_amount,
             COL_CANCEL_COUNT: a_count,
             COL_OWN_AMOUNT: s_amount,
             COL_OWN_COUNT: s_count,
         }
-        if a_amount:
-            values[COL_OWN_PCT] = as_percent(s_amount, a_amount)
-
-        # 返金額の割合は、シートに売上高が入っているときだけ計算できる
-        sales = to_number(get(COL_SALES))
-        if sales:
-            values[COL_REFUND_PCT] = as_percent(a_amount, sales)
-        else:
-            print(f"  {sheet_name}: 売上高が未入力のため「{COL_REFUND_PCT}」は書きません")
 
         for col_name, value in values.items():
             cell = a1(cols[col_name], row_number)

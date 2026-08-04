@@ -200,6 +200,26 @@ def rakuten_update_price(manage_number: str, new_price: int) -> list:
 
 
 # ══ Yahoo：価格を更新する ══════════════════════════
+def yahoo_submit_item(token: str, store: dict, item_code: str) -> bool:
+    """
+    商品個別反映API（submitItem）。updateItemsは編集を保存するだけで、実店舗への反映には
+    このAPIを別途呼ぶ必要がある（seller_id + item_codeが必須。/publishという固定エンドポイントは
+    存在せず404になる。実機確認済み）。戻り値は反映APIの呼び出し自体が成功したかどうか
+    （Yahoo公式ドキュメントによれば、OKが返っても反映処理自体は非同期でのちにエラーになる
+    ケースがあるため、これは「反映を試みた」以上の保証はしない）。
+    """
+    try:
+        res = requests.post(
+            f"{YAHOO_BASE}/submitItem",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"seller_id": store["seller_id"], "item_code": item_code},
+            timeout=60,
+        )
+        return res.status_code < 400 and "<Status>OK</Status>" in res.text
+    except Exception:
+        return False
+
+
 def yahoo_check_sale_conflict(token: str, candidates: list) -> bool:
     """
     候補の商品コードを2店舗それぞれで実在確認し、特価(SalePrice)が通常価格(Price)と
@@ -250,6 +270,11 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
             current_price = item.get("Price")
 
             if current_price == str(new_price):
+                # getItemのPriceは反映前の編集値も返すため、価格が一致していても反映APIが
+                # 未実行/失敗のままの可能性がある。安全のため反映だけは毎回試みる。
+                if not DRY_RUN:
+                    time.sleep(API_INTERVAL)
+                    yahoo_submit_item(token, store, item_code)
                 results.append((store["name"], f"{item_code}: すでに¥{new_price:,}", True))
                 continue
 
@@ -274,7 +299,15 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
                     timeout=30,
                 )
                 if res.status_code < 400 and "<Status>OK</Status>" in res.text:
-                    results.append((store["name"], f"{item_code}: ¥{current_price}→¥{new_price:,}に更新しました", True))
+                    time.sleep(API_INTERVAL)
+                    submitted = yahoo_submit_item(token, store, item_code)
+                    if submitted:
+                        results.append((store["name"], f"{item_code}: ¥{current_price}→¥{new_price:,}に更新し、反映しました", True))
+                    else:
+                        # 更新自体は成功しているのでモール側は変わっているが、反映APIが
+                        # 失敗した場合は実店舗にまだ出ていない可能性がある。失敗扱いにして
+                        # I列を更新させず、次回の実行で反映だけ再試行させる。
+                        results.append((store["name"], f"{item_code}: ¥{current_price}→¥{new_price:,}に更新したが反映API失敗", False))
                 else:
                     results.append((store["name"], f"{item_code}: 更新失敗({res.status_code}) {res.text[:200]}", False))
             except Exception as e:

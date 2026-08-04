@@ -170,11 +170,39 @@ def aggregate(rows):
 # ---------------------------------------------------------------- シート
 
 def open_sheet():
+    if not SPREADSHEET_ID.strip():
+        raise SystemExit(
+            "SALES_KPI_SPREADSHEET_ID が空です。"
+            "GitHub Secrets に書き込み先スプレッドシートのIDを登録してください"
+        )
+
     creds = Credentials.from_service_account_info(
         json.loads(GOOGLE_CREDENTIALS),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    return gspread.authorize(creds).open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
+    client = gspread.authorize(creds)
+
+    try:
+        book = client.open_by_key(SPREADSHEET_ID)
+    except gspread.exceptions.SpreadsheetNotFound:
+        raise SystemExit(
+            f"スプレッドシート（ID: {SPREADSHEET_ID}）を開けませんでした。\n"
+            "  Googleは権限のないファイルも「見つかりません」と返すため、原因は次のどちらかです:\n"
+            "   1. Secret の SALES_KPI_SPREADSHEET_ID が間違っている\n"
+            "   2. サービスアカウントにこのファイルが共有されていない\n"
+            "  → スプレッドシートの共有設定で、サービスアカウントのメールアドレスを"
+            "「編集者」として追加してください"
+        )
+
+    try:
+        return book.worksheet(SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        names = [w.title for w in book.worksheets()]
+        raise SystemExit(
+            f"「{SHEET_NAME}」というタブが見つかりません。\n"
+            f"  このファイルのタブ一覧: {names}\n"
+            "  → 環境変数 SHEET_NAME で正しいタブ名を指定してください"
+        )
 
 
 def normalize(text):
@@ -288,28 +316,7 @@ def main():
     print(f"モード: {'書き込み' if WRITE else 'ドライラン（書き込みません）'}"
           f"{' / 既存値も上書き' if OVERWRITE else ''}")
 
-    # 1) CSVを取得して集計
-    with sync_playwright() as p:
-        browser, context = login(p)
-        print("ログイン完了")
-        all_rows = download_csv(context, build_query(start, end, False), "全体のキャンセル")
-        shop_rows = download_csv(context, build_query(start, end, True), "店舗都合のキャンセル")
-        browser.close()
-
-    all_agg = aggregate(all_rows)
-    shop_agg = aggregate(shop_rows)
-
-    print("\n--- 集計結果 ---")
-    for shop in STORE_MAP:
-        a_count, a_amount = all_agg.get(shop, (0, 0))
-        s_count, s_amount = shop_agg.get(shop, (0, 0))
-        print(f"  {shop}: 全体 {a_count}件/{a_amount:,}円  "
-              f"弊社都合 {s_count}件/{s_amount:,}円")
-    others = sorted(set(all_agg) - set(STORE_MAP))
-    if others:
-        print(f"  （対象外の店舗: {', '.join(others)}）")
-
-    # 2) シートを開いて書き込み位置を特定
+    # 1) 先にシート側を確認する（権限やタブ名の問題なら、CSVを取りに行く前に止める）
     ws = open_sheet()
     grid = ws.get_all_values()
     header_index, headers = find_header(grid)
@@ -345,6 +352,27 @@ def main():
         grid_raw, header_index, cols[COL_OWN_PCT], cols[COL_OWN_AMOUNT], cols[COL_REFUND_AMOUNT])
     if pct_factor is None:
         print("  パーセント列の形式を判定できないため、「73.7%」のような文字列で書き込みます")
+
+    # 2) CSVを取得して集計する
+    with sync_playwright() as p:
+        browser, context = login(p)
+        print("\nログイン完了")
+        all_rows = download_csv(context, build_query(start, end, False), "全体のキャンセル")
+        shop_rows = download_csv(context, build_query(start, end, True), "店舗都合のキャンセル")
+        browser.close()
+
+    all_agg = aggregate(all_rows)
+    shop_agg = aggregate(shop_rows)
+
+    print("\n--- 集計結果 ---")
+    for shop in STORE_MAP:
+        a_count, a_amount = all_agg.get(shop, (0, 0))
+        s_count, s_amount = shop_agg.get(shop, (0, 0))
+        print(f"  {shop}: 全体 {a_count}件/{a_amount:,}円  "
+              f"弊社都合 {s_count}件/{s_amount:,}円")
+    others = sorted(set(all_agg) - set(STORE_MAP))
+    if others:
+        print(f"  （対象外の店舗: {', '.join(others)}）")
 
     # 3) 書き込む内容を組み立てる
     updates = []

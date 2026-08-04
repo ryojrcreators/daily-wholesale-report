@@ -1,0 +1,47 @@
+name: キャンセル集計 → 店舗別パフォーマンス
+
+# 手動実行のみ。既定はドライラン（シートには書き込まない）。
+on:
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: '対象月（例 2026-07）。空なら前月'
+        required: false
+        default: ''
+      write:
+        description: '実際にシートへ書き込む（オフならドライラン）'
+        type: boolean
+        default: false
+      overwrite:
+        description: 'すでに値が入っているセルも上書きする'
+        type: boolean
+        default: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 依存関係をインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxshmfence1
+      - name: 集計してシートへ反映
+        env:
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SALES_KPI_SPREADSHEET_ID: ${{ secrets.SALES_KPI_SPREADSHEET_ID }}
+          TARGET_MONTH: ${{ inputs.target_month }}
+          WRITE: ${{ inputs.write && '1' || '0' }}
+          OVERWRITE: ${{ inputs.overwrite && '1' || '0' }}
+        run: python -u cancel_report.py

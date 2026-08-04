@@ -52,8 +52,9 @@ LOGIN_URL = (f"https://{quote(LOGIN_ID_1, safe='')}:"
 
 # ===== スプレッドシート =====
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
-SPREADSHEET_ID = os.environ["SALES_KPI_SPREADSHEET_ID"]
-SHEET_NAME = os.environ.get("SHEET_NAME", "店舗別パフォーマンス")
+# Secretへのコピペで前後に空白や改行が混ざることがあるため取り除く
+SPREADSHEET_ID = os.environ["SALES_KPI_SPREADSHEET_ID"].strip()
+SHEET_NAME = os.environ.get("SHEET_NAME", "店舗別パフォーマンス").strip()
 
 WRITE = os.environ.get("WRITE") == "1"
 OVERWRITE = os.environ.get("OVERWRITE") == "1"
@@ -170,7 +171,7 @@ def aggregate(rows):
 # ---------------------------------------------------------------- シート
 
 def open_sheet():
-    if not SPREADSHEET_ID.strip():
+    if not SPREADSHEET_ID:
         raise SystemExit(
             "SALES_KPI_SPREADSHEET_ID が空です。"
             "GitHub Secrets に書き込み先スプレッドシートのIDを登録してください"

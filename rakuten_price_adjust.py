@@ -227,8 +227,8 @@ def yahoo_check_sale_conflict(token: str, candidates: list) -> bool:
 def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
     """
     候補の商品コードを2店舗それぞれで実在確認し、見つかったものすべての価格を更新する。
-    updateItemsはprice更新時にsale_priceも同時指定が必要なため、両方を新価格にする
-    （セール中の商品はyahoo_check_sale_conflictで事前に除外されている前提）。
+    updateItemsはprice更新時にsale_priceも同時指定が必要なため、特価を使わない状態を
+    維持する空文字を指定する（セール中の商品はyahoo_check_sale_conflictで事前に除外済み）。
     """
     results = []
     found_any = False
@@ -257,7 +257,11 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
                 results.append((store["name"], f"{item_code}: 【DRY RUN】¥{current_price}→¥{new_price:,}の対象", True))
                 continue
 
-            item_field = f"item_code={item_code}&price={new_price}&sale_price={new_price}"
+            # sale_priceはpriceと同額を送るとit-01026エラー（特価は通常価格より安い必要がある）
+            # になる。特価を使わない状態を維持するには、省略ではなく空文字を明示指定する
+            # （Yahoo公式ドキュメントの注意書きに明記。セール中の商品はyahoo_check_sale_conflict
+            # で事前に除外済みなので、ここに来る商品はもともと特価未設定という前提）。
+            item_field = f"item_code={item_code}&price={new_price}&sale_price="
 
             try:
                 # item1の値はrequestsのform-urlencode処理で自動的にパーセントエンコードされる。

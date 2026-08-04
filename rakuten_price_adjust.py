@@ -26,7 +26,6 @@ import re
 import json
 import time
 from datetime import datetime
-from urllib.parse import quote
 
 import requests
 import gspread
@@ -259,13 +258,15 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
                 continue
 
             item_field = f"item_code={item_code}&price={new_price}&sale_price={new_price}"
-            encoded = quote(item_field, safe="")
 
             try:
+                # item1の値はrequestsのform-urlencode処理で自動的にパーセントエンコードされる。
+                # ここで自前でquote()すると二重エンコードになりYahoo側でitem_codeが
+                # 読み取れなくなる（実機で確認済み）。
                 res = requests.post(
                     f"{YAHOO_BASE}/updateItems",
                     headers={"Authorization": f"Bearer {token}"},
-                    data={"seller_id": store["seller_id"], "item1": encoded},
+                    data={"seller_id": store["seller_id"], "item1": item_field},
                     timeout=30,
                 )
                 if res.status_code < 400 and "<Status>OK</Status>" in res.text:

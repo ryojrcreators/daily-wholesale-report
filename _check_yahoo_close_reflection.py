@@ -20,15 +20,20 @@ print(f"ログ列: {header}")
 print(f"ログ行数: {len(rows) - 1}")
 
 # モール=Yahoo かつ 結果に「在庫」という文字を含む（＝setStockで実際に変更した）行を新しい順に探す
+# item_code列（A列基準の商品管理番号）は接尾辞なしのため、実際に変更されたコード
+# （接尾辞付き）は「結果」欄の "je0000359-akc: 在庫...→0にしました" から抽出する
 candidates = []
 for row in rows[1:]:
     if len(row) < 7:
         continue
     mall = row[3]
     result = row[6]
-    item_code = row[5]
-    if mall == "Yahoo" and ("在庫" in result and "→" in result) and item_code and item_code != "-":
-        candidates.append((row[0], row[4], item_code, result))
+    base_item_code = row[5]
+    if mall != "Yahoo" or "在庫" not in result or "→" not in result:
+        continue
+    actual_item_code = result.split(":")[0].strip() if ":" in result else base_item_code
+    if actual_item_code:
+        candidates.append((row[0], row[4], actual_item_code, result))
 
 print(f"\n該当するYahoo在庫変更ログ: {len(candidates)}件")
 for r in candidates[-10:]:

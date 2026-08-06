@@ -169,6 +169,33 @@ def fetch_shipped_csv(p, ship_date_str: str):
         page.goto(url, wait_until="networkidle")
         page.wait_for_timeout(2000)
 
+        if os.environ.get("DEBUG_SO_SEARCH"):
+            print(f"  [debug] 実際のURL: {page.url}")
+            print(f"  [debug] ページタイトル: {page.title()}")
+            try:
+                page.screenshot(path=f"debug_{ship_date_str}.png", full_page=True)
+                with open(f"debug_{ship_date_str}.html", "w", encoding="utf-8") as f:
+                    f.write(page.content())
+                print(f"  [debug] debug_{ship_date_str}.png / .html を保存しました")
+            except Exception as e:
+                print(f"  [debug] スクリーンショット/HTML保存に失敗: {e}")
+            # ページ内のテーブル件数・見出しをざっと出す（Downloadリンクの有無だけでは
+            # 「検索結果が空」なのか「そもそも想定と違うページが返っている」のか区別できないため）
+            page_info = page.evaluate(
+                """() => {
+                    const tables = [...document.querySelectorAll('table')];
+                    return {
+                        tableCount: tables.length,
+                        tableRowCounts: tables.map(t => t.querySelectorAll('tbody tr').length),
+                        linkTexts: [...document.querySelectorAll('a')].map(a => a.textContent.trim()).filter(t => t).slice(0, 30),
+                        bodyTextHead: document.body.innerText.slice(0, 500),
+                    };
+                }"""
+            )
+            print(f"  [debug] テーブル数={page_info['tableCount']} 各行数={page_info['tableRowCounts']}")
+            print(f"  [debug] リンク文言: {page_info['linkTexts']}")
+            print(f"  [debug] 本文冒頭: {page_info['bodyTextHead']!r}")
+
         # Playwrightのlocator().count()ではなく、動作確認済みのJS直接評価でhrefを取得する
         # （「Download」の完全一致のみを対象にし、「Profit Download」等は除外する）
         href = page.evaluate(

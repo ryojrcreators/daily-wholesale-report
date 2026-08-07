@@ -24,13 +24,16 @@ import re
 import csv
 import time
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 from rakuten_coupon_api import auth_headers
 
-JST = timezone(timedelta(hours=9))
+# 倉庫・ship_timeの記録はLA（現地）時間のため、対象期間の判定はすべてLA時間基準で行う
+# （固定オフセットのJSTと違いLAは夏時間があるため、オフセット固定ではなくZoneInfoを使う）
+LA_TZ = ZoneInfo("America/Los_Angeles")
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
@@ -199,7 +202,7 @@ def collect_shipped_orders(page, context) -> list:
     order_number単位に集約したリストを返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
     """
-    today = datetime.now(JST).date()
+    today = datetime.now(LA_TZ).date()
     start_date = (today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
 
@@ -209,7 +212,7 @@ def collect_shipped_orders(page, context) -> list:
         return []
     print(f"  取得: {len(rows)}行")
 
-    cutoff = datetime.now(JST).replace(tzinfo=None) - timedelta(days=LOOKBACK_DAYS)
+    cutoff = datetime.now(LA_TZ).replace(tzinfo=None) - timedelta(days=LOOKBACK_DAYS)
     seen = {}
     for row in rows:
         if not any(row):
@@ -244,7 +247,7 @@ def parse_ship_date(ship_time: str) -> str:
     dt = parse_ship_datetime(ship_time)
     if dt is not None:
         return dt.strftime("%Y-%m-%d")
-    return datetime.now(JST).strftime("%Y-%m-%d")
+    return datetime.now(LA_TZ).strftime("%Y-%m-%d")
 
 
 def resolve_store(order_number: str):

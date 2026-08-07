@@ -259,6 +259,7 @@ def main():
         try:
             info = get_order_info(token, o["seller_id"], order_id)
         except Exception as e:
+            print(f"  {o['order_number']}（{order_id}）: orderInfo取得エラー: {e}")
             errors.append({"order_number": o["order_number"], "message": f"orderInfo取得エラー: {e}"})
             continue
         finally:
@@ -266,6 +267,7 @@ def main():
 
         if info is None:
             not_found += 1
+            print(f"  {o['order_number']}（{order_id}）: orderInfoで見つかりませんでした")
             errors.append({"order_number": o["order_number"], "message": f"orderInfoで見つかりませんでした（OrderId={order_id}）"})
             continue
 

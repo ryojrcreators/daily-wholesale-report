@@ -350,17 +350,21 @@ def main():
     unmapped_carriers = []
 
     for o in orders:
-        if not o["tracking_num"] or not o["ship_method"]:
+        if not o["tracking_num"]:
             missing_info += 1
             continue
         store = resolve_store(o["order_number"])
         if store is None:
             ignored_store += 1
             continue
-        code = CARRIER_CODES.get(o["ship_method"])
-        if code is None:
-            unmapped_carriers.append(o)
-            continue
+        if not o["ship_method"]:
+            # ship_methodが未設定の場合はSagawa CDSとして扱う
+            code = CARRIER_CODES["Sagawa CDS"]
+        else:
+            code = CARRIER_CODES.get(o["ship_method"])
+            if code is None:
+                unmapped_carriers.append(o)
+                continue
         o["delivery_company"] = code
         o["shipping_date"] = parse_ship_date(o["ship_time"])
         by_store[store].append(o)

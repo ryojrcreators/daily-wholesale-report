@@ -112,9 +112,9 @@ def get_order_info(token: str, seller_id: str, order_id: str):
         f"{YAHOO_BASE}/orderInfo",
         headers={"Authorization": f"Bearer {token}"},
         params={
-            "SellerId": seller_id,
-            "OrderId": order_id,
-            "Field": "ShipStatus,OrderStatus,ShipInvoiceNumber1,ShipCompanyCode",
+            "seller_id": seller_id,
+            "order_id": order_id,
+            "field": "ShipStatus,OrderStatus,ShipInvoiceNumber1,ShipCompanyCode",
         },
         timeout=30,
     )

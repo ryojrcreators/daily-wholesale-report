@@ -11,6 +11,7 @@ from rakuten_ship_notify import (
     login,
     fetch_recent_orders,
     parse_ship_datetime,
+    resolve_store,
     USER_AGENT,
 )
 from datetime import datetime
@@ -44,6 +45,8 @@ else:
 
     seen = set()
     today_count = 0
+    rakuten_count = 0
+    by_store_count = {"americana": 0, "founder": 0}
     for row in rows:
         if not any(row):
             continue
@@ -55,6 +58,12 @@ else:
         ship_dt = parse_ship_datetime(ship_time)
         if ship_dt is not None and ship_dt.date() == today_la:
             today_count += 1
+            store = resolve_store(order_number)
+            if store is not None:
+                rakuten_count += 1
+                by_store_count[store] += 1
 
     print(f"今日（LA時間 {today_la}）Ship Dateの件数（order_number単位・重複除去後）: {today_count}件")
+    print(f"  うち楽天（americana+founder）: {rakuten_count}件"
+          f"（americana {by_store_count['americana']}件 / founder {by_store_count['founder']}件）")
     print(f"（重複除去前の全行数: {len(rows)}行）")

@@ -159,12 +159,11 @@ def fetch_recent_orders(page, context, start_date: str, end_date: str):
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(2000)
 
-            href = page.evaluate(
-                """() => {
-                    const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
-                    return a ? a.getAttribute('href') : null;
-                }"""
-            )
+            # so_sheets.pyと同じLocator方式でhrefを取得する（Playwrightの自動待機が効く。
+            # page.evaluate()での即時JS評価は、結果テーブルの描画が完了する前に実行されて
+            # href未取得のまま「0件」と誤判定することがあると判明したため使わない）
+            download_link = page.locator('a:has-text("Download"), button:has-text("Download")').first
+            href = download_link.get_attribute("href")
             if not href:
                 print(f"  {start_date}〜{end_date}: Downloadリンクが見つかりません（該当データ無しの可能性）")
                 return None, []

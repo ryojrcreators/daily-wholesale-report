@@ -84,6 +84,7 @@ CARRIER_CODES = {
     "Sagawa CDS": "1002",
     "ePacket": "1024",
     "Yamato Nekopos": "1001",
+    "Yamato Over Size": "1001",  # 楽天のdeliveryCompanyは運送会社単位のコードのため、ヤマトはサービス種別によらず同じ1001
 }
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")

@@ -1,0 +1,100 @@
+name: Yahoo 出荷通知 自動反映
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'DRY RUN（true = ステータス変更APIを呼ばない）'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      lookback_days:
+        description: '当日を含め何日分（発送日基準）を対象にするか'
+        required: false
+        default: '3'
+      created_time_lookback_days:
+        description: '注文日（created_time）の検索範囲。発送日基準の範囲より広めに取る'
+        required: false
+        default: '21'
+      wait_between_status_sec:
+        description: '出荷ステータス変更→注文ステータス変更の間に待機する秒数'
+        required: false
+        default: '10'
+      only_order_numbers:
+        description: 'テスト用：この注文番号だけ対象にする（カンマ区切りで複数可）'
+        required: false
+        default: ''
+      max_per_run:
+        description: 'テスト用：処理する件数の上限（0=無制限）'
+        required: false
+        default: '0'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: ライブラリをインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libxshmfence1
+      - name: Yahoo出荷通知自動反映
+        env:
+          # rakuten_ship_notify.pyのlogin/collect_shipped_ordersをimportして再利用するため必要
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
+          RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          # case_orders_auto_close.pyのget_yahoo_access_token/get_spreadsheetの再利用に必要
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
+          YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
+          YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}
+          YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
+          YAHOO_SELLER_ID_3: ${{ secrets.YAHOO_SELLER_ID_3 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          # このワークフロー固有の設定
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
+          CREATED_TIME_LOOKBACK_DAYS: ${{ inputs.created_time_lookback_days || '21' }}
+          WAIT_BETWEEN_STATUS_SEC: ${{ inputs.wait_between_status_sec || '10' }}
+          ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
+          MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
+        run: python -u yahoo_ship_notify.py
+
+      - name: 失敗時にChatworkへ通知
+        if: ${{ failure() }}
+        env:
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+        run: |
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/60101971/tasks" \
+            -H "X-ChatWorkToken: $CW_TOKEN" \
+            --data-urlencode "body=[title]Yahoo出荷通知の自動反映が失敗しました（ワークフロー自体がエラー終了）[/title]スクリプトのエラー、社内システムへのログイン失敗、GitHub Actions側の障害などが考えられます。実行ログを確認してください: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --data-urlencode "to_ids=2618849"

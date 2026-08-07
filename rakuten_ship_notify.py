@@ -200,7 +200,8 @@ def fetch_recent_orders(page, context, start_date: str, end_date: str):
 def collect_shipped_orders(page, context) -> list:
     """created_time範囲でCSVを取得し、ship_timeが直近LOOKBACK_DAYS日以内の注文を
     order_number単位に集約したリストを返す。
-    各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
+    各要素: {"order_number": ..., "shop_name": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
+    （shop_nameは楽天版では未使用。yahoo_ship_notify.pyが店舗判定に使う）
     """
     today = datetime.now(LA_TZ).date()
     start_date = (today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
@@ -227,6 +228,7 @@ def collect_shipped_orders(page, context) -> list:
             continue
         seen[order_number] = {
             "order_number": order_number,
+            "shop_name": record.get("shop_name", "").strip(),
             "ship_method": record.get("ship_method", "").strip(),
             "tracking_num": record.get("tracking_num", "").strip(),
             "ship_time": ship_time,

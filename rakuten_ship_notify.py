@@ -20,6 +20,7 @@
 """
 
 import os
+import re
 import csv
 import time
 import requests
@@ -252,6 +253,17 @@ def resolve_store(order_number: str):
     return None
 
 
+def api_order_number(order_number: str) -> str:
+    """社内システムの注文番号から、楽天RMS APIに渡せる実際の注文番号を求める。
+
+    再送注文は社内システム側で末尾に -R, -R2 のような接尾辞が付くが、これは楽天RMS上に
+    存在しない番号でgetOrder/updateOrderShippingがエラーになる。実際の楽天注文はあくまで
+    接尾辞なしの元注文なので、それを取り除いた番号でAPIを呼ぶ（1回の実行で同じ元注文の
+    通常発送分・再送分の両方が同時に対象になることはない前提）。
+    """
+    return re.sub(r"-R\d*$", "", order_number)
+
+
 # ══ 楽天RMS 受注管理API ═══════════════════════════
 def get_orders(headers: dict, order_numbers: list) -> dict:
     """getOrderをまとめて呼び、{orderNumber: OrderModel} を返す。"""
@@ -362,7 +374,7 @@ def main():
             continue
         print(f"\n--- {store}（{len(targets)}件） ---")
         headers = auth_headers(**STORES[store])
-        order_numbers = [t["order_number"] for t in targets]
+        order_numbers = [api_order_number(t["order_number"]) for t in targets]
         order_map = get_orders(headers, order_numbers)
 
         for t in targets:
@@ -370,7 +382,7 @@ def main():
                 print(f"  MAX_PER_RUN={MAX_PER_RUN}に達したため、残りは今回スキップします。")
                 break
 
-            order = order_map.get(t["order_number"])
+            order = order_map.get(api_order_number(t["order_number"]))
             if order is None:
                 not_found += 1
                 errors.append({"order_number": t["order_number"], "message": "getOrderで見つかりませんでした"})
@@ -396,7 +408,7 @@ def main():
                     continue
 
                 ok, message = update_order_shipping(
-                    headers, t["order_number"], basket_id,
+                    headers, api_order_number(t["order_number"]), basket_id,
                     t["delivery_company"], t["tracking_num"], t["shipping_date"],
                 )
                 if ok:

@@ -9,6 +9,7 @@
 """
 
 import os
+import requests
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright
@@ -42,24 +43,40 @@ def new_page(p):
     page.fill('input[type="password"]', LOGIN_PASS_2)
     page.click('button[type="submit"], input[type="submit"]')
     page.wait_for_load_state("networkidle")
-    return browser, page
+    return browser, context, page
 
 
-def dump_result(label, page):
-    info = page.evaluate(
+def dump_result(label, page, context):
+    """
+    ページ内テキストのヒューリスティック（Showing行・テーブル行数）は、実際に9,010件
+    返ってきたケースでも「3行」としか出ないなど当てにならないと判明した。
+    唯一信頼できるのは「Downloadリンクのhrefが実在し、実際にCSVをダウンロードすると
+    何行あるか」なので、それで判定する。
+    """
+    href = page.evaluate(
         """() => {
-            const bodyText = document.body.innerText;
-            const m = bodyText.match(/Showing[^\\n]*/);
-            const tables = [...document.querySelectorAll('table')];
-            return {
-                showing: m ? m[0] : null,
-                tableRowCounts: tables.map(t => t.querySelectorAll('tbody tr').length),
-                hasSearchForm: bodyText.includes('Start Date') && bodyText.includes('End Date'),
-            };
+            const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
+            return a ? a.getAttribute('href') : null;
         }"""
     )
-    print(f"  [{label}] Showing={info['showing']} / table行数={info['tableRowCounts']} / "
-          f"検索フォーム表示中={info['hasSearchForm']}")
+    if not href:
+        print(f"  [{label}] Downloadリンクなし（hrefが取得できず）")
+        return
+
+    download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
+    cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
+    response = requests.get(
+        download_url,
+        cookies=cookie_dict,
+        headers={"User-Agent": USER_AGENT},
+        auth=(LOGIN_ID_1, LOGIN_PASS_1),
+    )
+    if response.status_code != 200:
+        print(f"  [{label}] CSVダウンロード失敗 status={response.status_code}")
+        return
+    text = response.content.decode("utf-8-sig", errors="replace")
+    row_count = max(len(text.splitlines()) - 1, 0)
+    print(f"  [{label}] href={href[:80]} / CSV行数（ヘッダー除く）={row_count}")
 
 
 today = datetime.now(JST).date()
@@ -68,7 +85,7 @@ end_str = today.strftime("%Y-%m-%d")
 
 with sync_playwright() as p:
     # 1. フォームの入力/セレクト項目を一覧化
-    browser, page = new_page(p)
+    browser, context, page = new_page(p)
     try:
         page.goto(SO_HEADS_URL, wait_until="networkidle")
         page.wait_for_timeout(1500)
@@ -93,7 +110,7 @@ with sync_playwright() as p:
         browser.close()
 
     # 2. start_date/end_date フォーム入力のみ（ベースライン、既に実績確認済みだが再掲）
-    browser, page = new_page(p)
+    browser, context, page = new_page(p)
     try:
         page.goto(SO_HEADS_URL, wait_until="networkidle")
         page.wait_for_timeout(1500)
@@ -103,28 +120,45 @@ with sync_playwright() as p:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1500)
         print("\n=== 2. start_date/end_dateのみ（フォーム経由） ===")
-        dump_result("baseline", page)
+        dump_result("baseline", page, context)
     finally:
         browser.close()
 
     # 3. ship_dateだけ（URL直打ち、sales_account_idなし）
-    browser, page = new_page(p)
+    browser, context, page = new_page(p)
     try:
         url = f"{SO_HEADS_URL}?start_date=2026-04-30&ship_date={end_str}"
         page.goto(url, wait_until="networkidle")
         page.wait_for_timeout(1500)
         print("\n=== 3. ship_dateのみ（URL、sales_account_idなし） ===")
-        dump_result("ship_date only", page)
+        dump_result("ship_date only", page, context)
     finally:
         browser.close()
 
     # 4. sales_account_idだけ（URL直打ち、ship_dateなし）
-    browser, page = new_page(p)
+    browser, context, page = new_page(p)
     try:
         url = f"{SO_HEADS_URL}?start_date=2026-04-30&SoHeads%5Bsales_account_id%5D=3"
         page.goto(url, wait_until="networkidle")
         page.wait_for_timeout(1500)
         print("\n=== 4. sales_account_idのみ（URL、ship_dateなし） ===")
-        dump_result("sales_account_id only", page)
+        dump_result("sales_account_id only", page, context)
+    finally:
+        browser.close()
+
+    # 5. フォームの実物のプルダウン（SoHeads[sales_account_id]、value=3が「楽天 _ Americana」）
+    #    を実際に選択してSearchを押す方式。手組みのURLではなく本物のUI操作なら通るか確認する。
+    browser, context, page = new_page(p)
+    try:
+        page.goto(SO_HEADS_URL, wait_until="networkidle")
+        page.wait_for_timeout(1500)
+        page.locator('input[name="start_date"], input[placeholder*="Start"], input[id*="start"]').first.fill(start_str)
+        page.locator('input[name="end_date"], input[placeholder*="End"], input[id*="end"]').first.fill(end_str)
+        page.select_option('select[name="SoHeads[sales_account_id]"]', "3")
+        page.click('button:has-text("Search"), input[value="Search"]')
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1500)
+        print("\n=== 5. sales_account_idプルダウンを実際に選択（フォーム経由） ===")
+        dump_result("sales_account_id via real dropdown", page, context)
     finally:
         browser.close()

@@ -4,12 +4,14 @@
 
 処理の流れ:
   1. Playwrightで app.jrcreators.com にログイン（Basic認証 + フォームログインの2段階）
-  2. 直近LOOKBACK_DAYS日分について、/so-heads?start_date=...&SoHeads[sales_account_id]=3&
-     ship_date=YYYY-MM-DD というURLを直接開き（フォーム操作は一切不要。この形のURLを
-     そのままgotoするのが確実に動くことを検証済み。sales_account_id=3が楽天チャネルの
-     絞り込み）、Downloadリンクのhrefを取得→Cookie付きrequestsでCSV取得する
-  3. order_number単位に集約し、プレフィックスで店舗（Americana/Founder）を判定、
-     ship_methodを配送会社コードに変換する（対象外・変換不能なものはスキップ）
+  2. /so-heads を開き、start_date/end_date（created_time範囲、既定で当日から
+     CREATED_TIME_LOOKBACK_DAYS日前まで）だけをフォームに入力して1回だけ検索する
+     （so_sheets.pyと同じ、実績のある方式。ship_date・sales_account_idのようなURL
+     フィルターはbotセッションだと検索結果が常に0件になる既知のクセがあるため使わない。
+     詳しくは検証時の会話を参照。1回のログインで検索も1回だけ行う）
+  3. 取得したCSVをPython側でフィルタする：order_number単位に集約し、プレフィックスで
+     店舗（Americana/Founder）を判定、ship_time列が直近LOOKBACK_DAYS日以内のものだけを
+     対象にし、ship_methodを配送会社コードに変換する（対象外・変換不能なものはスキップ）
   4. 店舗ごとに getOrder でまとめて取得し、PackageModelList[].ShippingModelList が
      既に値を持つもの（＝登録済み。-Rの再送注文で手動登録済みの場合も含む）はスキップ
   5. 未登録のものだけ updateOrderShipping で発送情報を登録する
@@ -18,7 +20,6 @@
 """
 
 import os
-import sys
 import csv
 import time
 import requests
@@ -31,7 +32,10 @@ from rakuten_coupon_api import auth_headers
 JST = timezone(timedelta(hours=9))
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
-LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_date基準）を対象にするか
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
+# created_time（注文日）の検索範囲。発送はたいてい注文の数日〜数週間後になるため、
+# LOOKBACK_DAYSより広めに取る必要がある
+CREATED_TIME_LOOKBACK_DAYS = int(os.environ.get("CREATED_TIME_LOOKBACK_DAYS", "21"))
 # テスト用：指定した場合、この注文番号だけを対象にする（カンマ区切りで複数可）
 ONLY_ORDER_NUMBERS = {
     s.strip() for s in os.environ.get("ONLY_ORDER_NUMBERS", "").split(",") if s.strip()
@@ -126,9 +130,6 @@ def build_report(unmapped_carriers: list, errors: list) -> str:
 # ══ 社内システム：CSV取得 ═════════════════════════
 def login(page):
     print("社内システムにログイン中...")
-    if os.environ.get("DEBUG_SO_SEARCH"):
-        page.on("console", lambda msg: print(f"    [console.{msg.type}] {msg.text}"))
-        page.on("pageerror", lambda exc: print(f"    [pageerror] {exc}"))
     page.goto(LOGIN_URL, wait_until="networkidle")
     page.click('a:has-text("Login"), button:has-text("Login")')
     page.wait_for_load_state("networkidle")
@@ -139,127 +140,93 @@ def login(page):
     print("ログイン完了")
 
 
-# created_time側の下限として使うだけの固定値（過去の日付であれば良く、この値自体に意味は
-# ない。この形のURL・パラメータの組み合わせでの直接gotoが確実に動くことを検証済み）
-START_DATE_FLOOR = "2026-04-30"
+def fetch_recent_orders(page, context, start_date: str, end_date: str):
+    """created_time範囲でso-headsを検索し、(ヘッダー行, データ行のリスト) を返す。
+    データが無ければ (None, [])。
 
-
-def fetch_shipped_csv(p, ship_date_str: str):
-    """指定日にsales_account_id=3（楽天チャネル、両店舗）で発送済みの注文CSVを取得する。
-    (ヘッダー行, データ行のリスト) を返す。データが無ければ (None, [])。
-
-    毎回ログインからやり直す新しいブラウザで実行する（同じセッションで検索を
-    繰り返すと、2回目以降の検索結果が必ず空になることを確認したため。1回の
-    ログインにつき検索は1回だけ、という制約があるとみられる）。
+    so_sheets.pyの_fetch_so_rangeと同じ、実績のある方式（フォームにstart_date/end_date
+    だけを入力してSearch）。ship_date・sales_account_idのようなURLフィルターはbotセッション
+    だと検索結果が常に0件になることを確認済みのため使わない。
     """
-    browser = p.chromium.launch(headless=True)
-    try:
-        context = browser.new_context(
-            viewport={"width": 1800, "height": 900},
-            device_scale_factor=2,
-            user_agent=USER_AGENT,
-        )
-        page = context.new_page()
-        login(page)
+    for attempt in range(1, 4):  # 最大3回
+        try:
+            page.goto(SO_HEADS_URL, wait_until="networkidle")
+            page.wait_for_timeout(2000)
 
-        url = (
-            f"{SO_HEADS_URL}?start_date={START_DATE_FLOOR}"
-            f"&SoHeads%5Bsales_account_id%5D=3&ship_date={ship_date_str}"
-        )
-        page.goto(url, wait_until="networkidle")
-        page.wait_for_timeout(2000)
+            page.locator('input[name="start_date"]').first.fill(start_date)
+            page.locator('input[name="end_date"]').first.fill(end_date)
+            page.click('button:has-text("Search"), input[value="Search"]')
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(2000)
 
-        if os.environ.get("DEBUG_SO_SEARCH"):
-            print(f"  [debug] 実際のURL: {page.url}")
-            print(f"  [debug] ページタイトル: {page.title()}")
-            try:
-                page.screenshot(path=f"debug_{ship_date_str}.png", full_page=True)
-                with open(f"debug_{ship_date_str}.html", "w", encoding="utf-8") as f:
-                    f.write(page.content())
-                print(f"  [debug] debug_{ship_date_str}.png / .html を保存しました")
-            except Exception as e:
-                print(f"  [debug] スクリーンショット/HTML保存に失敗: {e}")
-            # ページ内のテーブル件数・見出しをざっと出す（Downloadリンクの有無だけでは
-            # 「検索結果が空」なのか「そもそも想定と違うページが返っている」のか区別できないため）
-            page_info = page.evaluate(
+            href = page.evaluate(
                 """() => {
-                    const tables = [...document.querySelectorAll('table')];
-                    return {
-                        tableCount: tables.length,
-                        tableRowCounts: tables.map(t => t.querySelectorAll('tbody tr').length),
-                        linkTexts: [...document.querySelectorAll('a')].map(a => a.textContent.trim()).filter(t => t).slice(0, 30),
-                        bodyTextHead: document.body.innerText.slice(0, 500),
-                    };
+                    const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
+                    return a ? a.getAttribute('href') : null;
                 }"""
             )
-            print(f"  [debug] テーブル数={page_info['tableCount']} 各行数={page_info['tableRowCounts']}")
-            print(f"  [debug] リンク文言: {page_info['linkTexts']}")
-            print(f"  [debug] 本文冒頭: {page_info['bodyTextHead']!r}")
+            if not href:
+                print(f"  {start_date}〜{end_date}: Downloadリンクが見つかりません（該当データ無しの可能性）")
+                return None, []
+            download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
 
-        # Playwrightのlocator().count()ではなく、動作確認済みのJS直接評価でhrefを取得する
-        # （「Download」の完全一致のみを対象にし、「Profit Download」等は除外する）
-        href = page.evaluate(
-            """() => {
-                const a = [...document.querySelectorAll('a')].find(el => el.textContent.trim() === 'Download');
-                return a ? a.getAttribute('href') : null;
-            }"""
-        )
-        if not href:
-            print(f"  {ship_date_str}: Downloadリンクが見つかりません（該当データ無しの可能性）")
-            return None, []
-        download_url = f"https://{APP_DOMAIN}{href}" if href.startswith("/") else href
+            cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
+            response = requests.get(
+                download_url,
+                cookies=cookie_dict,
+                headers={"User-Agent": USER_AGENT},
+                auth=(LOGIN_ID_1, LOGIN_PASS_1),
+            )
+            if response.status_code != 200:
+                raise Exception(f"CSVダウンロード失敗 status={response.status_code}")
 
-        cookie_dict = {c["name"]: c["value"] for c in context.cookies()}
-        response = requests.get(
-            download_url,
-            cookies=cookie_dict,
-            headers={"User-Agent": USER_AGENT},
-            auth=(LOGIN_ID_1, LOGIN_PASS_1),
-        )
-        if response.status_code != 200:
-            print(f"  {ship_date_str}: CSVダウンロード失敗 status={response.status_code}")
-            return None, []
-
-        text = response.content.decode("utf-8-sig", errors="replace")
-        rows = list(csv.reader(text.splitlines()))
-        if not rows:
-            return None, []
-        return rows[0], rows[1:]
-    finally:
-        browser.close()
+            text = response.content.decode("utf-8-sig", errors="replace")
+            rows = list(csv.reader(text.splitlines()))
+            if not rows:
+                return None, []
+            return rows[0], rows[1:]
+        except Exception as e:
+            if attempt == 3:
+                raise
+            wait = 15 * attempt
+            print(f"  通信エラー、{wait}秒後に再試行 ({attempt}/3): {e}")
+            time.sleep(wait)
 
 
-def collect_shipped_orders(p) -> list:
-    """直近LOOKBACK_DAYS日分のCSVを取得し、order_number単位に集約したリストを返す。
+def collect_shipped_orders(page, context) -> list:
+    """created_time範囲でCSVを取得し、ship_timeが直近LOOKBACK_DAYS日以内の注文を
+    order_number単位に集約したリストを返す。
     各要素: {"order_number": ..., "ship_method": ..., "tracking_num": ..., "ship_time": ...}
     """
     today = datetime.now(JST).date()
+    start_date = (today - timedelta(days=CREATED_TIME_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+
+    print(f"取得中: created_time {start_date} 〜 {end_date}")
+    header, rows = fetch_recent_orders(page, context, start_date, end_date)
+    if not header:
+        return []
+    print(f"  取得: {len(rows)}行")
+
+    cutoff = datetime.now(JST).replace(tzinfo=None) - timedelta(days=LOOKBACK_DAYS)
     seen = {}
-    for i in range(LOOKBACK_DAYS):
-        if i > 0:
-            wait_sec = int(os.environ.get("INTER_REQUEST_WAIT_SEC", "90"))
-            print(f"（同一IPからの連続リクエストを避けるため{wait_sec}秒待機します）")
-            time.sleep(wait_sec)
-        d = today - timedelta(days=i)
-        d_str = d.strftime("%Y-%m-%d")
-        print(f"取得中: {d_str}")
-        header, rows = fetch_shipped_csv(p, d_str)
-        if not header:
+    for row in rows:
+        if not any(row):
             continue
-        print(f"  取得: {len(rows)}行")
-        for row in rows:
-            if not any(row):
-                continue
-            record = dict(zip(header, row))
-            order_number = record.get("order_number", "").strip()
-            if not order_number or order_number in seen:
-                continue
-            seen[order_number] = {
-                "order_number": order_number,
-                "ship_method": record.get("ship_method", "").strip(),
-                "tracking_num": record.get("tracking_num", "").strip(),
-                "ship_time": record.get("ship_time", "").strip(),
-            }
+        record = dict(zip(header, row))
+        order_number = record.get("order_number", "").strip()
+        if not order_number or order_number in seen:
+            continue
+        ship_time = record.get("ship_time", "").strip()
+        ship_dt = parse_ship_datetime(ship_time)
+        if ship_dt is None or ship_dt < cutoff:
+            continue
+        seen[order_number] = {
+            "order_number": order_number,
+            "ship_method": record.get("ship_method", "").strip(),
+            "tracking_num": record.get("tracking_num", "").strip(),
+            "ship_time": ship_time,
+        }
     return list(seen.values())
 
 
@@ -343,7 +310,18 @@ def main():
         print("※ DRY RUN モード：updateOrderShippingは呼びません")
 
     with sync_playwright() as p:
-        orders = collect_shipped_orders(p)
+        browser = p.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                viewport={"width": 1800, "height": 900},
+                device_scale_factor=2,
+                user_agent=USER_AGENT,
+            )
+            page = context.new_page()
+            login(page)
+            orders = collect_shipped_orders(page, context)
+        finally:
+            browser.close()
 
     print(f"取得した発送済み注文（重複除去後）: {len(orders)}件")
 

@@ -17,9 +17,13 @@ on:
           - 'true'
           - 'false'
       lookback_days:
-        description: '当日を含め何日分を対象にするか'
+        description: '当日を含め何日分（発送日基準）を対象にするか'
         required: false
         default: '3'
+      created_time_lookback_days:
+        description: '注文日（created_time）の検索範囲。発送日基準の範囲より広めに取る'
+        required: false
+        default: '21'
       cw_room_id:
         description: 'Chatwork報告先ルームid（テスト時は本番以外を指定）'
         required: false
@@ -32,14 +36,6 @@ on:
         description: 'テスト用：処理する件数の上限（0=無制限）'
         required: false
         default: '0'
-      debug_so_search:
-        description: 'テスト用：SO検索ページの詳細デバッグログを出力する'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
 
 jobs:
   notify:
@@ -80,18 +76,8 @@ jobs:
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
+          CREATED_TIME_LOOKBACK_DAYS: ${{ inputs.created_time_lookback_days || '21' }}
           CW_ROOM_ID: ${{ inputs.cw_room_id }}
           ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
           MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
-          DEBUG_SO_SEARCH: ${{ inputs.debug_so_search }}
         run: python -u rakuten_ship_notify.py
-
-      - name: デバッグ用スクリーンショット保存
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshot
-          path: |
-            *.png
-            *.html
-          if-no-files-found: ignore

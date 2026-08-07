@@ -74,7 +74,9 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          # スケジュール実行（定期実行）は本番稼働としてDRY_RUN=falseで動かす。
+          # 手動実行（workflow_dispatch）は引き続きinputs.dry_run（既定true）に従う。
+          DRY_RUN: ${{ inputs.dry_run || (github.event_name == 'schedule' && 'false') || 'true' }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
           CREATED_TIME_LOOKBACK_DAYS: ${{ inputs.created_time_lookback_days || '21' }}
           CW_ROOM_ID: ${{ inputs.cw_room_id }}

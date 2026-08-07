@@ -357,8 +357,8 @@ def main():
         if store is None:
             ignored_store += 1
             continue
-        if not o["ship_method"]:
-            # ship_methodが未設定の場合はSagawa CDSとして扱う
+        if not o["ship_method"] or o["ship_method"].strip().lower() == "none":
+            # ship_methodが未設定（空文字、または文字列"None"）の場合はSagawa CDSとして扱う
             code = CARRIER_CODES["Sagawa CDS"]
         else:
             code = CARRIER_CODES.get(o["ship_method"])

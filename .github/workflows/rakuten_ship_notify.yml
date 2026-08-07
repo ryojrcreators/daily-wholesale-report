@@ -83,3 +83,16 @@ jobs:
           ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
           MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
         run: python -u rakuten_ship_notify.py
+
+      - name: 失敗時にChatworkへ通知
+        # スクリプト内のエラー通知は「一部の注文でエラー・要確認があった」場合のみ動く。
+        # ログイン失敗・想定外の例外・GitHub Actions側の障害などでジョブ自体が失敗した場合は
+        # スクリプトの通知処理まで到達しないため、ワークフロー側で別途検知して知らせる。
+        if: ${{ failure() }}
+        env:
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+        run: |
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/60101971/tasks" \
+            -H "X-ChatWorkToken: $CW_TOKEN" \
+            --data-urlencode "body=[title]楽天出荷通知の自動反映が失敗しました（ワークフロー自体がエラー終了）[/title]スクリプトのエラー、社内システムへのログイン失敗、GitHub Actions側の障害などが考えられます。実行ログを確認してください: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --data-urlencode "to_ids=2618849"

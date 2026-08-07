@@ -107,15 +107,22 @@ def parse_xml_fields(content: bytes) -> dict:
 
 
 def get_order_info(token: str, seller_id: str, order_id: str):
-    """注文詳細APIで現在のShipStatus等を取得する。存在しない場合はNoneを返す。"""
-    res = requests.get(
+    """注文詳細APIで現在のShipStatus等を取得する。存在しない場合はNoneを返す。
+    orderShipStatusChange/orderStatusChangeと同じくXML POST形式（GET+クエリパラメータではない）。
+    """
+    body = (
+        "<Req>"
+        "<Target>"
+        f"<OrderId>{order_id}</OrderId>"
+        "<Field>ShipStatus,OrderStatus,ShipInvoiceNumber1,ShipCompanyCode</Field>"
+        "</Target>"
+        f"<SellerId>{seller_id}</SellerId>"
+        "</Req>"
+    )
+    res = requests.post(
         f"{YAHOO_BASE}/orderInfo",
-        headers={"Authorization": f"Bearer {token}"},
-        params={
-            "seller_id": seller_id,
-            "order_id": order_id,
-            "field": "ShipStatus,OrderStatus,ShipInvoiceNumber1,ShipCompanyCode",
-        },
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+        data=body.encode("utf-8"),
         timeout=30,
     )
     if res.status_code >= 400:

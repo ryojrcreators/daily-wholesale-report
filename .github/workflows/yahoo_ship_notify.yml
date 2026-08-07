@@ -67,8 +67,10 @@ jobs:
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
           RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           # case_orders_auto_close.pyのget_yahoo_access_token/get_spreadsheetの再利用に必要
           YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}

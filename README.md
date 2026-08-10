@@ -59,6 +59,7 @@
 | `japan_custom.py` | `japan_custom.yml` | Japan Custom（関税関連）案件を検出し、店舗ごとのテンプレートで自動対応（1日2回） |
 | `po_import.py` | `po_import.yml` | 指定したPO番号のCSVをサーバーから取得し、ショッピングリスト用スプレッドシートへ取り込む（Googleスプレッドシートのボタン＝GASから起動） |
 | `shopping_report_process.py` | `shopping_report.yml` | Chatworkの「End Shopping Report」を読み取り、対応するPOの買えなかった商品をClose・数量変更（LA 18:00に自動実行） |
+| `wrong_sorting_alert.py` | `wrong_sorting_alert.yml` | Credits一覧（`/credits`）を新しい順に巡回し、Reasonが「Wrong Sorting」の新規クレジットを検出したらメンション付きでChatworkへ通知（12時間ごと）。前回チェック済みの最大Credit IDを`RAKUTEN_LISTING_SPREADSHEET_ID`スプレッドシートの「WrongSorting_State」タブに保存し、次回はその続きから確認 |
 
 進捗・実行ステータスは `status_sheet.py` を通じてGoogle SheetsのStatusタブにまとめて記録されます。
 
@@ -153,6 +154,7 @@ python rakuten_asin_finder.py
 | Report Delay 自動処理 | LA 9:00 / 17:00（1日2回） | GitHub cron |
 | Japan Custom 自動処理 | LA 9:00 / 17:00（1日2回） | GitHub cron |
 | ショッピングレポート処理 | LA 18:00 | GitHub cron（夏冬2本＋二重実行防止） |
+| Wrong Sorting クレジット通知 | 12時間ごと（JST 9:00 / 21:00） | GitHub cron |
 | PO取り込み | 手動（GASボタンから起動） | `workflow_dispatch` |
 | Wholesale / Product / HP Qty / 棚卸アラート | 外部スケジューラ等から起動 | `workflow_dispatch` |
 

@@ -1,0 +1,35 @@
+name: セット数・ASIN入数の書き出し
+
+on:
+  workflow_dispatch:
+    inputs:
+      only_sets:
+        description: 'セット表記のある行だけに絞る（false = 全行。Keepaトークンを大量に使う）'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      batches_per_run:
+        description: '1回の実行で処理するバッチ数（1バッチ100件）'
+        required: true
+        default: '10'
+
+jobs:
+  annotate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: 書き出し実行
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          ONLY_SETS: ${{ inputs.only_sets }}
+          BATCHES_PER_RUN: ${{ inputs.batches_per_run }}
+        run: python -u set_quantity_annotate.py

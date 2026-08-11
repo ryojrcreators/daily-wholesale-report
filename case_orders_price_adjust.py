@@ -31,6 +31,9 @@ from playwright.sync_api import sync_playwright
 
 from case_orders_auto_close import (
     BASE_URL,
+    YAHOO_SUFFIXES,
+    YAHOO_STORES,
+    yahoo_get_item,
     SHOP_RAKUTEN,
     SHOP_YAHOO,
     CASE_GROUP_RAKUTEN_YAHOO,
@@ -101,12 +104,82 @@ def fetch_price_rows(page, case_id: str) -> list:
     return targets
 
 
-def calc_sell_price(page, case_id: str, row_index: int):
+def read_sell_price(calc_page):
+    """計算ツールの結果から Sell Price と内訳を読み取る"""
+    result = calc_page.evaluate(
+        """() => {
+            // 「Sell Price」のラベルと同じ行にある入力欄の値を読む
+            const cells = [...document.querySelectorAll('td, th, div, label')];
+            const label = cells.find(c => c.textContent.trim().startsWith('Sell Price'));
+            if (!label) return null;
+            const row = label.closest('tr') || label.parentElement;
+            const input = row ? row.querySelector('input') : null;
+            const value = input ? input.value : null;
+
+            const pick = name => {
+                const el = cells.find(c => c.textContent.trim().startsWith(name));
+                if (!el) return '';
+                const r = el.closest('tr');
+                if (!r) return '';
+                const tds = [...r.querySelectorAll('td, input')];
+                const last = tds[tds.length - 1];
+                return last ? (last.value || last.textContent.trim()) : '';
+            };
+            return {
+                sellPrice: value,
+                exchangeRate: pick('Exchange Rate'),
+                profit: pick('Profit %'),
+                shippingFee: pick('Shipping Fee'),
+            };
+        }"""
+    )
+    if not result or not result.get("sellPrice"):
+        return None, "Sell Price を読み取れませんでした"
+    try:
+        price = int(str(result["sellPrice"]).replace(",", "").replace("¥", "").strip())
+    except ValueError:
+        return None, f"Sell Price が数値ではありません: {result['sellPrice']}"
+
+    detail = (f"為替={result.get('exchangeRate')} / 利益率={result.get('profit')}% "
+              f"/ 送料={result.get('shippingFee')}")
+    return price, detail
+
+
+def calc_for_shop(calc_page, keyword: str):
+    """
+    計算ツールの Shop を切り替えて計算し直す。
+    楽天とYahooでは手数料が違うため、モールごとに計算しないと価格を誤る。
+    """
+    switched = calc_page.evaluate(
+        """(keyword) => {
+            const selects = [...document.querySelectorAll('select')];
+            const shop = selects.find(s => [...s.options].some(o => o.textContent.includes('楽天')));
+            if (!shop) return null;
+            const option = [...shop.options].find(o => o.textContent.includes(keyword));
+            if (!option) return { options: [...shop.options].map(o => o.textContent.trim()) };
+            shop.value = option.value;
+            shop.dispatchEvent(new Event('change', { bubbles: true }));
+            return { selected: option.textContent.trim() };
+        }""",
+        keyword,
+    )
+    if switched is None:
+        return None, "Shopの選択欄が見つかりません"
+    if "selected" not in switched:
+        return None, f"「{keyword}」を含む選択肢がありません（候補: {switched.get('options')}）"
+
+    calc_page.click('button:has-text("calculate"), input[value="calculate"]')
+    calc_page.wait_for_timeout(1500)
+    return read_sell_price(calc_page)
+
+
+def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None):
     """
     指定行の Calc を押して計算ツールを開き、Sell Price を読み取る。
 
     計算ツールはケースの仕入価格などが入った状態で開くので、calculate を押すだけでよい。
-    別ウィンドウで開く場合と同じタブで開く場合の両方に対応する。
+    shop_keyword を渡すと、Shop をその文字を含む選択肢に切り替えてから計算する
+    （Related Skus にYahoo行が無い商品でも、Yahoo価格を出せるようにするため）。
     戻り値は (販売価格, 内訳の説明)。読み取れなければ (None, 理由)。
     """
     context = page.context
@@ -151,6 +224,11 @@ def calc_sell_price(page, case_id: str, row_index: int):
     )
     print(f"    計算ツールの入力: 仕入={inputs.get('purchase')} / 重量={inputs.get('weight')}")
 
+    if shop_keyword:
+        price, detail = calc_for_shop(calc_page, shop_keyword)
+        calc_page.close()
+        return price, detail
+
     try:
         calc_page.click('button:has-text("calculate"), input[value="calculate"]')
         calc_page.wait_for_timeout(1500)
@@ -158,45 +236,8 @@ def calc_sell_price(page, case_id: str, row_index: int):
         calc_page.close()
         return None, f"calculateボタンを押せませんでした: {e}"
 
-    result = calc_page.evaluate(
-        """() => {
-            // 「Sell Price」のラベルと同じ行にある入力欄の値を読む
-            const cells = [...document.querySelectorAll('td, th, div, label')];
-            const label = cells.find(c => c.textContent.trim().startsWith('Sell Price'));
-            if (!label) return null;
-            const row = label.closest('tr') || label.parentElement;
-            const input = row ? row.querySelector('input') : null;
-            const value = input ? input.value : null;
-
-            const pick = name => {
-                const el = cells.find(c => c.textContent.trim().startsWith(name));
-                if (!el) return '';
-                const r = el.closest('tr');
-                if (!r) return '';
-                const tds = [...r.querySelectorAll('td, input')];
-                const last = tds[tds.length - 1];
-                return last ? (last.value || last.textContent.trim()) : '';
-            };
-            return {
-                sellPrice: value,
-                exchangeRate: pick('Exchange Rate'),
-                profit: pick('Profit %'),
-                shippingFee: pick('Shipping Fee'),
-            };
-        }"""
-    )
+    price, detail = read_sell_price(calc_page)
     calc_page.close()
-
-    if not result or not result.get("sellPrice"):
-        return None, "Sell Price を読み取れませんでした"
-
-    try:
-        price = int(str(result["sellPrice"]).replace(",", "").replace("¥", "").strip())
-    except ValueError:
-        return None, f"Sell Price が数値ではありません: {result['sellPrice']}"
-
-    detail = (f"為替={result.get('exchangeRate')} / 利益率={result.get('profit')}% "
-              f"/ 送料={result.get('shippingFee')}")
     return price, detail
 
 
@@ -248,33 +289,26 @@ def main():
             all_ok = True
             changed_any = False
 
-            for row in rows:
-                mall, sku = row["mall"], row["sku"]
-                current = parse_price(row["salesPrice"])
+            rakuten_rows = [r for r in rows if r["mall"] == SHOP_RAKUTEN]
+            yahoo_rows = [r for r in rows if r["mall"] == SHOP_YAHOO]
 
-                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
-                if new_price is None:
-                    print(f"    [{mall}] {sku}: 価格を計算できませんでした（{detail}）")
-                    log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
-                                     f"計算失敗: {detail}"])
-                    all_ok = False
-                    continue
+            def apply_price(mall, sku, current, new_price, detail, store_hint=""):
+                """計算結果を1つのSKUに反映する。戻り値は (成功したか, 変更したか)"""
+                nonlocal log_rows
+                print(f"    [{mall}] {sku}{store_hint}: 現在 ¥{current:,} → 計算結果 ¥{new_price:,}（{detail}）")
 
-                print(f"    [{mall}] {sku}: 現在 ¥{current:,} → 計算結果 ¥{new_price:,}（{detail}）")
-
-                if current >= new_price:
+                if current and current >= new_price:
                     # 値下げはしない。すでに計算結果以上で売れているなら触らない
                     print("      現在価格が計算結果以上のため、変更しません")
                     log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
                                      f"変更なし（現在¥{current:,} ≧ 計算¥{new_price:,}）"])
-                    continue
+                    return True, False
 
                 if DRY_RUN:
-                    print(f"      【DRY RUN】¥{current:,} → ¥{new_price:,} に更新する対象")
+                    print(f"      【DRY RUN】¥{new_price:,} に更新する対象")
                     log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
-                                     f"【DRY RUN】¥{current:,}→¥{new_price:,}"])
-                    changed_any = True
-                    continue
+                                     f"【DRY RUN】→¥{new_price:,}"])
+                    return True, True
 
                 if mall == SHOP_RAKUTEN:
                     results = rakuten_update_price(sku, new_price)
@@ -284,19 +318,82 @@ def main():
                         print("      Yahooがセール中のため、変更せず人の確認に回します")
                         log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
                                          "要確認（Yahooセール中）"])
-                        all_ok = False
-                        continue
+                        return False, False
                     results = yahoo_update_price(yahoo_token, [sku], new_price)
 
+                ok_all, changed = True, False
                 for store_name, message, ok in results:
                     print(f"      {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], mall, store_name, sku, message])
                     if ok:
-                        changed_any = True
+                        changed = True
                     else:
-                        all_ok = False
-
+                        ok_all = False
                 time.sleep(1)
+                return ok_all, changed
+
+            # 楽天。あわせて、同じ行のCalcでShopをYahooに切り替えたYahoo価格も出す
+            # （Related Skus にYahoo行が無い商品が多いため）
+            yahoo_price, yahoo_detail = None, ""
+            for row in rakuten_rows:
+                current = parse_price(row["salesPrice"])
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
+                if new_price is None:
+                    print(f"    [楽天] {row['sku']}: 価格を計算できませんでした（{detail}）")
+                    log_rows.append([now, case_id, case["caseType"], SHOP_RAKUTEN, "-", row["sku"],
+                                     f"計算失敗: {detail}"])
+                    all_ok = False
+                    continue
+
+                ok, changed = apply_price(SHOP_RAKUTEN, row["sku"], current, new_price, detail)
+                all_ok = all_ok and ok
+                changed_any = changed_any or changed
+
+                if yahoo_price is None:
+                    yahoo_price, yahoo_detail = calc_sell_price(
+                        page, case_id, row["rowIndex"], shop_keyword="Yahoo")
+                    if yahoo_price is None:
+                        print(f"    Yahoo価格を計算できませんでした（{yahoo_detail}）")
+
+            # Yahoo。Related Skus に載っているコードに加えて、楽天コード+接尾辞の候補も試す。
+            # 候補には実在しないコードが多く混じるので、先に存在するものだけに絞る
+            # （そうしないとDRY RUNのログが架空のコードで埋まって読めない）
+            candidates = [r["sku"] for r in yahoo_rows]
+            for row in rakuten_rows:
+                for suffix in YAHOO_SUFFIXES:
+                    code = row["sku"] + suffix
+                    if code not in candidates:
+                        candidates.append(code)
+
+            yahoo_targets = {}
+            for code in candidates:
+                for store in YAHOO_STORES:
+                    try:
+                        item = yahoo_get_item(yahoo_token, store, code)
+                    except Exception as e:
+                        print(f"    [Yahoo] {code} の確認に失敗: {e}")
+                        all_ok = False
+                        continue
+                    if item is not None:
+                        yahoo_targets[code] = parse_price(item.get("Price", "0"))
+                        break
+            if candidates:
+                print(f"    Yahooで実在した商品: {list(yahoo_targets) or 'なし'}")
+
+            if yahoo_price is None and yahoo_rows:
+                # 楽天行が無い場合は、Yahoo行のCalcから直接求める
+                yahoo_price, yahoo_detail = calc_sell_price(page, case_id, yahoo_rows[0]["rowIndex"])
+
+            if yahoo_price is None:
+                if yahoo_targets:
+                    print("    Yahoo価格が求められなかったため、Yahooは変更しません")
+                    all_ok = False
+            else:
+                for sku, current in yahoo_targets.items():
+                    # 存在しないコードは yahoo_update_price 側で読み飛ばされる
+                    ok, changed = apply_price(SHOP_YAHOO, sku, current, yahoo_price, yahoo_detail)
+                    all_ok = all_ok and ok
+                    changed_any = changed_any or changed
 
             if not all_ok:
                 print("  ⚠️ 失敗があったため、ケースは New のまま残します（次回再挑戦）。")

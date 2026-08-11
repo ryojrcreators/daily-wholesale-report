@@ -631,12 +631,16 @@ def main():
             # Yahoo：直接載っているコードに加えて、楽天コード+接尾辞の候補も試す
             # （Related Skus には売れたことのあるSKUしか無いため、Yahooのコードは
             #   載っていないことが多い。楽天コードを基準に組み立てて実在確認する）
+            # Related Skus では楽天が小文字・Yahooが大文字ということがある
+            # （例: 楽天 ye8332620 / Yahoo YE8332620akc）。Yahoo APIが大小を区別する
+            # 場合に取りこぼすため、基準コードは大小両方の形を試す。
             candidates = list(yahoo_skus)
             for base in rakuten_skus + derived_bases:
-                for suffix in YAHOO_SUFFIXES:
-                    code = base + suffix
-                    if code not in candidates:
-                        candidates.append(code)
+                for variant in dict.fromkeys([base, base.lower(), base.upper()]):
+                    for suffix in YAHOO_SUFFIXES:
+                        code = variant + suffix
+                        if code not in candidates:
+                            candidates.append(code)
 
             if candidates:
                 for store_name, message, ok in yahoo_close(yahoo_token, candidates):

@@ -18,6 +18,18 @@
 
 import re
 
+import gspread
+
+# シートに書き出す列。ヘッダー名で場所を決めるので、既存の列を壊さない。
+ANNOTATION_HEADERS = [
+    "楽天販売個数",
+    "抽出パターン",
+    "ASIN入数",
+    "購入倍率",
+    "手修正倍率",   # 人が入れる欄。スクリプトは書き込まない
+    "Amazon商品名",
+]
+
 # 数量を表しそうな単位
 UNIT_PATTERN = r"個|本|袋|箱|缶|パック|pack|Pack|PACK|セット|set|Set|SET|入|枚|包|瓶"
 
@@ -58,6 +70,65 @@ def extract_quantity(name: str):
         if MIN_QTY <= qty <= MAX_QTY:
             return qty, label, m.group(0)
     return 1, "", ""
+
+
+def ensure_annotation_columns(sheet, header: list) -> dict:
+    """
+    書き出し用の列の位置をヘッダー名から決める。無ければ右端に作る。
+    シートの列数が足りない場合は先に広げる（get_all_values は値のある範囲しか
+    返さないため、実際の列数と食い違うことがある）。
+    """
+    positions = {}
+    next_col = len(header)
+    to_add = []
+
+    for name in ANNOTATION_HEADERS:
+        if name in header:
+            positions[name] = header.index(name)
+        else:
+            positions[name] = next_col
+            to_add.append((next_col, name))
+            next_col += 1
+
+    if to_add:
+        print(f"追加する列: {[n for _, n in to_add]}")
+        if sheet.col_count < next_col:
+            print(f"  列数を {sheet.col_count} → {next_col} に拡張します")
+            sheet.add_cols(next_col - sheet.col_count)
+        sheet.batch_update([
+            {"range": gspread.utils.rowcol_to_a1(1, col + 1), "values": [[name]]}
+            for col, name in to_add
+        ])
+
+    return positions
+
+
+def annotation_updates(positions: dict, sheet_row: int, name: str, product) -> list:
+    """
+    1行ぶんの書き出し内容を batch_update 用の形で返す。
+
+    product は Keepa の商品情報。None の場合（Keepaにデータが無いASIN）は
+    取り違えや廃盤に気づけるよう、その旨をAmazon商品名の列に残す。
+    """
+    qty, pattern, _ = extract_quantity(name)
+
+    if product is None:
+        pkg, ratio, title = "", "", "（Keepaにデータなし）"
+    else:
+        pkg = package_quantity(product)
+        ratio = round(qty / pkg, 3)
+        title = (product.get("title") or "")[:120]
+
+    def cell(col_key):
+        return gspread.utils.rowcol_to_a1(sheet_row, positions[col_key] + 1)
+
+    return [
+        {"range": cell("楽天販売個数"), "values": [[qty]]},
+        {"range": cell("抽出パターン"), "values": [[pattern]]},
+        {"range": cell("ASIN入数"), "values": [[pkg]]},
+        {"range": cell("購入倍率"), "values": [[ratio]]},
+        {"range": cell("Amazon商品名"), "values": [[title]]},
+    ]
 
 
 def package_quantity(product: dict) -> int:

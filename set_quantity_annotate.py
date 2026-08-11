@@ -31,7 +31,11 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
-from set_quantity import extract_quantity, package_quantity
+from set_quantity import (
+    extract_quantity,
+    ensure_annotation_columns,
+    annotation_updates,
+)
 
 SPREADSHEET_ID = os.environ["RAKUTEN_SPREADSHEET_ID"]
 SHEET_NAME = "ASINあり"
@@ -50,18 +54,6 @@ COL_ITEM_ID = 0
 COL_NAME = 1
 COL_ASIN = 2
 
-NEW_HEADERS = [
-    "楽天販売個数",
-    "抽出パターン",
-    "ASIN入数",
-    "購入倍率",
-    "手修正倍率",
-    "Amazon商品名",
-]
-# 「手修正倍率」は人が入れる欄なので、スクリプトは書き込まない
-MANUAL_HEADER = "手修正倍率"
-
-
 def get_sheet():
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
     scopes = [
@@ -70,42 +62,6 @@ def get_sheet():
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds).open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
-
-
-def ensure_columns(sheet, header: list) -> dict:
-    """
-    追加列の位置をヘッダー名から決める。無ければ右端に作る。
-    既存の列を上書きしないよう、必ずヘッダー名で照合する。
-    """
-    positions = {}
-    next_col = len(header)
-
-    to_add = []
-    for name in NEW_HEADERS:
-        if name in header:
-            positions[name] = header.index(name)
-        else:
-            positions[name] = next_col
-            to_add.append((next_col, name))
-            next_col += 1
-
-    if to_add:
-        print(f"追加する列: {[n for _, n in to_add]}")
-
-        # シートの列数が足りないと書き込めないので先に広げる
-        # （get_all_values は値のある範囲しか返さないため、実際の列数と食い違うことがある）
-        needed = next_col
-        if sheet.col_count < needed:
-            print(f"  列数を {sheet.col_count} → {needed} に拡張します")
-            sheet.add_cols(needed - sheet.col_count)
-
-        updates = [
-            {"range": gspread.utils.rowcol_to_a1(1, col + 1), "values": [[name]]}
-            for col, name in to_add
-        ]
-        sheet.batch_update(updates)
-
-    return positions
 
 
 def fetch_keepa_batch(asins: list):
@@ -140,15 +96,8 @@ def main():
     rows = all_rows[1:]
     print(f"総行数: {len(rows)}")
 
-    pos = ensure_columns(sheet, header)
-    col_qty = pos["楽天販売個数"]
-    col_pattern = pos["抽出パターン"]
-    col_pkg = pos["ASIN入数"]
-    col_ratio = pos["購入倍率"]
-    col_title = pos["Amazon商品名"]
-
-    def cell(row_idx, col_idx):
-        return gspread.utils.rowcol_to_a1(row_idx, col_idx + 1)
+    pos = ensure_annotation_columns(sheet, header)
+    col_pkg = pos["ASIN入数"]  # 処理済みかどうかの判定に使う
 
     targets = []
     for i, row in enumerate(rows):
@@ -161,10 +110,10 @@ def main():
             continue
 
         name = row[COL_NAME] if len(row) > COL_NAME else ""
-        qty, pattern, _ = extract_quantity(name)
+        qty, _, _ = extract_quantity(name)
         if ONLY_SETS and qty == 1:
             continue
-        targets.append((sheet_row, asin, qty, pattern))
+        targets.append((sheet_row, asin, name))
 
     print(f"未処理の対象: {len(targets)}件（ONLY_SETS={ONLY_SETS}）")
     if not targets:
@@ -191,7 +140,7 @@ def main():
             break
 
         batch = targets[start:start + BATCH_SIZE]
-        asins = sorted({a for _, a, _, _ in batch})
+        asins = sorted({a for _, a, _ in batch})
         print(f"Keepa取得: {len(asins)}ASIN（{len(batch)}行ぶん）")
 
         products = fetch_keepa_batch(asins)
@@ -200,23 +149,8 @@ def main():
             break
 
         updates = []
-        for sheet_row, asin, qty, pattern in batch:
-            product = products.get(asin)
-            if product is None:
-                # Keepaにデータが無いASIN。取り違えや廃盤の可能性があるので分かるようにする
-                pkg, ratio, title = "", "", "（Keepaにデータなし）"
-            else:
-                pkg = package_quantity(product)
-                ratio = round(qty / pkg, 3)
-                title = (product.get("title") or "")[:120]
-
-            updates += [
-                {"range": cell(sheet_row, col_qty), "values": [[qty]]},
-                {"range": cell(sheet_row, col_pattern), "values": [[pattern]]},
-                {"range": cell(sheet_row, col_pkg), "values": [[pkg]]},
-                {"range": cell(sheet_row, col_ratio), "values": [[ratio]]},
-                {"range": cell(sheet_row, col_title), "values": [[title]]},
-            ]
+        for sheet_row, asin, name in batch:
+            updates += annotation_updates(pos, sheet_row, name, products.get(asin))
 
         # 1リクエストにまとめて書く（Sheetsの書き込み回数制限対策）
         sheet.batch_update(updates)

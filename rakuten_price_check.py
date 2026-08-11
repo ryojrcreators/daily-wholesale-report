@@ -18,6 +18,8 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
+from set_quantity import ensure_annotation_columns, annotation_updates
+
 # ── 設定 ──────────────────────────────────────────
 SPREADSHEET_ID = os.environ["RAKUTEN_SPREADSHEET_ID"]
 SHEET_NAME = "ASINあり"
@@ -294,6 +296,11 @@ def main():
 
     print(f"総行数: {len(rows)}")
 
+    # セット数・ASIN入数の書き出し先。Keepaはどのみち全行ぶん叩いているので、
+    # ついでに書き出しておけば追加のトークン消費なしで情報が揃う。
+    # ※ 適正価格・赤字判定の計算には、まだこの倍率を使っていない
+    annotation_pos = ensure_annotation_columns(sheet, all_rows[0])
+
     # チェック済みかどうかに関わらず、ASINが入っている行すべてを対象プールにする
     pool = [
         (i + 1, row)
@@ -376,11 +383,14 @@ def main():
             stock_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_STOCK_CHECK + 1)
             price_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PRICE_CHECK + 1)
             proper_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PROPER_PRICE + 1)
+            # 判定結果と同じリクエストで、セット数・ASIN入数の情報も書く
+            # （書き込み回数が増えないので、Sheetsのクォータには影響しない）
+            item_name = row[COL_NAME] if len(row) > COL_NAME else ""
             write_with_retry(sheet, price_updates + [
                 {"range": stock_cell, "values": [[stock_result]]},
                 {"range": price_cell, "values": [[price_result]]},
                 {"range": proper_cell, "values": [[proper_price_result]]},
-            ])
+            ] + annotation_updates(annotation_pos, sheet_row_idx + 1, item_name, product))
 
             print(f"  {asin}: {stock_result} / {price_result} / {proper_price_result}"
                   + (f"（D列 ¥{sheet_price:,}→¥{rakuten_price:,} に更新）" if price_updates else ""))

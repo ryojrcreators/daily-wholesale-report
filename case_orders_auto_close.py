@@ -442,8 +442,8 @@ def login(page):
     print("ログイン完了")
 
 
-def fetch_target_cases(page) -> list:
-    """New かつ Rakuten/Yahoo のケースのうち、Close系のものを返す"""
+def fetch_target_cases(page, case_types=TARGET_CASE_TYPES, label="Close系") -> list:
+    """New かつ Rakuten/Yahoo のケースのうち、指定した Case Type のものを返す"""
     page.goto(CASE_LIST_URL, wait_until="networkidle")
     page.wait_for_timeout(500)
 
@@ -495,8 +495,8 @@ def fetch_target_cases(page) -> list:
     for r in rows:
         print(f"  {r['id']} | Type={r['caseType']} | {r['raw'][:160]}")
 
-    targets = [r for r in rows if r["caseType"] in TARGET_CASE_TYPES and r["id"].isdigit()]
-    print(f"うちClose系: {len(targets)}件")
+    targets = [r for r in rows if r["caseType"] in case_types and r["id"].isdigit()]
+    print(f"うち{label}: {len(targets)}件")
     return targets
 
 

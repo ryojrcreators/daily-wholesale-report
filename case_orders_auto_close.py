@@ -600,6 +600,38 @@ def update_case(page, case_id: str) -> str:
     page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
     page.wait_for_load_state("networkidle")
 
+    # 保存後のページに出るメッセージを控えておく（失敗時の手がかりになる）
+    flash = page.evaluate(
+        """() => {
+            const el = document.querySelector('.message, .alert, .flash, .error-message');
+            return el ? el.textContent.trim().slice(0, 200) : '';
+        }"""
+    )
+    if flash:
+        print(f"    保存後のメッセージ: {flash}")
+
+    # 本当に保存されたかを確認する。押しただけで確認しないと、
+    # 失敗しているのに「完了」と記録してしまう（実際にそれで取りこぼした）
+    page.goto(f"{BASE_URL}/case-orders/edit/{case_id}", wait_until="networkidle")
+    page.wait_for_timeout(300)
+
+    saved = page.evaluate(
+        """() => ({
+            groups: [...document.querySelectorAll('#case-groups-ids option')]
+                    .filter(o => o.selected).map(o => o.value),
+            status: document.querySelector('#case-status-id')?.value,
+            body: document.body.innerText,
+        })"""
+    )
+    print(f"    保存後の状態: Groups={saved['groups']} / Status={saved['status']}")
+
+    if REPLY_MESSAGE not in saved["body"]:
+        raise RuntimeError(f"保存されていません（Replyが見当たりません）。URL={page.url}")
+    if remaining and CASE_GROUP_RAKUTEN_YAHOO in saved["groups"]:
+        raise RuntimeError("保存されていません（Rakuten/Yahooが残ったままです）")
+    if not remaining and saved["status"] != CASE_STATUS_IN_PROGRESS:
+        raise RuntimeError("保存されていません（StatusがIn-Progressになっていません）")
+
     return action
 
 

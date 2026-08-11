@@ -56,6 +56,7 @@ LOGIN_URL = f"https://{quote(LOGIN_ID_1, safe='')}:{quote(LOGIN_PASS_1, safe='')
 CASE_LIST_URL = f"{BASE_URL}/case-orders?case_status_id=1&case_group_id%5B0%5D=4"
 
 CASE_STATUS_IN_PROGRESS = "2"  # Case Status の In-Progress
+CASE_GROUP_RAKUTEN_YAHOO = "4"  # Case Group の Rakuten/Yahoo (Mkt)
 TARGET_CASE_TYPES = ("Close (Temporary)", "Close (Permanent)")
 REPLY_MESSAGE = "Rakuten/Yahoo Closed"
 
@@ -540,16 +541,54 @@ def fetch_case_skus(page, case_id: str) -> list:
     return rows
 
 
-def mark_case_in_progress(page, case_id: str):
-    """Case Status を In-Progress にし、Reply を入れて保存する"""
+def update_case(page, case_id: str) -> str:
+    """
+    楽天・Yahooの対応が終わったことをケースに反映する。戻り値は行った内容の説明。
+
+    運用ルール（ヒアリング内容）:
+      - 担当店舗の対応が終わったら、Case Groups から自分の店舗を外す
+      - 他の担当（Amazon / CA mart など）がまだ残っている場合、Status は New のまま。
+        勝手に In-Progress にすると、Newで未対応案件を探している他の担当者の
+        リストから消えてしまうため
+      - Case Groups が Rakuten/Yahoo だけだった場合は、外す相手がいないので
+        Status を In-Progress にする
+    """
     page.goto(f"{BASE_URL}/case-orders/edit/{case_id}", wait_until="networkidle")
     page.wait_for_timeout(300)
 
-    page.select_option("#case-status-id", CASE_STATUS_IN_PROGRESS)
+    groups = page.evaluate(
+        """() => [...document.querySelectorAll('#case-groups-ids option')]
+                 .filter(o => o.selected)
+                 .map(o => ({ value: o.value, text: o.textContent.trim() }))"""
+    )
+    print(f"    現在のCase Groups: {[g['text'] for g in groups]}")
+
+    remaining = [g for g in groups if g["value"] != CASE_GROUP_RAKUTEN_YAHOO]
+
+    if remaining:
+        # 楽天/Yahooだけを外し、他の担当はそのまま残す。Statusには触らない
+        page.evaluate(
+            """(keep) => {
+                const select = document.querySelector('#case-groups-ids');
+                for (const option of select.options) {
+                    option.selected = keep.includes(option.value);
+                }
+                // select2などの拡張UIに変更を伝える
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+            }""",
+            [g["value"] for g in remaining],
+        )
+        action = f"Case GroupsからRakuten/Yahooを外しました（残り: {[g['text'] for g in remaining]}／StatusはNewのまま）"
+    else:
+        page.select_option("#case-status-id", CASE_STATUS_IN_PROGRESS)
+        action = "Case GroupsがRakuten/Yahooのみのため、Statusを In-Progress にしました"
+
     # Replyのtextareaは case-order-replies-{n}-message という形でnが可変
     page.fill('textarea[id^="case-order-replies-"][id$="-message"]', REPLY_MESSAGE)
     page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
     page.wait_for_load_state("networkidle")
+
+    return action
 
 
 # ══ メイン ════════════════════════════════════════
@@ -657,9 +696,9 @@ def main():
                 continue
 
             try:
-                mark_case_in_progress(page, case_id)
-                print(f"  ✅ ケースを In-Progress にして「{REPLY_MESSAGE}」を投稿しました。")
-                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", "ケース更新完了"])
+                action = update_case(page, case_id)
+                print(f"  ✅ {action}／Reply「{REPLY_MESSAGE}」を投稿しました。")
+                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])
             except Exception as e:
                 print(f"  ⚠️ ケース更新に失敗しました（モール側は停止済み）: {e}")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", f"ケース更新失敗: {e}"])

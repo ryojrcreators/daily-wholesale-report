@@ -88,6 +88,14 @@ def ensure_columns(sheet, header: list) -> dict:
 
     if to_add:
         print(f"追加する列: {[n for _, n in to_add]}")
+
+        # シートの列数が足りないと書き込めないので先に広げる
+        # （get_all_values は値のある範囲しか返さないため、実際の列数と食い違うことがある）
+        needed = next_col
+        if sheet.col_count < needed:
+            print(f"  列数を {sheet.col_count} → {needed} に拡張します")
+            sheet.add_cols(needed - sheet.col_count)
+
         updates = [
             {"range": gspread.utils.rowcol_to_a1(1, col + 1), "values": [[name]]}
             for col, name in to_add

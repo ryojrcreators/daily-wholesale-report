@@ -72,7 +72,7 @@ def extract_quantity(name: str):
     return 1, "", ""
 
 
-def ensure_annotation_columns(sheet, header: list) -> dict:
+def ensure_annotation_columns(sheet, header: list, extra_headers: list = None) -> dict:
     """
     書き出し用の列の位置をヘッダー名から決める。無ければ右端に作る。
     シートの列数が足りない場合は先に広げる（get_all_values は値のある範囲しか
@@ -82,7 +82,7 @@ def ensure_annotation_columns(sheet, header: list) -> dict:
     next_col = len(header)
     to_add = []
 
-    for name in ANNOTATION_HEADERS:
+    for name in ANNOTATION_HEADERS + (extra_headers or []):
         if name in header:
             positions[name] = header.index(name)
         else:

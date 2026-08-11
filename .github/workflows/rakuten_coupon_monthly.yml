@@ -1,6 +1,12 @@
 name: 月次クーポン自動発行
 
 on:
+  schedule:
+    # JST 10:10 に毎日実行（UTC表記）。
+    # 「20日以降・平日・セール期間外」の条件を満たす日まで空振りし続ける作りなので、
+    # 毎日回して最初に条件を満たした日に発行させる。
+    # 他のクーポン系（レビュー10:00 / 5,0の付く日10:05）と時間をずらしている。
+    - cron: '10 1 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -68,8 +74,10 @@ jobs:
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
-          DRY_RUN: ${{ inputs.dry_run }}
-          FORCE: ${{ inputs.force }}
+          # 定期実行では inputs が空になる。空のままだと「本番」と解釈されるのが
+          # 分かりにくいので、定期実行時の値を明示しておく（本番発行・日付判定あり）
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          FORCE: ${{ inputs.force || 'false' }}
           SYNC_TEMPLATE_ONLY_FOR: ${{ inputs.sync_template_only_for }}
           SYNC_TEMPLATE_ONLY_STORE: ${{ inputs.sync_template_only_store }}
         run: python -u rakuten_coupon_monthly.py

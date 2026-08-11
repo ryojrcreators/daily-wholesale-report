@@ -43,6 +43,9 @@ BATCHES_PER_RUN = int(os.environ.get("BATCHES_PER_RUN", "10"))  # 1回の実行�
 # セット表記のある行だけに絞るか。Keepaトークンを節約したいときに使う
 ONLY_SETS = os.environ.get("ONLY_SETS", "true").lower() == "true"
 
+# トークンが尽きたときに補充を待つ上限（秒）。GitHub Actionsのジョブ上限は6時間
+MAX_WAIT_SECONDS = int(os.environ.get("MAX_WAIT_SECONDS", "14400"))
+
 COL_ITEM_ID = 0
 COL_NAME = 1
 COL_ASIN = 2
@@ -172,10 +175,19 @@ def main():
     print(f"今回処理: {len(targets)}件\n")
 
     for start in range(0, len(targets), BATCH_SIZE):
+        # トークンが尽きたら、その場で補充を待つ（Keepaは毎分61トークン補充される）。
+        # 途中終了して再実行するより、1回の実行で進めたほうが手間が少ないため。
+        waited = 0
         tokens = get_tokens_left()
+        while 0 <= tokens < BATCH_SIZE and waited < MAX_WAIT_SECONDS:
+            print(f"  トークン残量 {tokens}。補充を待ちます（経過 {waited // 60}分）...")
+            time.sleep(60)
+            waited += 60
+            tokens = get_tokens_left()
+
         print(f"Keepaトークン残量: {tokens}")
-        if tokens == 0:
-            print("トークンがありません。ここで終了します。")
+        if 0 <= tokens < BATCH_SIZE:
+            print("待っても足りませんでした。ここで終了します（次回、続きから再開できます）。")
             break
 
         batch = targets[start:start + BATCH_SIZE]

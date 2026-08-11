@@ -59,6 +59,14 @@ CASE_STATUS_IN_PROGRESS = "2"  # Case Status の In-Progress
 CASE_GROUP_RAKUTEN_YAHOO = "4"  # Case Group の Rakuten/Yahoo (Mkt)
 TARGET_CASE_TYPES = ("Close (Temporary)", "Close (Permanent)")
 REPLY_MESSAGE = "Rakuten/Yahoo Closed"
+# 両モールとも該当出品が1件も見つからなかった場合のReply。
+# すでに削除済みなら正しい結果だが、SKUのタイポや古いコードでも同じ見え方になるため、
+# 「何も止めていない」ことがケース上で分かるようにしておく。
+REPLY_MESSAGE_NOT_FOUND = "Rakuten/Yahoo Closed（該当出品なし）"
+
+# 出品が見つからなかったときのメッセージ。処理結果の判定にも使う
+RAKUTEN_NOT_FOUND = "楽天には出品が見つかりませんでした"
+YAHOO_NOT_FOUND = "Yahooには出品が見つかりませんでした"
 
 # Related Skus の Shop 列の表記
 SHOP_RAKUTEN = "楽天"
@@ -226,7 +234,7 @@ def rakuten_hide(manage_number: str) -> list:
             time.sleep(API_INTERVAL)
 
     if not results:
-        results.append(("-", "楽天には出品が見つかりませんでした", True))
+        results.append(("-", RAKUTEN_NOT_FOUND, True))
     return results
 
 
@@ -274,7 +282,7 @@ def rakuten_reopen(manage_number: str) -> list:
             time.sleep(API_INTERVAL)
 
     if not results:
-        results.append(("-", "楽天には出品が見つかりませんでした", True))
+        results.append(("-", RAKUTEN_NOT_FOUND, True))
     return results
 
 
@@ -365,7 +373,7 @@ def yahoo_close(token: str, candidates: list) -> list:
 
     if not found_any:
         # Yahooに出品が無い商品も普通にあるため、失敗ではなく情報として扱う
-        results.append(("-", "Yahooには出品が見つかりませんでした", True))
+        results.append(("-", YAHOO_NOT_FOUND, True))
     return results
 
 
@@ -417,7 +425,7 @@ def yahoo_restock(token: str, candidates: list, quantity: int = 100) -> list:
                 time.sleep(API_INTERVAL)
 
     if not found_any:
-        results.append(("-", "Yahooには出品が見つかりませんでした", True))
+        results.append(("-", YAHOO_NOT_FOUND, True))
     return results
 
 
@@ -541,7 +549,7 @@ def fetch_case_skus(page, case_id: str) -> list:
     return rows
 
 
-def update_case(page, case_id: str) -> str:
+def update_case(page, case_id: str, reply_message: str) -> str:
     """
     楽天・Yahooの対応が終わったことをケースに反映する。戻り値は行った内容の説明。
 
@@ -596,7 +604,7 @@ def update_case(page, case_id: str) -> str:
         action = "Case GroupsがRakuten/Yahooのみのため、Statusを In-Progress にしました"
 
     # Replyのtextareaは case-order-replies-{n}-message という形でnが可変
-    page.fill('textarea[id^="case-order-replies-"][id$="-message"]', REPLY_MESSAGE)
+    page.fill('textarea[id^="case-order-replies-"][id$="-message"]', reply_message)
     page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
     page.wait_for_load_state("networkidle")
 
@@ -625,7 +633,7 @@ def update_case(page, case_id: str) -> str:
     )
     print(f"    保存後の状態: Groups={saved['groups']} / Status={saved['status']}")
 
-    if REPLY_MESSAGE not in saved["body"]:
+    if reply_message not in saved["body"]:
         raise RuntimeError(f"保存されていません（Replyが見当たりません）。URL={page.url}")
     if remaining and CASE_GROUP_RAKUTEN_YAHOO in saved["groups"]:
         raise RuntimeError("保存されていません（Rakuten/Yahooが残ったままです）")
@@ -686,6 +694,9 @@ def main():
             print(f"  楽天SKU: {rakuten_skus} / YahooSKU: {yahoo_skus}")
 
             all_ok = True
+            # 実際に出品が見つかったか。1件も見つからなければ、削除済みなのか
+            # SKUが古い・間違っているのか区別できないため、Replyで分かるようにする
+            found_any = False
 
             # Yahooコードしか載っていないケースに備えて、接尾辞を外して楽天コードを推測する
             # （例: 13000504-ak → 13000504）。推測が外れて存在しなくても失敗扱いにしない。
@@ -702,12 +713,16 @@ def main():
                 for store_name, message, ok in rakuten_hide(sku):
                     print(f"    [楽天] {sku} / {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], "楽天", store_name, sku, message])
+                    if message != RAKUTEN_NOT_FOUND:
+                        found_any = True
                     if not ok:
                         all_ok = False
             for sku in derived_bases:
                 for store_name, message, ok in rakuten_hide(sku):
                     print(f"    [楽天(推測)] {sku} / {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], "楽天(推測)", store_name, sku, message])
+                    if message != RAKUTEN_NOT_FOUND:
+                        found_any = True
                     if not ok:
                         all_ok = False
 
@@ -728,6 +743,8 @@ def main():
                 for store_name, message, ok in yahoo_close(yahoo_token, candidates):
                     print(f"    [Yahoo] {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], "Yahoo", store_name, "-", message])
+                    if message != YAHOO_NOT_FOUND:
+                        found_any = True
                     if not ok:
                         all_ok = False
 
@@ -739,9 +756,13 @@ def main():
                 print("  【DRY RUN】本番ならここでケースを In-Progress にします。")
                 continue
 
+            reply_message = REPLY_MESSAGE if found_any else REPLY_MESSAGE_NOT_FOUND
+            if not found_any:
+                print("  ※ 両モールとも該当出品が見つかりませんでした（すでに削除済みか、SKUが古い可能性）")
+
             try:
-                action = update_case(page, case_id)
-                print(f"  ✅ {action}／Reply「{REPLY_MESSAGE}」を投稿しました。")
+                action = update_case(page, case_id, reply_message)
+                print(f"  ✅ {action}／Reply「{reply_message}」を投稿しました。")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])
             except Exception as e:
                 print(f"  ⚠️ ケース更新に失敗しました（モール側は停止済み）: {e}")

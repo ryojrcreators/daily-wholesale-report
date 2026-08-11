@@ -54,7 +54,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "5"))
 
 TARGET_CASE_TYPES = ("Change Price",)
-REPLY_MESSAGE = "Rakuten/Yahoo adjusted"
+REPLY_MESSAGE = "Rakuten/yahoo Raised"
 
 CALCULATOR_PATH = "/products/calculator"
 

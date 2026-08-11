@@ -566,19 +566,31 @@ def update_case(page, case_id: str) -> str:
     remaining = [g for g in groups if g["value"] != CASE_GROUP_RAKUTEN_YAHOO]
 
     if remaining:
-        # 楽天/Yahooだけを外し、他の担当はそのまま残す。Statusには触らない
-        page.evaluate(
-            """(keep) => {
-                const select = document.querySelector('#case-groups-ids');
-                for (const option of select.options) {
-                    option.selected = keep.includes(option.value);
-                }
-                // select2などの拡張UIに変更を伝える
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-            }""",
-            [g["value"] for g in remaining],
+        # 「Assigned To」欄は select2 のタグUI。人と同じくチップの × をクリックして外す
+        # （裏の <select> をJSで書き換える方法だと、select2の内部状態と食い違う恐れがある）
+        removed = page.evaluate(
+            """() => {
+                const chips = [...document.querySelectorAll('.select2-selection__choice')];
+                const target = chips.find(c => c.textContent.includes('Rakuten/Yahoo'));
+                if (!target) return false;
+                const x = target.querySelector('.select2-selection__choice__remove');
+                if (!x) return false;
+                x.click();
+                return true;
+            }"""
         )
-        action = f"Case GroupsからRakuten/Yahooを外しました（残り: {[g['text'] for g in remaining]}／StatusはNewのまま）"
+        if not removed:
+            raise RuntimeError("Assigned To から Rakuten/Yahoo を外せませんでした（チップが見つかりません）")
+
+        page.wait_for_timeout(300)
+        still_selected = page.evaluate(
+            """() => [...document.querySelectorAll('#case-groups-ids option')]
+                     .filter(o => o.selected).map(o => o.value)"""
+        )
+        if CASE_GROUP_RAKUTEN_YAHOO in still_selected:
+            raise RuntimeError("Rakuten/Yahoo が選択されたままです（select2の操作が効いていません）")
+
+        action = f"Assigned ToからRakuten/Yahooを外しました（残り: {[g['text'] for g in remaining]}／StatusはNewのまま）"
     else:
         page.select_option("#case-status-id", CASE_STATUS_IN_PROGRESS)
         action = "Case GroupsがRakuten/Yahooのみのため、Statusを In-Progress にしました"

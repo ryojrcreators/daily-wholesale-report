@@ -8,7 +8,8 @@ ChatworkにShipment ID（Package id）が届いたら、社内システムの
   内部の注文ID(SO#)を取得する（SoHeadsのShipment ID検索はbotセッションでは一覧が
   描画されないため、この経路で内部IDを得る）
 - /sales/shipping-details/{内部ID} を開き、Shipping Country が JP であることを確認してから
-  Package id が一致する行の Ship Method を変更してSave（JP以外や取得不可の場合は変更せずエラー報告）
+  Package id が一致する行の Ship Method を変更してSave（JP以外や取得不可、Block Upgrade
+  チェック済みの場合は変更せずエラー報告）
 - 完了後、Chatworkルーム(442638900)へ結果を通知
 """
 
@@ -125,7 +126,8 @@ def change_ship_method(page, shipment_id):
     print(f"Shipping Country={shipping_country!r} を確認。変更を続行します")
 
     # Package id が一致する行の Ship Method セレクトを操作。
-    # 既に目的の値なら 'already'、変更したら 'changed'、見つからなければ理由を返す。
+    # Block Upgrade がチェック済みなら 'block-upgrade'、既に目的の値なら 'already'、
+    # 変更したら 'changed'、見つからなければ理由を返す。
     result = page.evaluate(
         """({shipmentId, target}) => {
             const rows = [...document.querySelectorAll('table tr')];
@@ -134,6 +136,8 @@ def change_ship_method(page, shipment_id):
                 if (!cells.length) continue;
                 const pkgId = cells[0].textContent.trim();
                 if (pkgId !== String(shipmentId)) continue;
+                const blockCb = tr.querySelector('input[type="checkbox"]');
+                if (blockCb && blockCb.checked) return 'block-upgrade';
                 const select = tr.querySelector('select');
                 if (!select) return 'no-select';
                 const cur = select.options[select.selectedIndex];
@@ -152,6 +156,9 @@ def change_ship_method(page, shipment_id):
     if result == "already":
         print("既に Yamato Nekopos のため変更不要")
         return True, "already Yamato Nekopos"
+    if result == "block-upgrade":
+        print("！Block Upgrade がチェック済みのため変更を中止します")
+        return False, "Block Upgrade is checked — Ship Method not changed"
     if result != "changed":
         print(f"！変更できませんでした（{result}）: Package id {shipment_id}")
         try:

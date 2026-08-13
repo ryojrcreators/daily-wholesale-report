@@ -40,9 +40,20 @@ Wowmaについて（2026-08-13追加）:
   手動実行したときだけWowmaの価格も更新される。
   Wowmaは楽天と同じ商品コードで出品されており、社内の計算ツールにもWowma専用の
   Shop設定は無いため、楽天と同じ計算価格をそのまま使う。
+
+仕入価格（Purchase Price）について（2026-08-13追加）:
+  計算ツールを Calc リンクから開くと、Purchase Price 欄には商品側に登録済みの
+  古い仕入価格がそのまま入っており、Change Priceケースを起こす原因になった
+  「新しい仕入価格」（ケースの Description に「Purchase price: $134.00 + tax」
+  のように書かれている）が反映されていないことがある（ケース155222で実際に発生、
+  $96.95のまま計算されて必要な値上げが「変更不要」と誤判定された）。
+  そのため、ケースのDescriptionから仕入価格を読み取り、計算ツールを開くたびに
+  Purchase Price欄をその値へ書き換えてから計算させる。Descriptionから読み取れない
+  場合は、計算ツールの値をそのまま使う（変更前の挙動に fallback）。
 """
 
 import os
+import re
 import sys
 import time
 import json
@@ -119,6 +130,31 @@ def post_chatwork(body: str):
             print(f"    {res.text[:300]}")
     except Exception as e:
         print(f"  Chatwork通知に失敗しました: {e}")
+
+
+def get_case_purchase_price_usd(page):
+    """
+    ケース画面のDescription欄から「Purchase price: $134.00 + tax」のような
+    記載を読み取り、USD建ての仕入価格をfloatで返す。読み取れなければ None。
+    呼び出し時点でpageは既にそのケースのview画面を開いている前提。
+    """
+    text = page.evaluate(
+        """() => {
+            const h4 = [...document.querySelectorAll('h4')].find(h => h.textContent.trim() === 'Description');
+            if (!h4) return null;
+            const p = h4.nextElementSibling;
+            return p ? p.textContent.trim() : null;
+        }"""
+    )
+    if not text:
+        return None
+    m = re.search(r"Purchase\s+price:?\s*\$?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
 
 
 def fetch_price_rows(page, case_id: str) -> list:
@@ -253,11 +289,16 @@ def calc_for_shop(calc_page, keyword: str):
     return read_sell_price(calc_page)
 
 
-def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None):
+def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None,
+                     expected_purchase_usd: float = None):
     """
     指定行の Calc を押して計算ツールを開き、Sell Price を読み取る。
 
-    計算ツールはケースの仕入価格などが入った状態で開くので、calculate を押すだけでよい。
+    計算ツールはケースの仕入価格などが入った状態で開くので、通常は calculate を
+    押すだけでよい。ただしその仕入価格は商品側に登録済みの古い値のことがあり、
+    Change Priceケースの Description に書かれた新しい仕入価格を反映していない
+    場合がある。expected_purchase_usd を渡すと、計算ツールの Purchase Price 欄と
+    比較し、ズレていれば計算前に上書きする（詳細はモジュールdocstring参照）。
     shop_keyword を渡すと、Shop をその文字を含む選択肢に切り替えてから計算する
     （Related Skus にYahoo行が無い商品でも、Yahoo価格を出せるようにするため）。
     戻り値は (販売価格, 内訳の説明)。読み取れなければ (None, 理由)。
@@ -315,13 +356,33 @@ def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None
         """() => {
             const val = sel => document.querySelector(sel)?.value || '';
             return {
-                purchase: val('#purchase-price, [name=purchase_price]'),
-                weight: val('#weight-lb, [name=weight_lb]'),
+                purchase: val('[name=price]'),
+                weight: val('[name=weight]'),
                 body: document.body.innerText.slice(0, 400),
             };
         }"""
     )
     print(f"    計算ツールの入力: 仕入={inputs.get('purchase')} / 重量={inputs.get('weight')}")
+
+    if expected_purchase_usd is not None:
+        try:
+            current_purchase = float(str(inputs.get("purchase") or "0").replace(",", ""))
+        except ValueError:
+            current_purchase = None
+        if current_purchase is None or abs(current_purchase - expected_purchase_usd) > 0.01:
+            print(f"    ⚠️ 計算ツールの仕入価格(${inputs.get('purchase')})がケースのDescription"
+                  f"記載額(${expected_purchase_usd:.2f})と異なるため書き換えます")
+            calc_page.evaluate(
+                """(v) => {
+                    const el = document.querySelector('[name=price]');
+                    if (el) {
+                        el.value = v;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }""",
+                expected_purchase_usd,
+            )
 
     if shop_keyword:
         price, detail = calc_for_shop(calc_page, shop_keyword)
@@ -347,9 +408,10 @@ def parse_price(value: str) -> int:
         return 0
 
 
-def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list):
+def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list,
+                           expected_purchase_usd: float = None):
     """楽天SKUを再計算＋API再取得して、書き込んだ値と一致するか確認する"""
-    recomputed, _ = calc_sell_price(page, case_id, row_index)
+    recomputed, _ = calc_sell_price(page, case_id, row_index, expected_purchase_usd=expected_purchase_usd)
     if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
         anomalies.append(
             f"[楽天] {sku}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
@@ -363,12 +425,14 @@ def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_
             )
 
 
-def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, applied: dict, anomalies: list):
+def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, applied: dict, anomalies: list,
+                         expected_purchase_usd: float = None):
     """
     Yahooグループ（同じ楽天SKUに紐づく複数コード）を再計算＋API再取得して確認する。
     applied は {商品コード: 書き込んだ価格}
     """
-    recomputed, _ = calc_sell_price(page, case_id, row_index, shop_keyword="Yahoo")
+    recomputed, _ = calc_sell_price(page, case_id, row_index, shop_keyword="Yahoo",
+                                     expected_purchase_usd=expected_purchase_usd)
 
     for code, applied_price in applied.items():
         if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
@@ -435,6 +499,14 @@ def main():
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", "対象SKUなし（Newのまま）"])
                 continue
 
+            expected_purchase_usd = get_case_purchase_price_usd(page)
+            if expected_purchase_usd is not None:
+                print(f"  Descriptionの仕入価格: ${expected_purchase_usd:.2f}"
+                      "（計算ツールの値と異なれば書き換えて計算します）")
+            else:
+                print("  ⚠️ DescriptionからPurchase priceを読み取れませんでした。"
+                      "計算ツールの値をそのまま使います。")
+
             all_ok = True
             changed_any = False
 
@@ -494,7 +566,8 @@ def main():
             for row in rakuten_rows:
                 rakuten_sku = row["sku"]
                 current = parse_price(row["salesPrice"])
-                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"],
+                                                     expected_purchase_usd=expected_purchase_usd)
                 if new_price is None:
                     print(f"    [楽天] {rakuten_sku}: 価格を計算できませんでした（{detail}）")
                     log_rows.append([now, case_id, case["caseType"], SHOP_RAKUTEN, "-", rakuten_sku,
@@ -510,7 +583,8 @@ def main():
                                             "sku": rakuten_sku, "price": new_price})
                     # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
                     # 書き込んだ値と一致するか確認する（2026-08-13の事故を受けて追加）
-                    recheck_rakuten_price(page, case_id, row["rowIndex"], rakuten_sku, new_price, anomalies)
+                    recheck_rakuten_price(page, case_id, row["rowIndex"], rakuten_sku, new_price, anomalies,
+                                           expected_purchase_usd=expected_purchase_usd)
 
                 # Wowmaは楽天と同じ商品コード・同じ計算価格を使う（社内ツールに専用のShop設定は無い）。
                 # 出品が無ければ静かにスキップする。
@@ -542,7 +616,8 @@ def main():
 
                 # 同じ行でShopをYahooに切り替えて、この商品専用のYahoo価格を求める
                 yahoo_price, yahoo_detail = calc_sell_price(
-                    page, case_id, row["rowIndex"], shop_keyword="Yahoo")
+                    page, case_id, row["rowIndex"], shop_keyword="Yahoo",
+                    expected_purchase_usd=expected_purchase_usd)
 
                 # この楽天SKUに対応するYahooコードだけを対象にする（他の商品とは絶対に混ぜない）。
                 # startswith だと "bb-051999-2akc" が "bb-051999" にも一致してしまうため
@@ -599,14 +674,16 @@ def main():
                 if yahoo_changed and not DRY_RUN:
                     # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
                     # 書き込んだ値と一致するか確認する
-                    recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token, yahoo_changed, anomalies)
+                    recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token, yahoo_changed, anomalies,
+                                         expected_purchase_usd=expected_purchase_usd)
 
             # Related Skus にあるのに、どの楽天SKUの接尾辞候補にも一致しなかったYahoo行
             # （楽天側の出品が既に無い等）。行自体のCalcで個別に計算する。
             orphan_rows = [r for r in yahoo_rows if r["sku"] not in handled_yahoo_codes]
             for row in orphan_rows:
                 current = parse_price(row["salesPrice"])
-                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"],
+                                                     expected_purchase_usd=expected_purchase_usd)
                 if new_price is None:
                     print(f"    [Yahoo] {row['sku']}: 価格を計算できませんでした（{detail}）")
                     log_rows.append([now, case_id, case["caseType"], SHOP_YAHOO, "-", row["sku"],
@@ -620,7 +697,8 @@ def main():
                     applied_changes.append({"case_id": case_id, "mall": SHOP_YAHOO,
                                             "sku": row["sku"], "price": new_price})
                     recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token,
-                                        {row["sku"]: new_price}, anomalies)
+                                        {row["sku"]: new_price}, anomalies,
+                                        expected_purchase_usd=expected_purchase_usd)
 
             # 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する。
             # msy/akc など同一商品のYahooバリエーション同士は同額で正しいので除外し、

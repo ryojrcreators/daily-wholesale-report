@@ -35,6 +35,7 @@ from case_orders_auto_close import (
 from case_orders_price_adjust import (
     fetch_price_rows,
     calc_sell_price,
+    get_case_purchase_price_usd,
     parse_price,
     PRICE_TOLERANCE_YEN,
     post_chatwork,
@@ -128,9 +129,14 @@ def main():
                 print("  楽天SKUがありません。スキップ。")
                 continue
 
+            expected_purchase_usd = get_case_purchase_price_usd(page)
+            if expected_purchase_usd is not None:
+                print(f"  Descriptionの仕入価格: ${expected_purchase_usd:.2f}")
+
             for row in rakuten_rows:
                 rakuten_sku = row["sku"]
-                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"],
+                                                     expected_purchase_usd=expected_purchase_usd)
                 if new_price is None:
                     print(f"    [楽天] {rakuten_sku}: 価格を計算できませんでした（{detail}）")
                     log_rows.append([now, case_id, "Change Price", SHOP_WOWMA, "-", rakuten_sku,

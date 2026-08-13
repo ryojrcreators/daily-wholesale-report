@@ -33,6 +33,13 @@ API_INTERVAL = 1.0
 def _headers() -> dict:
     return {
         "Authorization": f"Bearer {WOWMA_API_KEY}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+
+def _xml_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {WOWMA_API_KEY}",
         "Content-Type": "application/xml; charset=UTF-8",
     }
 
@@ -56,6 +63,16 @@ def wowma_get_item(item_code: str):
     """
     商品情報取得API（個別）。存在しない場合は None を返す。
     現在価格の確認（更新前チェック・検証）に使う。読み取りのみ。
+
+    実機確認済み（2026-08-13）：
+      - Content-Type は application/x-www-form-urlencoded
+      - 存在する商品（ry23010062）: <result><status>0</status></result>
+        <searchResult><itemInfo><itemPrice>5000</itemPrice>...
+      - 存在しない商品（ry99999999）: status は 0 のまま（エラー扱いではない）で
+        <searchResult><itemInfo/></searchResult>（中身が空）で返る。
+        → itemPrice の有無で「存在するか」を判定する必要がある。
+      - shopId誤りなどの本当のAPIエラー時は <result><status>1</status>
+        <error><code>CME0022</code><message>...</message></error></result>
     """
     res = requests.get(
         f"{WOWMA_BASE}/searchItemInfo",
@@ -63,13 +80,12 @@ def wowma_get_item(item_code: str):
         params={"shopId": WOWMA_SHOP_ID, "itemCode": item_code},
         timeout=30,
     )
-    if res.status_code >= 400:
-        text = res.text
-        if "対象の商品が存在しません" in text or "not found" in text.lower():
-            return None
-        raise RuntimeError(f"searchItemInfo エラー({res.status_code}): {text[:200]}")
-
     fields = _parse_xml_flat(res.content)
+    status = fields.get("status")
+
+    if res.status_code >= 400 or status == "1":
+        raise RuntimeError(f"searchItemInfo エラー({res.status_code}): {res.text[:300]}")
+
     if not fields.get("itemPrice"):
         return None
     return fields
@@ -96,7 +112,7 @@ def wowma_update_price(item_code: str, price: int, dry_run: bool) -> tuple:
     try:
         res = requests.post(
             f"{WOWMA_BASE}/updateItemPrice",
-            headers=_headers(),
+            headers=_xml_headers(),
             data=body.encode("utf-8"),
             timeout=30,
         )

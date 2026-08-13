@@ -17,7 +17,7 @@ def main():
     item_code = os.environ.get("TEST_ITEM_CODE", "ry23010062")
     headers = {
         "Authorization": f"Bearer {os.environ['WOWMA_API_KEY']}",
-        "Content-Type": "application/xml; charset=UTF-8",
+        "Content-Type": "application/x-www-form-urlencoded",
     }
     res = requests.get(
         f"{WOWMA_BASE}/searchItemInfo",

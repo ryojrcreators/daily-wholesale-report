@@ -38,6 +38,7 @@ from case_orders_auto_close import (
     SHOP_YAHOO,
     CASE_GROUP_RAKUTEN_YAHOO,
     CASE_STATUS_IN_PROGRESS,
+    strip_yahoo_suffix,
     login,
     fetch_target_cases,
     update_case,
@@ -185,26 +186,45 @@ def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None
     context = page.context
     before = set(context.pages)
 
-    try:
-        with context.expect_page(timeout=8000) as popup_info:
-            page.evaluate(
-                """(i) => {
-                    const table = [...document.querySelectorAll('table')].find(t => {
-                        const hs = [...t.querySelectorAll('th')].map(th => th.textContent.trim());
-                        return hs.includes('Sku') && hs.includes('Shop');
-                    });
-                    const row = table.querySelectorAll('tbody tr')[i];
-                    const link = [...row.querySelectorAll('a')].find(a => a.textContent.trim() === 'Calc');
-                    link.click();
-                }""",
-                row_index,
-            )
-        calc_page = popup_info.value
-    except Exception:
-        # 同じタブで開いた場合
-        calc_page = next((p for p in context.pages if CALCULATOR_PATH in p.url), None)
-        if calc_page is None:
-            return None, "計算ツールが開きませんでした"
+    # Calc は window.open で固定名の窓を使っている可能性があり、その場合2回目以降は
+    # 「新しいページが開いた」イベントが発火せず expect_page がタイムアウトする。
+    # 事前に既存の計算ツール窓を閉じておくことで、毎回確実に新規ページとして検出させる。
+    for stray in list(context.pages):
+        if stray is not page and CALCULATOR_PATH in stray.url:
+            try:
+                stray.close()
+            except Exception:
+                pass
+
+    calc_page = None
+    last_error = None
+    for attempt in range(2):
+        try:
+            with context.expect_page(timeout=8000) as popup_info:
+                page.evaluate(
+                    """(i) => {
+                        const table = [...document.querySelectorAll('table')].find(t => {
+                            const hs = [...t.querySelectorAll('th')].map(th => th.textContent.trim());
+                            return hs.includes('Sku') && hs.includes('Shop');
+                        });
+                        const row = table.querySelectorAll('tbody tr')[i];
+                        const link = [...row.querySelectorAll('a')].find(a => a.textContent.trim() === 'Calc');
+                        link.click();
+                    }""",
+                    row_index,
+                )
+            calc_page = popup_info.value
+            break
+        except Exception as e:
+            last_error = e
+            # 同じタブで開いた場合
+            calc_page = next((p for p in context.pages if p is not page and CALCULATOR_PATH in p.url), None)
+            if calc_page is not None:
+                break
+            page.wait_for_timeout(500)
+
+    if calc_page is None:
+        return None, f"計算ツールが開きませんでした（{attempt + 1}回試行）: {last_error}"
 
     calc_page.wait_for_load_state("networkidle")
     calc_page.wait_for_timeout(300)
@@ -332,68 +352,94 @@ def main():
                 time.sleep(1)
                 return ok_all, changed
 
-            # 楽天。あわせて、同じ行のCalcでShopをYahooに切り替えたYahoo価格も出す
-            # （Related Skus にYahoo行が無い商品が多いため）
-            yahoo_price, yahoo_detail = None, ""
+            # 1つのケースに複数の商品（＝複数の楽天SKU）が束ねられていることがあるため、
+            # 楽天SKUごとに「その商品専用のYahoo価格」を計算する。
+            # 過去バグ: ケース内で最初に計算できたYahoo価格を全SKUに使い回してしまい、
+            # 無関係な商品にまで同じ誤った価格を書き込んだ（2026-08-13、8件を復旧）。
+            # 二度と起きないよう、Yahoo価格は必ず「対象の楽天SKU」とセットで扱う。
+            handled_yahoo_codes = set()
+
             for row in rakuten_rows:
+                rakuten_sku = row["sku"]
                 current = parse_price(row["salesPrice"])
                 new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
                 if new_price is None:
-                    print(f"    [楽天] {row['sku']}: 価格を計算できませんでした（{detail}）")
-                    log_rows.append([now, case_id, case["caseType"], SHOP_RAKUTEN, "-", row["sku"],
+                    print(f"    [楽天] {rakuten_sku}: 価格を計算できませんでした（{detail}）")
+                    log_rows.append([now, case_id, case["caseType"], SHOP_RAKUTEN, "-", rakuten_sku,
                                      f"計算失敗: {detail}"])
                     all_ok = False
                     continue
 
-                ok, changed = apply_price(SHOP_RAKUTEN, row["sku"], current, new_price, detail)
+                ok, changed = apply_price(SHOP_RAKUTEN, rakuten_sku, current, new_price, detail)
                 all_ok = all_ok and ok
                 changed_any = changed_any or changed
 
-                if yahoo_price is None:
-                    yahoo_price, yahoo_detail = calc_sell_price(
-                        page, case_id, row["rowIndex"], shop_keyword="Yahoo")
-                    if yahoo_price is None:
-                        print(f"    Yahoo価格を計算できませんでした（{yahoo_detail}）")
+                # 同じ行でShopをYahooに切り替えて、この商品専用のYahoo価格を求める
+                yahoo_price, yahoo_detail = calc_sell_price(
+                    page, case_id, row["rowIndex"], shop_keyword="Yahoo")
 
-            # Yahoo。Related Skus に載っているコードに加えて、楽天コード+接尾辞の候補も試す。
-            # 候補には実在しないコードが多く混じるので、先に存在するものだけに絞る
-            # （そうしないとDRY RUNのログが架空のコードで埋まって読めない）
-            candidates = [r["sku"] for r in yahoo_rows]
-            for row in rakuten_rows:
-                for suffix in YAHOO_SUFFIXES:
-                    code = row["sku"] + suffix
-                    if code not in candidates:
-                        candidates.append(code)
+                # この楽天SKUに対応するYahooコードだけを対象にする（他の商品とは絶対に混ぜない）。
+                # startswith だと "bb-051999-2akc" が "bb-051999" にも一致してしまうため
+                # （実際にこれが原因で無関係な商品に価格を書いてしまった）、接尾辞を正確に
+                # 取り除いた完全一致でのみ紐付ける。
+                candidates = [row["sku"] + suffix for suffix in YAHOO_SUFFIXES]
+                for yr in yahoo_rows:
+                    if (strip_yahoo_suffix(yr["sku"]).lower() == rakuten_sku.lower()
+                            and yr["sku"] not in candidates):
+                        candidates.append(yr["sku"])
 
-            yahoo_targets = {}
-            for code in candidates:
-                for store in YAHOO_STORES:
-                    try:
-                        item = yahoo_get_item(yahoo_token, store, code)
-                    except Exception as e:
-                        print(f"    [Yahoo] {code} の確認に失敗: {e}")
-                        all_ok = False
+                group_targets = {}
+                for code in candidates:
+                    if code in handled_yahoo_codes:
+                        # 他の楽天SKUで既に確定済み（想定外の衝突）。二重処理を避けるためスキップ
+                        print(f"    ⚠️ {code} は他の商品で既に処理済みのためスキップします")
                         continue
-                    if item is not None:
-                        yahoo_targets[code] = parse_price(item.get("Price", "0"))
-                        break
-            if candidates:
-                print(f"    Yahooで実在した商品: {list(yahoo_targets) or 'なし'}")
+                    for store in YAHOO_STORES:
+                        try:
+                            item = yahoo_get_item(yahoo_token, store, code)
+                        except Exception as e:
+                            print(f"    [Yahoo] {code} の確認に失敗: {e}")
+                            all_ok = False
+                            continue
+                        if item is not None:
+                            group_targets[code] = parse_price(item.get("Price", "0"))
+                            handled_yahoo_codes.add(code)
+                            break
 
-            if yahoo_price is None and yahoo_rows:
-                # 楽天行が無い場合は、Yahoo行のCalcから直接求める
-                yahoo_price, yahoo_detail = calc_sell_price(page, case_id, yahoo_rows[0]["rowIndex"])
+                if not group_targets:
+                    continue
 
-            if yahoo_price is None:
-                if yahoo_targets:
-                    print("    Yahoo価格が求められなかったため、Yahooは変更しません")
+                print(f"    [{rakuten_sku}] 対応するYahoo商品: {list(group_targets)}")
+
+                if yahoo_price is None:
+                    print(f"    Yahoo価格を計算できませんでした（{yahoo_detail}）。"
+                          f"この商品のYahooは変更しません")
+                    for code in group_targets:
+                        log_rows.append([now, case_id, case["caseType"], SHOP_YAHOO, "-", code,
+                                         f"計算失敗（楽天{rakuten_sku}側）: {yahoo_detail}"])
                     all_ok = False
-            else:
-                for sku, current in yahoo_targets.items():
-                    # 存在しないコードは yahoo_update_price 側で読み飛ばされる
-                    ok, changed = apply_price(SHOP_YAHOO, sku, current, yahoo_price, yahoo_detail)
+                    continue
+
+                for code, current_y in group_targets.items():
+                    ok, changed = apply_price(SHOP_YAHOO, code, current_y, yahoo_price, yahoo_detail)
                     all_ok = all_ok and ok
                     changed_any = changed_any or changed
+
+            # Related Skus にあるのに、どの楽天SKUの接尾辞候補にも一致しなかったYahoo行
+            # （楽天側の出品が既に無い等）。行自体のCalcで個別に計算する。
+            orphan_rows = [r for r in yahoo_rows if r["sku"] not in handled_yahoo_codes]
+            for row in orphan_rows:
+                current = parse_price(row["salesPrice"])
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"])
+                if new_price is None:
+                    print(f"    [Yahoo] {row['sku']}: 価格を計算できませんでした（{detail}）")
+                    log_rows.append([now, case_id, case["caseType"], SHOP_YAHOO, "-", row["sku"],
+                                     f"計算失敗: {detail}"])
+                    all_ok = False
+                    continue
+                ok, changed = apply_price(SHOP_YAHOO, row["sku"], current, new_price, detail)
+                all_ok = all_ok and ok
+                changed_any = changed_any or changed
 
             if not all_ok:
                 print("  ⚠️ 失敗があったため、ケースは New のまま残します（次回再挑戦）。")

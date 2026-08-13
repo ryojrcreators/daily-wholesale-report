@@ -97,8 +97,13 @@ def fetch_change_price_cases(page) -> list:
 
 def already_wowma_handled(log_ws_values: list, case_id: str) -> bool:
     # LOG_HEADER = [実行日時, ケースID, Case Type, モール, 店舗, 商品コード, 結果]
+    # DRY RUNの記録は「試しに見ただけ」で実際には何も変更していないため、
+    # 処理済み判定には含めない（含めると、DRY RUNで見た内容が本番実行で
+    # 二度と処理されなくなってしまう。2026-08-13に実際に発生し、
+    # texas84plus02・ry23010062 の本番更新が漏れかけた）。
     for row in log_ws_values:
-        if len(row) >= 4 and row[1] == case_id and row[3] == SHOP_WOWMA:
+        if (len(row) >= 7 and row[1] == case_id and row[3] == SHOP_WOWMA
+                and "DRY RUN" not in row[6]):
             return True
     return False
 

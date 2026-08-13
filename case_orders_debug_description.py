@@ -11,6 +11,7 @@ import os
 from playwright.sync_api import sync_playwright
 
 from case_orders_auto_close import BASE_URL, login
+from case_orders_price_adjust import fetch_price_rows
 
 CASE_ID = os.environ.get("DEBUG_CASE_ID", "155222")
 
@@ -22,8 +23,8 @@ def main():
         page = context.new_page()
         login(page)
 
-        page.goto(f"{BASE_URL}/case-orders/view/{CASE_ID}", wait_until="networkidle")
-        page.wait_for_timeout(500)
+        rows = fetch_price_rows(page, CASE_ID)
+        print(f"対象行: {rows}")
 
         print("==== ページ本文（Description周辺を探す） ====")
         body_text = page.evaluate("() => document.body.innerText")
@@ -45,20 +46,21 @@ def main():
         print(html)
 
         print("\n==== Calc計算ツールを開いてPurchase Price欄を確認 ====")
-        context2 = context
-        before = set(context2.pages)
+        row_index = rows[0]["rowIndex"] if rows else 0
+        print(f"使用する rowIndex: {row_index}")
         try:
-            with context2.expect_page(timeout=8000) as popup_info:
+            with context.expect_page(timeout=8000) as popup_info:
                 page.evaluate(
-                    """() => {
+                    """(i) => {
                         const table = [...document.querySelectorAll('table')].find(t => {
                             const hs = [...t.querySelectorAll('th')].map(th => th.textContent.trim());
                             return hs.includes('Sku') && hs.includes('Shop');
                         });
-                        const row = table.querySelectorAll('tbody tr')[0];
+                        const row = table.querySelectorAll('tbody tr')[i];
                         const link = [...row.querySelectorAll('a')].find(a => a.textContent.trim() === 'Calc');
                         link.click();
-                    }"""
+                    }""",
+                    row_index,
                 )
             calc_page = popup_info.value
             calc_page.wait_for_load_state("networkidle")
@@ -71,6 +73,8 @@ def main():
                 }"""
             )
             print(calc_html)
+            print("\n---- 計算ツールのページ本文（先頭1500文字） ----")
+            print(calc_page.evaluate("() => document.body.innerText.slice(0, 1500)"))
         except Exception as e:
             print("計算ツールを開けませんでした:", e)
 

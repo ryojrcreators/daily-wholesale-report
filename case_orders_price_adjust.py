@@ -83,12 +83,14 @@ def fetch_price_rows(page, case_id: str) -> list:
             const idx = name => headers.indexOf(name);
             return [...table.querySelectorAll('tbody tr')].map((tr, i) => {
                 const tds = [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
+                const hasCalc = !![...tr.querySelectorAll('a')].find(a => a.textContent.trim() === 'Calc');
                 return {
                     rowIndex: i,
                     mall: tds[idx('Shop')] || '',
                     sku: tds[idx('Sku')] || '',
                     salesPrice: tds[idx('Sales Price')] || '',
                     min: tds[idx('Min')] || '',
+                    hasCalc,
                 };
             }).filter(r => r.sku);
         }"""
@@ -101,7 +103,17 @@ def fetch_price_rows(page, case_id: str) -> list:
     targets = [r for r in rows if r["mall"] in (SHOP_RAKUTEN, SHOP_YAHOO)]
     print(f"  Related Skus: {len(rows)}件 → 対象 {len(targets)}件")
     for r in targets:
-        print(f"    [{r['mall']}] {r['sku']} 現在価格={r['salesPrice']} / Min={r['min']}")
+        note = "" if r["hasCalc"] else "（Calcなし＝セット商品等のため計算対象外）"
+        print(f"    [{r['mall']}] {r['sku']} 現在価格={r['salesPrice']} / Min={r['min']}{note}")
+
+    # Calcが無い行（セット商品など）は計算できないので最初から除外する。
+    # 元々は計算ツールを開いて Cannot read properties of undefined (reading 'click')
+    # で失敗させ、それをケース全体の失敗として扱っていたが、この行がある商品だけ
+    # 除外すれば残りの単品行は正常に処理できるため、ここで弾いておく。
+    no_calc = [r for r in targets if not r["hasCalc"]]
+    if no_calc:
+        print(f"  Calc対象外のため除外: {[r['sku'] for r in no_calc]}")
+    targets = [r for r in targets if r["hasCalc"]]
     return targets
 
 

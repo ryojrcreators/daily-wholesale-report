@@ -7,14 +7,18 @@ Wowmaは固定IPからしか呼べないためこのPC上での手動実行で�
 
 そのため、GitHub Actionsが先にケースを処理してしまうと、
   - Reply「Rakuten/yahoo Raised」が投稿され
-  - Case Status が In-Progress になる（Rakuten/Yahooだけがグループだった場合）
-ため、通常の一覧（case_status_id=1 = New）からはそのケースが消えてしまい、
-Wowma分だけ取りこぼされる。
+  - Case Groupsが Rakuten/Yahoo のみだった場合は Status が In-Progress になる
+  - 他のグループ（Amazon等）も付いていた場合は、Rakuten/Yahooタグだけが外れ、
+    Status は New のまま残る
+ため、通常の一覧（case_status_id=1&case_group_id[0]=4）からはそのケースが
+消えてしまい、Wowma分だけ取りこぼされる（2026-08-13、実際にケース155234・155228で発生：
+タグが外れて New のままだが Rakuten/Yahoo グループには該当しなくなった）。
 
-このスクリプトは In-Progress かつ Case Group に Rakuten/Yahoo を含む
-Change Price ケースを対象に、まだWowmaの記録（自動Close_ログにmall=Wowmaの行）が
+このスクリプトは Case Group での絞り込みをせず、New / In-Progress の
+Change Price ケースをすべて対象に、まだWowmaの記録（自動Close_ログにmall=Wowmaの行）が
 無いケースだけを拾って、Wowma価格だけを追いで更新する。
-ケースのステータス・Replyは一切変更しない（すでに済んでいるため）。
+ケースのステータス・Replyは一切変更しない（楽天・Yahoo側は既に処理済み、または
+まだ手つかずでも次回の通常実行に任せるため）。
 """
 
 import os
@@ -46,37 +50,49 @@ from case_orders_wowma import SHOP_WOWMA, wowma_get_item, wowma_update_price
 JST = timezone(timedelta(hours=9))
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 
-IN_PROGRESS_CHANGE_PRICE_URL = f"{BASE_URL}/case-orders?case_status_id=2&case_group_id%5B0%5D=4"
+# Case Groupでの絞り込みはしない（Rakuten/Yahooタグが外れているケースも拾うため）。
+# case_status_id: 1=New, 2=In-Progress
+CHANGE_PRICE_LIST_URLS = [
+    f"{BASE_URL}/case-orders?case_status_id=1",
+    f"{BASE_URL}/case-orders?case_status_id=2",
+]
 
 
-def fetch_in_progress_change_price_cases(page) -> list:
-    page.goto(IN_PROGRESS_CHANGE_PRICE_URL, wait_until="networkidle")
-    page.wait_for_timeout(500)
+def fetch_change_price_cases(page) -> list:
+    seen_ids = set()
+    result = []
+    for url in CHANGE_PRICE_LIST_URLS:
+        page.goto(url, wait_until="networkidle")
+        page.wait_for_timeout(500)
 
-    info = page.evaluate(
-        """() => {
-            const target = [...document.querySelectorAll('table')].find(
-                t => [...t.querySelectorAll('th')].some(th => th.textContent.trim() === 'Case Type')
-            );
-            if (!target) return null;
-            const headers = [...target.querySelectorAll('th')].map(th => th.textContent.trim());
-            const idxId = headers.indexOf('Id');
-            const idxType = headers.indexOf('Case Type');
-            const idxProduct = headers.indexOf('Product');
-            return [...target.querySelectorAll('tbody tr')].map(tr => {
-                const tds = [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
-                return {
-                    id: (tds[idxId] || '').replace(/,/g, ''),
-                    caseType: tds[idxType] || '',
-                    product: tds[idxProduct] || '',
-                };
-            });
-        }"""
-    )
-    if not info:
-        print("！ケース一覧のテーブルが見つかりませんでした。")
-        return []
-    return [r for r in info if r["caseType"] == "Change Price" and r["id"]]
+        info = page.evaluate(
+            """() => {
+                const target = [...document.querySelectorAll('table')].find(
+                    t => [...t.querySelectorAll('th')].some(th => th.textContent.trim() === 'Case Type')
+                );
+                if (!target) return null;
+                const headers = [...target.querySelectorAll('th')].map(th => th.textContent.trim());
+                const idxId = headers.indexOf('Id');
+                const idxType = headers.indexOf('Case Type');
+                const idxProduct = headers.indexOf('Product');
+                return [...target.querySelectorAll('tbody tr')].map(tr => {
+                    const tds = [...tr.querySelectorAll('td')].map(td => td.textContent.trim());
+                    return {
+                        id: (tds[idxId] || '').replace(/,/g, ''),
+                        caseType: tds[idxType] || '',
+                        product: tds[idxProduct] || '',
+                    };
+                });
+            }"""
+        )
+        if not info:
+            print(f"！ケース一覧のテーブルが見つかりませんでした（{url}）。")
+            continue
+        for r in info:
+            if r["caseType"] == "Change Price" and r["id"] and r["id"] not in seen_ids:
+                seen_ids.add(r["id"])
+                result.append(r)
+    return result
 
 
 def already_wowma_handled(log_ws_values: list, case_id: str) -> bool:
@@ -110,14 +126,14 @@ def main():
 
         try:
             login(page)
-            cases = fetch_in_progress_change_price_cases(page)
+            cases = fetch_change_price_cases(page)
         except Exception as e:
             print(f"ケース一覧の取得に失敗しました: {e}")
             browser.close()
             sys.exit(1)
 
         targets = [c for c in cases if not already_wowma_handled(log_values, c["id"])]
-        print(f"In-Progress の Change Price ケース: {len(cases)}件 → Wowma未処理: {len(targets)}件")
+        print(f"Change Price ケース（New/In-Progress）: {len(cases)}件 → Wowma未処理: {len(targets)}件")
 
         for case in targets:
             case_id = case["id"]

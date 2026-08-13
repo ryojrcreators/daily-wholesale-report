@@ -1,0 +1,25 @@
+name: Wowma API 接続テスト（読み取りのみ）
+
+on:
+  workflow_dispatch:
+    inputs:
+      item_code:
+        description: 'テストする商品コード（楽天の商品管理番号と同じはず）'
+        required: true
+        default: 'ry23010062'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: searchItemInfo を1件だけ叩いて中身を確認
+        env:
+          WOWMA_API_KEY: ${{ secrets.WOWMA_API_KEY }}
+          WOWMA_SHOP_ID: ${{ secrets.WOWMA_SHOP_ID }}
+          TEST_ITEM_CODE: ${{ inputs.item_code }}
+        run: python -u wowma_test_connection.py

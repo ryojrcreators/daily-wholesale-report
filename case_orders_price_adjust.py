@@ -20,13 +20,26 @@
   計算には 実重量と容積重量の比較、配送方法の選択、材料費、輸入税（食品・危険物フラグ）、
   社内の為替レートが絡む。外部で再現し続けるとズレて価格を誤るため、
   社内ツールにそのまま計算させる。
+
+価格変更後の検証について（2026-08-13の事故を受けて追加）:
+  過去に「ケース内で最初に計算できたYahoo価格を、無関係な他の商品にも使い回してしまい、
+  複数商品を同じ誤った価格で書き換えた」事故が実際に起きた。書き込み自体は成功として
+  記録されるため、ログを見るだけでは異常に気づけない。そのため書き込み直後に以下を行う。
+    1. 同じ行のCalcで再計算し、書き込んだ値と一致するか確認する
+    2. 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する
+  数十円のズレは為替レートの丸め等で起こり得るため許容し、それを超える差だけ異常とする。
+  異常があれば Chatwork で Ryo Higuchi 宛てに報告する（このスクリプトは自動修正しない）。
+  「実際にモールへ反映されたか」の時間差確認（書き込み直後ではなく少し後で再確認）は
+  case_orders_price_verify_delayed.py が別ジョブとして行う。
 """
 
 import os
 import sys
 import time
+import json
 from datetime import datetime, timezone, timedelta
 
+import requests
 from playwright.sync_api import sync_playwright
 
 from case_orders_auto_close import (
@@ -34,6 +47,7 @@ from case_orders_auto_close import (
     YAHOO_SUFFIXES,
     YAHOO_STORES,
     yahoo_get_item,
+    rakuten_get_current_prices,
     SHOP_RAKUTEN,
     SHOP_YAHOO,
     CASE_GROUP_RAKUTEN_YAHOO,
@@ -61,6 +75,34 @@ TARGET_CASE_TYPES = ("Change Price",)
 REPLY_MESSAGE = "Rakuten/yahoo Raised"
 
 CALCULATOR_PATH = "/products/calculator"
+
+# 検証で許容するズレ（円）。為替レートの丸め等による数十円程度の差は異常とみなさない
+PRICE_TOLERANCE_YEN = 50
+
+CW_TOKEN = os.environ.get("CW_TOKEN", "")
+CW_MENTION_RYO = "[To:2618849]Ryo Higuchiさん"
+CW_ROOM_ID = "83994351"
+
+# 次のジョブ（case_orders_price_verify_delayed.py）に渡す、今回書き込んだ内容
+APPLIED_CHANGES_FILE = "price_adjust_applied_changes.json"
+
+
+def post_chatwork(body: str):
+    if not CW_TOKEN:
+        print("  CW_TOKENが未設定のため通知しません。")
+        return
+    try:
+        res = requests.post(
+            f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            data={"body": body},
+            timeout=30,
+        )
+        print(f"  Chatwork通知: status={res.status_code}")
+        if res.status_code >= 400:
+            print(f"    {res.text[:300]}")
+    except Exception as e:
+        print(f"  Chatwork通知に失敗しました: {e}")
 
 
 def fetch_price_rows(page, case_id: str) -> list:
@@ -289,6 +331,54 @@ def parse_price(value: str) -> int:
         return 0
 
 
+def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list):
+    """楽天SKUを再計算＋API再取得して、書き込んだ値と一致するか確認する"""
+    recomputed, _ = calc_sell_price(page, case_id, row_index)
+    if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
+        anomalies.append(
+            f"[楽天] {sku}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
+        )
+
+    actual = rakuten_get_current_prices(sku)
+    for store_name, price in actual.items():
+        if price is not None and abs(price - applied_price) > PRICE_TOLERANCE_YEN:
+            anomalies.append(
+                f"[楽天] {sku}（{store_name}）: 書き込んだ値 ¥{applied_price:,} だが実際は ¥{price:,}"
+            )
+
+
+def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, applied: dict, anomalies: list):
+    """
+    Yahooグループ（同じ楽天SKUに紐づく複数コード）を再計算＋API再取得して確認する。
+    applied は {商品コード: 書き込んだ価格}
+    """
+    recomputed, _ = calc_sell_price(page, case_id, row_index, shop_keyword="Yahoo")
+
+    for code, applied_price in applied.items():
+        if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
+            anomalies.append(
+                f"[Yahoo] {code}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
+            )
+
+        for store in YAHOO_STORES:
+            try:
+                item = yahoo_get_item(yahoo_token, store, code)
+            except Exception:
+                continue
+            if item is None:
+                continue
+            try:
+                actual_price = int(str(item.get("Price", "")).replace(",", ""))
+            except ValueError:
+                continue
+            if abs(actual_price - applied_price) > PRICE_TOLERANCE_YEN:
+                anomalies.append(
+                    f"[Yahoo] {code}（{store['name']}）: 書き込んだ値 ¥{applied_price:,} "
+                    f"だが実際は ¥{actual_price:,}"
+                )
+            break
+
+
 def main():
     print("=== Case Orders 価格調整 開始 ===")
     if DRY_RUN:
@@ -298,6 +388,8 @@ def main():
     yahoo_token = get_yahoo_access_token(spreadsheet)
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
     log_rows = []
+    anomalies = []          # 検証で見つかった異常の説明文リスト（Chatwork報告用）
+    applied_changes = []    # {case_id, mall, sku, price}。時間差検証ジョブに渡す
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -394,6 +486,12 @@ def main():
                 ok, changed = apply_price(SHOP_RAKUTEN, rakuten_sku, current, new_price, detail)
                 all_ok = all_ok and ok
                 changed_any = changed_any or changed
+                if changed and not DRY_RUN:
+                    applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
+                                            "sku": rakuten_sku, "price": new_price})
+                    # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
+                    # 書き込んだ値と一致するか確認する（2026-08-13の事故を受けて追加）
+                    recheck_rakuten_price(page, case_id, row["rowIndex"], rakuten_sku, new_price, anomalies)
 
                 # 同じ行でShopをYahooに切り替えて、この商品専用のYahoo価格を求める
                 yahoo_price, yahoo_detail = calc_sell_price(
@@ -441,10 +539,20 @@ def main():
                     all_ok = False
                     continue
 
+                yahoo_changed = {}
                 for code, current_y in group_targets.items():
                     ok, changed = apply_price(SHOP_YAHOO, code, current_y, yahoo_price, yahoo_detail)
                     all_ok = all_ok and ok
                     changed_any = changed_any or changed
+                    if changed and not DRY_RUN:
+                        applied_changes.append({"case_id": case_id, "mall": SHOP_YAHOO,
+                                                "sku": code, "price": yahoo_price})
+                        yahoo_changed[code] = yahoo_price
+
+                if yahoo_changed and not DRY_RUN:
+                    # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
+                    # 書き込んだ値と一致するか確認する
+                    recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token, yahoo_changed, anomalies)
 
             # Related Skus にあるのに、どの楽天SKUの接尾辞候補にも一致しなかったYahoo行
             # （楽天側の出品が既に無い等）。行自体のCalcで個別に計算する。
@@ -461,6 +569,27 @@ def main():
                 ok, changed = apply_price(SHOP_YAHOO, row["sku"], current, new_price, detail)
                 all_ok = all_ok and ok
                 changed_any = changed_any or changed
+                if changed and not DRY_RUN:
+                    applied_changes.append({"case_id": case_id, "mall": SHOP_YAHOO,
+                                            "sku": row["sku"], "price": new_price})
+                    recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token,
+                                        {row["sku"]: new_price}, anomalies)
+
+            # 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する。
+            # msy/akc など同一商品のYahooバリエーション同士は同額で正しいので除外し、
+            # 「元になった楽天SKUが違うのに同額」だけを異常として扱う。
+            if not DRY_RUN:
+                this_case_changes = [c for c in applied_changes if c["case_id"] == case_id]
+                by_price = {}
+                for c in this_case_changes:
+                    base = strip_yahoo_suffix(c["sku"]) if c["mall"] == SHOP_YAHOO else c["sku"]
+                    by_price.setdefault((c["mall"], c["price"]), set()).add(base.lower())
+                for (mall, price), bases in by_price.items():
+                    if len(bases) > 1:
+                        anomalies.append(
+                            f"[{mall}] ケース{case_id}: 別商品なのに同じ価格 ¥{price:,} "
+                            f"が付いています（{sorted(bases)}）"
+                        )
 
             if not all_ok:
                 print("  ⚠️ 失敗があったため、ケースは New のまま残します（次回再挑戦）。")
@@ -485,6 +614,27 @@ def main():
         print(f"\nログを{len(log_rows)}行追記しました。")
     except Exception as e:
         print(f"ログ書き込みに失敗しました: {e}")
+
+    # 時間差での再確認ジョブ（case_orders_price_verify_delayed.py）に、
+    # 今回書き込んだ内容を渡す
+    if applied_changes:
+        with open(APPLIED_CHANGES_FILE, "w", encoding="utf-8") as f:
+            json.dump(applied_changes, f, ensure_ascii=False)
+        print(f"変更内容を{APPLIED_CHANGES_FILE}に保存しました（{len(applied_changes)}件）。")
+
+    if anomalies:
+        print(f"\n⚠️ 検証で異常を検出しました（{len(anomalies)}件）:")
+        for a in anomalies:
+            print(f"  {a}")
+        body = (
+            f"{CW_MENTION_RYO}\n"
+            f"[info][title]価格調整の検証で異常を検出（{len(anomalies)}件）[/title]"
+            + "\n".join(anomalies)
+            + "\n\n価格は自動では戻していません。内容の確認をお願いします。[/info]"
+        )
+        post_chatwork(body)
+    else:
+        print("\n検証で異常は見つかりませんでした。")
 
     print("=== Case Orders 価格調整 完了 ===")
 

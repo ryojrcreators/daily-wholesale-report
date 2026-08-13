@@ -186,6 +186,33 @@ def rakuten_auth_headers(store: dict) -> dict:
     }
 
 
+def rakuten_get_current_prices(manage_number: str) -> dict:
+    """
+    2店舗の現在価格を読むだけ（変更しない）。戻り値は {店舗名: 価格 or None}。
+    価格調整後の検証（実際に書き込まれた値の確認）に使う。
+    """
+    prices = {}
+    for store in RAKUTEN_STORES:
+        headers = rakuten_auth_headers(store)
+        try:
+            res = requests.get(f"{RMS_BASE}/{manage_number}", headers=headers, timeout=30)
+        except Exception:
+            continue
+        finally:
+            time.sleep(API_INTERVAL)
+        if res.status_code != 200:
+            continue
+        variants = (res.json().get("variants") or {})
+        for variant in variants.values():
+            price = variant.get("standardPrice")
+            try:
+                prices[store["name"]] = int(float(price)) if price is not None else None
+            except (TypeError, ValueError):
+                prices[store["name"]] = None
+            break  # 単一バリアント想定。複数ある場合は最初の1つで代表する
+    return prices
+
+
 def rakuten_hide(manage_number: str) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてで hideItem=true にする。

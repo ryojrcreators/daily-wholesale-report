@@ -31,6 +31,15 @@
   異常があれば Chatwork で Ryo Higuchi 宛てに報告する（このスクリプトは自動修正しない）。
   「実際にモールへ反映されたか」の時間差確認（書き込み直後ではなく少し後で再確認）は
   case_orders_price_verify_delayed.py が別ジョブとして行う。
+
+Wowmaについて（2026-08-13追加）:
+  Wowma!（現au PAYマーケット）のAPIは登録した固定IPからしか呼べないため、
+  GitHub Actions（IPが毎回変わる）からは接続できない。そのためWOWMA_API_KEY/
+  WOWMA_SHOP_ID を環境変数に設定したときだけ有効になり（GitHub Secretsには
+  登録しない）、通常の自動実行では何もせず、固定IPを許可登録したPC上で
+  手動実行したときだけWowmaの価格も更新される。
+  Wowmaは楽天と同じ商品コードで出品されており、社内の計算ツールにもWowma専用の
+  Shop設定は無いため、楽天と同じ計算価格をそのまま使う。
 """
 
 import os
@@ -65,6 +74,13 @@ from rakuten_price_adjust import (
     yahoo_update_price,
     yahoo_check_sale_conflict,
 )
+
+# Wowmaは固定IPからしか呼べない（Wow!manager側のIP許可リスト制限）ため、
+# GitHub Actions（Secrets未設定）では自然にスキップされ、
+# WOWMA_API_KEY/WOWMA_SHOP_ID を設定したこのPC上で手動実行したときだけ動く。
+WOWMA_ENABLED = bool(os.environ.get("WOWMA_API_KEY")) and bool(os.environ.get("WOWMA_SHOP_ID"))
+if WOWMA_ENABLED:
+    from case_orders_wowma import SHOP_WOWMA, wowma_get_item, wowma_update_price
 
 JST = timezone(timedelta(hours=9))
 
@@ -445,6 +461,9 @@ def main():
 
                 if mall == SHOP_RAKUTEN:
                     results = rakuten_update_price(sku, new_price)
+                elif WOWMA_ENABLED and mall == SHOP_WOWMA:
+                    ok, message = wowma_update_price(sku, new_price, dry_run=False)
+                    results = [("Wowma", message, ok)]
                 else:
                     # Yahooはセール中だと価格更新でセールを解除してしまうため、その場合は触らない
                     if yahoo_check_sale_conflict(yahoo_token, [sku]):
@@ -492,6 +511,34 @@ def main():
                     # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
                     # 書き込んだ値と一致するか確認する（2026-08-13の事故を受けて追加）
                     recheck_rakuten_price(page, case_id, row["rowIndex"], rakuten_sku, new_price, anomalies)
+
+                # Wowmaは楽天と同じ商品コード・同じ計算価格を使う（社内ツールに専用のShop設定は無い）。
+                # 出品が無ければ静かにスキップする。
+                if WOWMA_ENABLED:
+                    try:
+                        wowma_item = wowma_get_item(rakuten_sku)
+                    except Exception as e:
+                        print(f"    [Wowma] {rakuten_sku}: 取得エラー: {e}")
+                        wowma_item = None
+                        all_ok = False
+                    if wowma_item is not None:
+                        current_w = parse_price(wowma_item.get("itemPrice", "0"))
+                        ok, w_changed = apply_price(SHOP_WOWMA, rakuten_sku, current_w, new_price, detail)
+                        all_ok = all_ok and ok
+                        changed_any = changed_any or w_changed
+                        if w_changed and not DRY_RUN:
+                            applied_changes.append({"case_id": case_id, "mall": SHOP_WOWMA,
+                                                    "sku": rakuten_sku, "price": new_price})
+                            try:
+                                confirm = wowma_get_item(rakuten_sku)
+                            except Exception:
+                                confirm = None
+                            confirm_price = parse_price(confirm.get("itemPrice", "0")) if confirm else None
+                            if confirm_price is None or abs(confirm_price - new_price) > PRICE_TOLERANCE_YEN:
+                                anomalies.append(
+                                    f"[Wowma] {rakuten_sku}: 書き込んだ値 ¥{new_price:,} だが実際は "
+                                    f"{'取得失敗' if confirm_price is None else f'¥{confirm_price:,}'}"
+                                )
 
                 # 同じ行でShopをYahooに切り替えて、この商品専用のYahoo価格を求める
                 yahoo_price, yahoo_detail = calc_sell_price(

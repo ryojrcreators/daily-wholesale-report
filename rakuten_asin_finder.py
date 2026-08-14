@@ -31,8 +31,8 @@ SHEET_NAME = "ASINなし（要調査）"
 KEEPA_API_KEY = os.environ["KEEPA_API_KEY"]
 DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 
-SEARCH_PER_RUN = 150     # 1回の実行で処理する件数（1検索=10トークン、3回/日で4,500トークン消費）
-REQUEST_INTERVAL = 25.0  # Keepaリクエスト間隔（秒）
+SEARCH_PER_RUN = 800     # 1回の実行で処理する件数（1検索=10トークン、Keepaプラン増強後の補充レート61トークン/分に対応）
+REQUEST_INTERVAL = 11.0  # Keepaリクエスト間隔（秒）
 RETRY_WAIT = 60.0        # 429エラー時の待機時間（秒）
 TOKEN_THRESHOLD = 12     # この残量以下になったら処理停止（1検索≒10トークンのため余裕を持つ）
 

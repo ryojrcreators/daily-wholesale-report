@@ -1,0 +1,19 @@
+name: 一時：ASINなし NOT FOUND再キュー
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  requeue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: NOT FOUND行をリセット
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+        run: python -u _requeue_not_found.py

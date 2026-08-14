@@ -118,15 +118,35 @@ def translate_to_english(text: str) -> str:
         return text
 
 
-# ── 検索キーワード抽出（翻訳不要な場合） ────────────
-def extract_english_keywords(product_name: str) -> str:
-    """英語が多い商品名から主要キーワードを抽出する。"""
+# 商品名によく混じる販促文言・注記。翻訳に使う前に取り除いておかないと
+# 検索クエリに紛れ込んでノイズになる（例: 「アメリカーナがお届け!」）
+NOISE_PATTERNS = [
+    r'アメリカーナがお届け!?',
+    r'日本未発売品?',
+]
+
+
+def strip_noise(text: str) -> str:
+    for pat in NOISE_PATTERNS:
+        text = re.sub(pat, '', text)
+    return text.strip()
+
+
+# ── 検索キーワード抽出（商品名にすでに英語の正式名が含まれる場合） ────
+def extract_english_keywords(product_name: str):
+    """
+    商品名に埋め込まれている英語の製品名らしき部分を抽出する。
+    輸入品は日本語の説明文の中に正式な英語商品名がそのまま入っていることが多く
+    （例: 「グランパ パインタール シャンプー GRANPAS Pine Tar Shampoo 8 fl oz」）、
+    その場合はDeepLで全体を翻訳し直すよりもこちらの方がKeepa検索で正確にヒットする。
+    十分な英単語（3語以上）が見つからなければNoneを返す（呼び出し側でDeepL翻訳にフォールバック）。
+    """
     name = re.sub(r'^\d+\s+', '', product_name.strip())
     english_parts = re.findall(r"[A-Za-z][A-Za-z0-9\-\.\'&]*", name)
     meaningful = [p for p in english_parts if len(p) >= 2 and not p.isdigit()]
     if len(meaningful) >= 3:
         return " ".join(meaningful[:5])
-    return name[:40].strip()
+    return None
 
 
 # ── Keepa キーワード検索 ──────────────────────────
@@ -246,9 +266,14 @@ def main():
     for sheet_row_idx, row in target:
         product_name = row[COL_NAME].strip()
 
-        # 翻訳 or 英語抽出
-        if deepl_available and contains_japanese(product_name):
-            search_term = translate_to_english(product_name)
+        # 商品名にすでに英語の正式名が含まれていればそれを優先して使う
+        # （翻訳し直すより正確で、Keepa検索にもヒットしやすいため）。
+        # 見つからない場合だけDeepL翻訳にフォールバックする。
+        search_term = extract_english_keywords(product_name)
+        if search_term:
+            print(f"  [英語抽出] {search_term[:50]}")
+        elif deepl_available and contains_japanese(product_name):
+            search_term = translate_to_english(strip_noise(product_name))
             translated_count += 1
             print(f"  [翻訳] {product_name[:30]}...")
             print(f"       → {search_term[:50]}")
@@ -259,8 +284,8 @@ def main():
                 print(f"⚠️ DeepL残り文字数が{DEEPL_CHARS_SAFETY_MARGIN:,}文字以下になりました。以降は翻訳をスキップします。")
                 deepl_available = False
         else:
-            search_term = extract_english_keywords(product_name)
-            print(f"  [英語抽出] {search_term[:50]}")
+            search_term = strip_noise(product_name)[:40].strip()
+            print(f"  [そのまま] {search_term[:50]}")
 
         asin_list, product_list = search_keepa(search_term)
 

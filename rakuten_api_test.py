@@ -1,6 +1,13 @@
 """
 楽天RMS API テストスクリプト
-- 商品1件の情報を取得して、どんなデータが返ってくるか確認する
+
+MODE:
+  get  … 商品情報を取得するだけ（読み取り専用・商品は変更されない）※デフォルト
+  hide … 指定した商品を実際に非公開（倉庫入り＝販売停止）にする（本番データを変更する）
+
+⚠️ MODE=hide は実際に商品を非公開にします。誤って別の商品を止めてしまわないよう、
+   TARGET_MANAGE_NUMBER で対象の商品管理番号を指定したうえで、CONFIRM に "HIDE" と
+   正確に入力した場合のみ実行されます（一致しない場合は何も変更せず中止します）。
 """
 
 import os
@@ -107,7 +114,14 @@ def try_patch(service_secret, license_key, url: str):
 
 
 if __name__ == "__main__":
-    TARGET = "capt06"
+    TARGET = os.environ.get("TARGET_MANAGE_NUMBER", "").strip()
+    MODE = os.environ.get("MODE", "get").strip()
+    CONFIRM = os.environ.get("CONFIRM", "").strip()
+
+    if not TARGET:
+        print("TARGET_MANAGE_NUMBER が指定されていません。対象の商品管理番号を指定してください。")
+        raise SystemExit(1)
+
     URL = f"https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers/{TARGET}"
 
     stores = [
@@ -115,6 +129,22 @@ if __name__ == "__main__":
         (SHOP_NAME_2, SERVICE_SECRET_2, LICENSE_KEY_2),
     ]
 
-    for shop_name, secret, key in stores:
-        print(f"\n=== 店舗（{shop_name}）: {TARGET} を倉庫に入れる ===")
-        try_patch(secret, key, URL)
+    if MODE == "get":
+        for shop_name, secret, key in stores:
+            print(f"\n=== 店舗（{shop_name}）: {TARGET} の情報を取得 ===")
+            try_get(secret, key, TARGET)
+
+    elif MODE == "hide":
+        if CONFIRM != "HIDE":
+            print(f"\n⚠️ MODE=hide は {TARGET} を実際に非公開（販売停止）にします。")
+            print('   実行するには CONFIRM に "HIDE" と正確に入力してください。')
+            print("   確認文字列が一致しなかったため、安全のため中止しました（商品は変更されていません）。")
+            raise SystemExit(1)
+
+        for shop_name, secret, key in stores:
+            print(f"\n=== 店舗（{shop_name}）: {TARGET} を倉庫に入れる ===")
+            try_patch(secret, key, URL)
+
+    else:
+        print(f"不明なMODE: {MODE}（get または hide を指定してください）")
+        raise SystemExit(1)

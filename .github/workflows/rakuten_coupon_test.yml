@@ -1,4 +1,4 @@
-name: 楽天クーポンAPI 調査（読み取りのみ）
+name: 楽天クーポンAPI 調査・発行
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
           - '1'
           - '2'
       mode:
-        description: 'probe=エンドポイント調査 / list=クーポン一覧 / detail=1件の全項目 / search=名前をキーワード検索 / batch-preview,batch-issue=複数件一括コピー発行'
+        description: 'probe/list/detail/search/copy-preview/batch-preview=読み取り・確認のみ（安全） / copy-issue,batch-issue=⚠️実際にクーポンを発行する（confirm の入力が必須）'
         required: true
         default: 'list'
         type: choice
@@ -63,6 +63,10 @@ on:
         description: 'copy時、指定した画像URLに差し替えて発行する（no_imageより優先）'
         required: false
         default: ''
+      confirm:
+        description: '⚠️ copy-issue/batch-issue を実行する場合のみ、確認のため "ISSUE" と正確に入力してください'
+        required: false
+        default: ''
       cw_room_id:
         description: 'batch-issue時、結果を報告するChatworkルームid'
         required: false
@@ -109,6 +113,7 @@ jobs:
           ACTIVE_ONLY: ${{ inputs.active_only }}
           NO_IMAGE: ${{ inputs.no_image }}
           IMAGE_URL: ${{ inputs.image_url }}
+          CONFIRM: ${{ inputs.confirm }}
           CW_ROOM_ID: ${{ inputs.cw_room_id }}
           CW_MENTION: ${{ inputs.cw_mention }}
           CW_TITLE: ${{ inputs.cw_title }}

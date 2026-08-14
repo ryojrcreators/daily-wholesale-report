@@ -1,17 +1,22 @@
 """
-楽天RMS クーポンAPIの調査用スクリプト（読み取りのみ）
+楽天RMS クーポンAPI 調査・発行スクリプト
+
+⚠️ 一部のMODEは実際にクーポンを発行します（本番データを変更します）。
+  probe / list / detail / search / copy-preview / batch-preview
+      … 読み取り・確認のみ（クーポンは作成・変更されない）
+  copy-issue / batch-issue
+      … 実際にクーポンを発行する（CONFIRM に "ISSUE" と正確に入力した場合のみ実行）
 
 目的:
   1. 今のライセンスキーでクーポンAPIが使えるか（利用申請が通っているか）を確かめる
   2. 正しいエンドポイントURLを特定する
   3. 既存クーポンの項目を確認し、「コピーして期限だけ変えて発行」に必要な項目を洗い出す
+  4. （copy-issue / batch-issue）既存クーポンをコピーし、期間だけ差し替えて実際に発行する
 
 商品APIのときと同じく、公式ドキュメントがRMSログインの内側にあるため、
 候補URLを順に叩いてステータスコードから正解を探る。
   404 = URLが存在しない / 403 = URLはあるが権限なし（＝利用申請が必要）
   400 = URLもメソッドも合っているがパラメータが違う / 200 = 成功
-
-このスクリプトは search と get しか呼ばないので、クーポンは作成・変更されない。
 """
 
 import os
@@ -500,6 +505,8 @@ def validate_period(start: str, end: str):
 
 if __name__ == "__main__":
     mode = os.environ.get("MODE", "probe")
+    CONFIRM = os.environ.get("CONFIRM", "").strip()
+
     if mode in ("copy-preview", "copy-issue"):
         code = os.environ.get("COUPON_CODE", "").strip()
         start = os.environ.get("NEW_START", "").strip()
@@ -510,10 +517,16 @@ if __name__ == "__main__":
             raise SystemExit(1)
         validate_period(start, end)
 
+        do_issue = (mode == "copy-issue")
+        if do_issue and CONFIRM != "ISSUE":
+            print('⚠️ 実際に発行するには CONFIRM に "ISSUE" と正確に入力してください。')
+            print("   確認文字列が一致しなかったため、今回は【確認のみ】で実行します（発行しません）。\n")
+            do_issue = False
+
         no_image = os.environ.get("NO_IMAGE", "false").lower() == "true"
         image_url = os.environ.get("IMAGE_URL", "").strip()
         print(f"=== 店舗（{SHOP_NAME}）: {code} をコピーして発行 ===\n")
-        copy_coupon(code, start, end, do_issue=(mode == "copy-issue"), no_image=no_image, image_url=image_url)
+        copy_coupon(code, start, end, do_issue=do_issue, no_image=no_image, image_url=image_url)
         raise SystemExit(0)
 
     if mode in ("batch-preview", "batch-issue"):
@@ -527,6 +540,12 @@ if __name__ == "__main__":
             raise SystemExit(1)
         validate_period(start, end)
 
+        do_issue = (mode == "batch-issue")
+        if do_issue and CONFIRM != "ISSUE":
+            print('⚠️ 実際に発行するには CONFIRM に "ISSUE" と正確に入力してください。')
+            print("   確認文字列が一致しなかったため、今回は【確認のみ】で実行します（発行しません）。\n")
+            do_issue = False
+
         no_image = os.environ.get("NO_IMAGE", "false").lower() == "true"
         image_url = os.environ.get("IMAGE_URL", "").strip()
         print(f"=== 店舗（{SHOP_NAME}）: {len(codes)}件を一括コピー発行 ===")
@@ -535,14 +554,14 @@ if __name__ == "__main__":
         results = []
         for i, code in enumerate(codes, start=1):
             print(f"--- [{i}/{len(codes)}] {code} ---")
-            results.append(copy_coupon(code, start, end, do_issue=(mode == "batch-issue"),
+            results.append(copy_coupon(code, start, end, do_issue=do_issue,
                                         no_image=no_image, image_url=image_url))
             print()
 
         ok_count = sum(1 for r in results if r["success"])
         print(f"=== 完了: {ok_count}/{len(results)}件 発行成功 ===")
 
-        if mode == "batch-issue":
+        if mode == "batch-issue" and do_issue:
             room_id = os.environ.get("CW_ROOM_ID", "").strip()
             mention = os.environ.get("CW_MENTION", "").strip()
             title = os.environ.get("CW_TITLE", "楽天クーポン更新").strip()

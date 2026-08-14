@@ -9,6 +9,11 @@ MODE:
 
 Yahooは「編集 → 反映」の2段階のため、editItem が成功しても EditingFlag が 1（編集中）の
 ままだと実店舗にはまだ反映されていない。hide の後に必ず EditingFlag を確認すること。
+
+⚠️ MODE=hide / restore / publish / edit-hide-test / restore-edit は実際にYahoo!ショッピングの
+   商品データを変更します。誤って別の商品に適用してしまわないよう、CONFIRM_ITEM_CODE に
+   対象商品コード（TARGET_ITEM_CODE と同じ値）をもう一度入力した場合のみ実行されます。
+   dump（読み取りのみ）だけはこの確認なしで実行できます。
 """
 
 import os
@@ -27,6 +32,11 @@ LISTING_SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 
 TARGET_ITEM_CODE = os.environ["TARGET_ITEM_CODE"]
 MODE = os.environ.get("MODE", "dump")
+CONFIRM_ITEM_CODE = os.environ.get("CONFIRM_ITEM_CODE", "").strip()
+
+# これらのMODEは実際に商品データを変更する。CONFIRM_ITEM_CODE が対象商品コードと
+# 一致した場合のみ実行を許可する（誤操作で別商品に適用するのを防ぐため）。
+MUTATING_MODES = {"hide", "restore", "publish", "edit-hide-test", "restore-edit"}
 
 STORES = [
     {"name": os.environ["YAHOO_SHOP_NAME_1"], "seller_id": os.environ["YAHOO_SELLER_ID_1"]},
@@ -233,6 +243,8 @@ def edit_hide_test(token: str, store: dict, item_code: str, before: dict):
 # edit-hide-test（2026/07/28実施）で 13000504-ak の6項目が消えたため、その復元用。
 # 値は同テストが変更前に出力したバックアップログから転記したもの。
 # ※ 画像や Taxable 等は省略しても消えなかったため、復元対象に含めていない。
+# ⚠️ この商品コード専用の一時データです。他の商品の復元には使えません
+#    （restore_edit() 内で item_code の一致チェック済み）。
 RESTORE_PAYLOAD_13000504_AK = {
     "path": "ホーム キッチン",
     "name": "【並行輸入品】The Honest Company ベビーおむつ テープタイプ サイズ1 80枚り 吸水性 ソフト",
@@ -347,6 +359,12 @@ def change_stock(token: str, store: dict, item_code: str, quantity: str, before:
 
 # ── メイン ────────────────────────────────────────
 def main():
+    if MODE in MUTATING_MODES and CONFIRM_ITEM_CODE != TARGET_ITEM_CODE:
+        print(f"⚠️ MODE={MODE} は実際に商品データを変更します。")
+        print(f"   誤操作防止のため、CONFIRM_ITEM_CODE に対象商品コード（{TARGET_ITEM_CODE}）と")
+        print("   同じ値をもう一度正確に入力してください。一致しなかったため中止しました（商品は変更されていません）。")
+        raise SystemExit(1)
+
     spreadsheet = get_spreadsheet()
     token = get_access_token(spreadsheet)
 

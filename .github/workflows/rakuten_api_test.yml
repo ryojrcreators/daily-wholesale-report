@@ -2,6 +2,22 @@ name: 楽天RMS API テスト
 
 on:
   workflow_dispatch:
+    inputs:
+      target_manage_number:
+        description: '対象の商品管理番号'
+        required: true
+      mode:
+        description: 'get=商品情報を取得するだけ（読み取り専用） / hide=実際に商品を非公開にする（本番データ変更）'
+        required: true
+        default: 'get'
+        type: choice
+        options:
+          - 'get'
+          - 'hide'
+      confirm:
+        description: '⚠️ MODE=hide を実行する場合のみ、確認のため "HIDE" と正確に入力してください'
+        required: false
+        default: ''
 
 jobs:
   test:
@@ -20,4 +36,7 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
           RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+          TARGET_MANAGE_NUMBER: ${{ inputs.target_manage_number }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
         run: python rakuten_api_test.py

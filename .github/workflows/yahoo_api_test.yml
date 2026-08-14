@@ -11,7 +11,7 @@ on:
         required: false
         default: ''
       mode:
-        description: 'dump=読み取りのみ / probe-edit=editItemの必須項目を調べる（変更なし） / hide=在庫0にする / restore=在庫を戻す / publish=実店舗へ反映'
+        description: 'dump=読み取りのみ（安全） / probe-edit=editItemの必須項目を調べる（変更なし） / hide・restore・publish・edit-hide-test・restore-edit=⚠️実際に商品データを変更する（confirm_item_code の入力が必須）'
         required: true
         default: 'dump'
         type: choice
@@ -23,6 +23,10 @@ on:
           - 'hide'
           - 'restore'
           - 'publish'
+      confirm_item_code:
+        description: '⚠️ hide/restore/publish/edit-hide-test/restore-edit を実行する場合のみ、確認のため item_code と同じ商品コードをもう一度入力してください'
+        required: false
+        default: ''
 
 jobs:
   test:
@@ -46,4 +50,5 @@ jobs:
           TARGET_ITEM_CODE: ${{ inputs.item_code }}
           MODE: ${{ inputs.mode }}
           RESTORE_QUANTITY: ${{ inputs.restore_quantity }}
+          CONFIRM_ITEM_CODE: ${{ inputs.confirm_item_code }}
         run: python yahoo_api_test.py

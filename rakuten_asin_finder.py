@@ -6,6 +6,7 @@
 - 日本語が含まれる場合はDeepL APIで英訳（残り文字数が少なくなったら自動停止）
 - Keepa Search APIで英語キーワード検索してASINを取得
 - ASIN候補と信頼度をD列・E列に書き込む
+- Amazon側のタイトル（Keepaタイトル）をF列に書き込み、人が目視確認しやすくする
 - 信頼度HIGHの商品は手動確認後「ASINあり」シートへ移動する運用想定
 
 列構成（書き込み後）:
@@ -14,6 +15,7 @@
   C: 通常購入販売価格
   D: ASIN候補（このスクリプトが書き込む）
   E: 信頼度（HIGH / LOW）（このスクリプトが書き込む）
+  F: Amazon商品名（Keepaタイトル、このスクリプトが書き込む）
 """
 
 import os
@@ -44,6 +46,7 @@ COL_NAME       = 1
 COL_PRICE_JPY  = 2
 COL_ASIN       = 3   # ASIN候補（書き込み先）
 COL_CONFIDENCE = 4   # 信頼度（書き込み先）
+COL_AMAZON_NAME = 5  # Amazon商品名（Keepaタイトル、書き込み先）
 
 # ── Keepa トークン残量確認 ────────────────────────
 def get_keepa_tokens_remaining() -> int:
@@ -231,6 +234,13 @@ def main():
     rows = all_rows[1:]
     print(f"総行数: {len(rows)}")
 
+    header = all_rows[0] if all_rows else []
+    if len(header) <= COL_AMAZON_NAME or header[COL_AMAZON_NAME].strip() != "Amazon商品名":
+        if sheet.col_count <= COL_AMAZON_NAME:
+            sheet.add_cols(COL_AMAZON_NAME + 1 - sheet.col_count)
+        sheet.update_cell(1, COL_AMAZON_NAME + 1, "Amazon商品名")
+        print("F列にヘッダー「Amazon商品名」を設定しました。")
+
     unchecked = []
     for i, row in enumerate(rows):
         asin_val = row[COL_ASIN].strip() if len(row) > COL_ASIN else ""
@@ -289,6 +299,7 @@ def main():
 
         asin_list, product_list = search_keepa(search_term)
 
+        keepa_title = ""
         if not asin_list:
             asin_result = "NOT FOUND"
             confidence = "LOW"
@@ -307,9 +318,11 @@ def main():
         # 1件処理するたびに即書き込み（途中停止しても結果を無駄にしない）
         asin_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_ASIN + 1)
         conf_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_CONFIDENCE + 1)
+        name_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_AMAZON_NAME + 1)
         sheet.batch_update([
             {"range": asin_cell, "values": [[asin_result]]},
             {"range": conf_cell, "values": [[confidence]]},
+            {"range": name_cell, "values": [[keepa_title]]},
         ])
 
         # NOT FOUNDの場合はASIN候補セルを赤背景にする

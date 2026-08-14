@@ -220,7 +220,10 @@ def judge_confidence(original_name: str, keepa_title: str) -> str:
     matched = orig_tokens & keepa_tokens
     match_ratio = len(matched) / len(orig_tokens)
 
-    if match_ratio >= 0.4 and len(matched) >= 2:
+    # 検索語の単語数が少ないと、ブランド名など1〜2語がたまたま一致しただけで
+    # 誤ってHIGHと判定してしまう（例: 「Everest」だけが一致した無関係の商品）。
+    # 一致率だけでなく一致語数も一定以上（3語）要求することで誤マッチを減らす。
+    if match_ratio >= 0.5 and len(matched) >= 3:
         return "HIGH"
     return "LOW"
 

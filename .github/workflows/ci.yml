@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 構文チェック（py_compile）
+        run: python -m py_compile $(git ls-files '*.py')
+
+      - name: 依存関係のインストール確認
+        run: pip install -r requirements.txt
+
+      - name: 静的Lintチェック（ruff・未定義変数などバグ検出のみ）
+        run: |
+          pip install ruff
+          ruff check --select F821,F822,F823 .

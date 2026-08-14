@@ -4,19 +4,19 @@
 自動で値上げする。
 
 対象:
-  F列（価格チェック）が「🔴 赤字」かつ I列（価格調整対応済み）が空かつ
+  F列（価格チェック）が「🔴 赤字」かつ J列（価格調整対応済み）が空かつ
   G列（適正価格）に「¥数値」の値がある行
 
 Yahoo側で特価(SalePrice)が通常価格(Price)と異なる＝セール中の商品は、
 価格調整で意図せずセールを解除してしまわないよう、その商品ごと処理対象から除外し、
-I列に「要確認(Yahooセール中)」と書き込んで人の確認に回す（楽天側も含め一切変更しない）。
+J列に「要確認(Yahooセール中)」と書き込んで人の確認に回す（楽天側も含め一切変更しない）。
 
 楽天: PATCH /es/2.0/items/manage-numbers/{商品管理番号} で
       variants.{variantId}.standardPrice を更新する（rakuten_hideと同じGET→PATCH方式）。
 Yahoo: 商品一括更新API（updateItems）で price と sale_price を同時に新価格へ更新する
        （このAPIはprice更新時、price/sale_price両方を指定する必要がある）。
 
-成功したらD列（通常購入販売価格）を新価格に更新し、I列に処理日時を書き込んで
+成功したらD列（通常購入販売価格）を新価格に更新し、J列に処理日時を書き込んで
 以後の実行では対象から除外する（1つでも失敗したら両方とも空のまま残し、次回再挑戦させる）。
 D列を更新しておかないと、rakuten_price_check.pyが次回巡回時に古い価格を基準に再計算し、
 実際は直っているのにF列がいつまでも🔴赤字のまま表示され続けてしまう。
@@ -64,8 +64,8 @@ COL_NAME = 1           # B列：商品名
 COL_PRICE_JPY = 3      # D列：通常購入販売価格（rakuten_price_check.pyが赤字判定の基準に使う）
 COL_PRICE_CHECK = 5    # F列：価格チェック
 COL_PROPER_PRICE = 6   # G列：適正価格
-COL_STOCK_DONE = 7     # H列：在庫対応済み（rakuten_shortage_auto_close.pyが使用）
-COL_PRICE_DONE = 8     # I列：価格調整対応済み（このスクリプトが書き込む）
+COL_STOCK_DONE = 8     # I列：在庫対応済み（rakuten_shortage_auto_close.pyが使用）
+COL_PRICE_DONE = 9     # J列：価格調整対応済み（このスクリプトが書き込む）
 
 DEFICIT_LABEL = "🔴 赤字"
 SALE_CONFLICT_MESSAGE = "要確認(Yahooセール中)"
@@ -309,7 +309,7 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
                     else:
                         # 更新自体は成功しているのでモール側は変わっているが、反映APIが
                         # 失敗した場合は実店舗にまだ出ていない可能性がある。失敗扱いにして
-                        # I列を更新させず、次回の実行で反映だけ再試行させる。
+                        # J列を更新させず、次回の実行で反映だけ再試行させる。
                         results.append((store["name"], f"{item_code}: ¥{current_price}→¥{new_price:,}に更新したが反映API失敗", False))
                 else:
                     results.append((store["name"], f"{item_code}: 更新失敗({res.status_code}) {res.text[:200]}", False))
@@ -350,7 +350,7 @@ def main():
         if price_ws.col_count <= COL_PRICE_DONE:
             price_ws.add_cols(COL_PRICE_DONE + 1 - price_ws.col_count)
         price_ws.update_cell(1, COL_PRICE_DONE + 1, "価格調整対応済み")
-        print("I列にヘッダー「価格調整対応済み」を設定しました。")
+        print("J列にヘッダー「価格調整対応済み」を設定しました。")
 
     values = price_ws.get_all_values()
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
@@ -377,7 +377,7 @@ def main():
             log_rows.append([now, "-", "価格調整", "Yahoo", "-", item_number, "セール中のためスキップ"])
             flagged += 1
             if DRY_RUN:
-                print("  【DRY RUN】本番ならここでI列に「要確認(Yahooセール中)」を記録します。")
+                print("  【DRY RUN】本番ならここでJ列に「要確認(Yahooセール中)」を記録します。")
                 continue
             try:
                 current_row = find_row_by_item_number(price_ws, item_number)
@@ -407,17 +407,17 @@ def main():
 
         updated += 1
         if DRY_RUN:
-            print("  【DRY RUN】本番ならここでD列を新価格に更新し、I列に価格調整対応済みを記録します。")
+            print("  【DRY RUN】本番ならここでD列を新価格に更新し、J列に価格調整対応済みを記録します。")
             continue
 
         try:
             current_row = find_row_by_item_number(price_ws, item_number)
             if current_row is None:
-                print(f"  ⚠️ シート上で{item_number}が見つからず、D列・I列を更新できませんでした（モール側は更新済み）。")
+                print(f"  ⚠️ シート上で{item_number}が見つからず、D列・J列を更新できませんでした（モール側は更新済み）。")
             else:
                 price_ws.update_cell(current_row, COL_PRICE_JPY + 1, proper_price)
                 price_ws.update_cell(current_row, COL_PRICE_DONE + 1, now)
-                print(f"  ✅ D列（{current_row}行目）を¥{proper_price:,}に更新し、I列に価格調整対応済み（{now}）を記録しました。")
+                print(f"  ✅ D列（{current_row}行目）を¥{proper_price:,}に更新し、J列に価格調整対応済み（{now}）を記録しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は更新済み）: {e}")
 

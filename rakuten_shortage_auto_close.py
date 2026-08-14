@@ -3,19 +3,19 @@
 楽天・Yahooの出品を自動的にClose/再開する。
 
 Close処理:
-  1. E列（在庫チェック）が「⚠️ 仕入不可」かつH列（在庫対応済み）が空の行を対象にする
+  1. E列（在庫チェック）が「⚠️ 仕入不可」かつI列（在庫対応済み）が空の行を対象にする
   2. case_orders_auto_close.pyのrakuten_hide/yahoo_closeを再利用し、
      楽天はhideItem=true、YahooはsetStock=0にする
      （このシートには店舗名が無いため、両モールとも登録されている全店舗を試す）
-  3. 成功したらH列に処理日時を書き込み、以後の実行では対象から除外する
+  3. 成功したらI列に処理日時を書き込み、以後の実行では対象から除外する
      （1つでも失敗したら空のまま残し、次回再挑戦させる）
 
 再開処理（Closeの逆）:
-  1. H列（在庫対応済み）に値があり、かつE列が「✅ 正常」または「🟡 3rdパーティ」に
+  1. I列（在庫対応済み）に値があり、かつE列が「✅ 正常」または「🟡 3rdパーティ」に
      変わった行（＝一度は仕入不可でCloseしたが、再チェックで仕入れ可能に戻った）を対象にする
   2. case_orders_auto_close.pyのrakuten_reopen/yahoo_restockを再利用し、
      楽天はhideItem=false、Yahooは在庫をRESTOCK_QUANTITY（既定100）に戻す
-  3. 成功したらH列を空欄に戻し、次に再び仕入不可になったら改めてCloseの対象にする
+  3. 成功したらI列を空欄に戻し、次に再び仕入不可になったら改めてCloseの対象にする
 
 実行結果は「自動Close_ログ」タブ（case_orders_auto_close.pyと共通）に追記する。
 楽天・Yahooの停止/再開方式やSKU接尾辞の扱いはcase_orders_auto_close.pyと全く同じ
@@ -58,7 +58,7 @@ SHORTAGE_SHEET_NAME = "ASINあり"
 COL_ITEM_NUMBER = 0     # A列：商品管理番号
 COL_NAME = 1            # B列：商品名
 COL_STOCK_CHECK = 4     # E列：在庫チェック
-COL_DONE = 7            # H列：在庫対応済み（このスクリプトが書き込む）
+COL_DONE = 8            # I列：在庫対応済み（このスクリプトが書き込む）
 SHORTAGE_LABEL = "⚠️ 仕入不可"
 AVAILABLE_LABELS = ("✅ 正常", "🟡 3rdパーティ")
 
@@ -141,7 +141,7 @@ def find_close_targets(values: list) -> list:
 
 
 def find_reopen_targets(values: list) -> list:
-    """一度Closeした（H列に値がある）が、再チェックで仕入れ可能に戻った行を返す。"""
+    """一度Closeした（I列に値がある）が、再チェックで仕入れ可能に戻った行を返す。"""
     targets = []
     for i, row in enumerate(values[1:], start=2):
         if len(row) <= COL_DONE or not row[COL_DONE].strip():
@@ -182,13 +182,13 @@ def main():
         if shortage_ws.col_count <= COL_DONE:
             shortage_ws.add_cols(COL_DONE + 1 - shortage_ws.col_count)
         shortage_ws.update_cell(1, COL_DONE + 1, "在庫対応済み")
-        print("H列にヘッダー「在庫対応済み」を設定しました。")
-    # I列（価格調整対応済み）は今後の価格調整自動化用に予約しておく（今回は何も書き込まない）
+        print("I列にヘッダー「在庫対応済み」を設定しました。")
+    # J列（価格調整対応済み）は今後の価格調整自動化用に予約しておく（今回は何も書き込まない）
     if len(header) <= COL_DONE + 1 or header[COL_DONE + 1].strip() != "価格調整対応済み":
         if shortage_ws.col_count <= COL_DONE + 1:
             shortage_ws.add_cols(COL_DONE + 2 - shortage_ws.col_count)
         shortage_ws.update_cell(1, COL_DONE + 2, "価格調整対応済み")
-        print("I列にヘッダー「価格調整対応済み」を設定しました（予約列、未使用）。")
+        print("J列にヘッダー「価格調整対応済み」を設定しました（予約列、未使用）。")
 
     values = shortage_ws.get_all_values()
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
@@ -222,16 +222,16 @@ def main():
 
         closed += 1
         if DRY_RUN:
-            print("  【DRY RUN】本番ならここでH列に在庫対応済みを記録します。")
+            print("  【DRY RUN】本番ならここでI列に在庫対応済みを記録します。")
             continue
 
         try:
             current_row = find_row_by_item_number(shortage_ws, item_number)
             if current_row is None:
-                print(f"  ⚠️ シート上で{item_number}が見つからず、H列を更新できませんでした（モール側は停止済み）。")
+                print(f"  ⚠️ シート上で{item_number}が見つからず、I列を更新できませんでした（モール側は停止済み）。")
             else:
                 shortage_ws.update_cell(current_row, COL_DONE + 1, now)
-                print(f"  ✅ H列（{current_row}行目）に在庫対応済み（{now}）を記録しました。")
+                print(f"  ✅ I列（{current_row}行目）に在庫対応済み（{now}）を記録しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は停止済み）: {e}")
 
@@ -263,16 +263,16 @@ def main():
 
         reopened += 1
         if DRY_RUN:
-            print("  【DRY RUN】本番ならここでH列の在庫対応済みを解除します。")
+            print("  【DRY RUN】本番ならここでI列の在庫対応済みを解除します。")
             continue
 
         try:
             current_row = find_row_by_item_number(shortage_ws, item_number)
             if current_row is None:
-                print(f"  ⚠️ シート上で{item_number}が見つからず、H列を更新できませんでした（モール側は再開済み）。")
+                print(f"  ⚠️ シート上で{item_number}が見つからず、I列を更新できませんでした（モール側は再開済み）。")
             else:
                 shortage_ws.update_cell(current_row, COL_DONE + 1, "")
-                print(f"  ✅ H列（{current_row}行目）の在庫対応済みを解除しました。")
+                print(f"  ✅ I列（{current_row}行目）の在庫対応済みを解除しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は再開済み）: {e}")
 

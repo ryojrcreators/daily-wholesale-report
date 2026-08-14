@@ -14,11 +14,14 @@
 import os
 import time
 import json
+from datetime import datetime, timezone, timedelta
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
 from set_quantity import ensure_annotation_columns, annotation_updates
+
+JST = timezone(timedelta(hours=9))
 
 # ── 設定 ──────────────────────────────────────────
 SPREADSHEET_ID = os.environ["RAKUTEN_SPREADSHEET_ID"]
@@ -43,6 +46,7 @@ COL_PRICE_JPY = 3     # 楽天販売価格
 COL_STOCK_CHECK = 4   # 在庫チェック（書き込み先）
 COL_PRICE_CHECK = 5   # 価格チェック（書き込み先）
 COL_PROPER_PRICE = 6  # 適正価格（書き込み先）
+COL_LAST_CHECKED = 7  # 最終チェック日時（書き込み先）
 
 CURSOR_SHEET_NAME = "チェック進捗"
 
@@ -296,6 +300,13 @@ def main():
 
     print(f"総行数: {len(rows)}")
 
+    header = all_rows[0]
+    if len(header) <= COL_LAST_CHECKED or header[COL_LAST_CHECKED].strip() != "最終チェック日時":
+        if sheet.col_count <= COL_LAST_CHECKED:
+            sheet.add_cols(COL_LAST_CHECKED + 1 - sheet.col_count)
+        sheet.update_cell(1, COL_LAST_CHECKED + 1, "最終チェック日時")
+        print("H列にヘッダー「最終チェック日時」を設定しました。")
+
     # セット数・ASIN入数の書き出し先。Keepaはどのみち全行ぶん叩いているので、
     # ついでに書き出しておけば追加のトークン消費なしで情報が揃う。
     # ※ 適正価格・赤字判定の計算には、まだこの倍率を使っていない
@@ -383,6 +394,8 @@ def main():
             stock_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_STOCK_CHECK + 1)
             price_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PRICE_CHECK + 1)
             proper_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_PROPER_PRICE + 1)
+            checked_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_LAST_CHECKED + 1)
+            checked_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
             # 判定結果と同じリクエストで、セット数・ASIN入数の情報も書く
             # （書き込み回数が増えないので、Sheetsのクォータには影響しない）
             item_name = row[COL_NAME] if len(row) > COL_NAME else ""
@@ -390,6 +403,7 @@ def main():
                 {"range": stock_cell, "values": [[stock_result]]},
                 {"range": price_cell, "values": [[price_result]]},
                 {"range": proper_cell, "values": [[proper_price_result]]},
+                {"range": checked_cell, "values": [[checked_at]]},
             ] + annotation_updates(annotation_pos, sheet_row_idx + 1, item_name, product))
 
             print(f"  {asin}: {stock_result} / {price_result} / {proper_price_result}"

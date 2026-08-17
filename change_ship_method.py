@@ -7,8 +7,9 @@ ChatworkにShipment ID（Package id）が届いたら、社内システムの
 - /shipping-codes/edit/{Shipment ID} を開き、対応注文への /sales/view/{内部ID} リンクから
   内部の注文ID(SO#)を取得する（SoHeadsのShipment ID検索はbotセッションでは一覧が
   描画されないため、この経路で内部IDを得る）
-- /sales/shipping-details/{内部ID} を開き、Shipping Country が JP であることを確認してから
-  Package id が一致する行の Ship Method を変更してSave（JP以外や取得不可、Block Upgrade
+- /sales/shipping-details/{内部ID} を開き、Shipping Country が JP であること・商品明細に
+  BLOCKED_PRODUCT_CODE（例: W-229）が含まれていないことを確認してから、Package id が
+  一致する行の Ship Method を変更してSave（条件を満たさない場合や Block Upgrade
   チェック済みの場合は変更せずエラー報告）
 - 完了後、Chatworkルーム(442638900)へ結果を通知
 """
@@ -32,6 +33,7 @@ CW_TOKEN = os.environ["CW_TOKEN"]
 CW_ROOM_ID = "442638900"
 
 TARGET_SHIP_METHOD = "Yamato Nekopos"
+BLOCKED_PRODUCT_CODE = "W-229"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -124,6 +126,43 @@ def change_ship_method(page, shipment_id):
         print(f"！Shipping Country={shipping_country!r}（JP以外）のため変更を中止します")
         return False, f"Shipping Country is {shipping_country} (not JP) — Ship Method not changed"
     print(f"Shipping Country={shipping_country!r} を確認。変更を続行します")
+
+    # 対象Package idに紐づく商品明細（Code/Package列を持つ別テーブル）に
+    # BLOCKED_PRODUCT_CODE が含まれていたら、Ship Methodは変更せずエラー報告する。
+    product_codes = page.evaluate(
+        """(shipmentId) => {
+            const tables = [...document.querySelectorAll('table')];
+            for (const t of tables) {
+                const rows = [...t.querySelectorAll('tr')];
+                if (!rows.length) continue;
+                const headerCells = [...rows[0].querySelectorAll('th,td')].map(c => c.textContent.trim());
+                const idxCode = headerCells.indexOf('Code');
+                const idxPackage = headerCells.indexOf('Package');
+                if (idxCode < 0 || idxPackage < 0) continue;
+                const codes = [];
+                for (let i = 1; i < rows.length; i++) {
+                    const cells = rows[i].querySelectorAll('td');
+                    if (cells.length <= Math.max(idxCode, idxPackage)) continue;
+                    if (cells[idxPackage].textContent.trim() !== String(shipmentId)) continue;
+                    codes.push(cells[idxCode].textContent.trim());
+                }
+                return codes;
+            }
+            return null;
+        }""",
+        shipment_id,
+    )
+    if product_codes is None:
+        print("！商品明細テーブル（Code/Package列）が見つかりません。安全のため変更を中止します")
+        try:
+            page.screenshot(path="debug_shipping.png", full_page=True)
+        except Exception:
+            pass
+        return False, "Product code table not found"
+    if BLOCKED_PRODUCT_CODE in product_codes:
+        print(f"！商品コード {BLOCKED_PRODUCT_CODE} が含まれるため変更を中止します")
+        return False, f"Product code {BLOCKED_PRODUCT_CODE} present — Ship Method not changed"
+    print(f"商品コード確認OK（{len(product_codes)}件、{BLOCKED_PRODUCT_CODE}なし）。変更を続行します")
 
     # Package id が一致する行の Ship Method セレクトを操作。
     # Block Upgrade がチェック済みなら 'block-upgrade'、既に目的の値なら 'already'、

@@ -1,5 +1,5 @@
 import os
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from playwright.sync_api import sync_playwright
 
 DOMAIN = "app.jrcreators.com"
@@ -15,7 +15,7 @@ SO_ID = "4812260"
 SHIPMENT_ID = "3460604"
 TARGET = "Yamato Nekopos"
 
-requests_log = []
+post_data_holder = {}
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -24,13 +24,9 @@ with sync_playwright() as p:
 
     def on_request(req):
         if req.method == "POST":
-            requests_log.append(f"REQUEST POST {req.url} postData={req.post_data}")
-    def on_response(res):
-        if res.request.method == "POST":
-            requests_log.append(f"RESPONSE {res.status} {res.url}")
+            post_data_holder["data"] = req.post_data
 
     page.on("request", on_request)
-    page.on("response", on_response)
 
     page.goto(LOGIN_URL, wait_until="networkidle")
     page.click('a:has-text("Login"), button:has-text("Login")')
@@ -67,12 +63,21 @@ with sync_playwright() as p:
     )
     print(f"select操作結果: {result}")
 
-    requests_log.clear()
     save_btn = page.locator('button:has-text("Save"), input[type="submit"][value="Save"]').first
     save_btn.click()
     page.wait_for_load_state("networkidle")
-    print("=== Save時の通信ログ ===")
-    for line in requests_log:
-        print(line[:500])
+
+    data = post_data_holder.get("data", "")
+    print(f"postData全長: {len(data)}")
+    # ship_code_method_id を含む部分だけ抜き出す
+    idx = data.find("ship_code_method_id")
+    if idx >= 0:
+        snippet = data[max(0, idx-30):idx+80]
+        print(f"ship_code_method_id 周辺: {unquote(snippet)}")
+    else:
+        print("！postDataに ship_code_method_id が含まれていません")
+    # 全パラメータ名だけ一覧
+    params = [p.split("=")[0] for p in data.split("&")]
+    print(f"送信されたフィールド名一覧:\n" + "\n".join(unquote(p) for p in params))
 
     browser.close()

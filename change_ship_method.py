@@ -129,19 +129,23 @@ def change_ship_method(page, shipment_id):
 
     # 対象Package idに紐づく商品明細（Code/Package列を持つ別テーブル）に
     # BLOCKED_PRODUCT_CODE が含まれていたら、Ship Methodは変更せずエラー報告する。
+    # 注意: table.rows / tr.cells（テーブルのネイティブAPI）は、そのテーブル・行に
+    # 直接属する行/セルだけを返す。querySelectorAll('td')だと、セル内に入れ子テーブル
+    # （L/W/H寸法等の折りたたみ表示）がある場合そこのtdまで拾って列がズレるため使わない
+    # （実際にこれが原因で誤判定するバグがあった）。
     product_codes = page.evaluate(
         """(shipmentId) => {
             const tables = [...document.querySelectorAll('table')];
             for (const t of tables) {
-                const rows = [...t.querySelectorAll('tr')];
+                const rows = [...t.rows];
                 if (!rows.length) continue;
-                const headerCells = [...rows[0].querySelectorAll('th,td')].map(c => c.textContent.trim());
+                const headerCells = [...rows[0].cells].map(c => c.textContent.trim());
                 const idxCode = headerCells.indexOf('Code');
                 const idxPackage = headerCells.indexOf('Package');
                 if (idxCode < 0 || idxPackage < 0) continue;
                 const codes = [];
                 for (let i = 1; i < rows.length; i++) {
-                    const cells = rows[i].querySelectorAll('td');
+                    const cells = rows[i].cells;
                     if (cells.length <= Math.max(idxCode, idxPackage)) continue;
                     if (cells[idxPackage].textContent.trim() !== String(shipmentId)) continue;
                     codes.push(cells[idxCode].textContent.trim());
@@ -171,7 +175,7 @@ def change_ship_method(page, shipment_id):
         """({shipmentId, target}) => {
             const rows = [...document.querySelectorAll('table tr')];
             for (const tr of rows) {
-                const cells = [...tr.querySelectorAll('td')];
+                const cells = [...tr.cells];
                 if (!cells.length) continue;
                 const pkgId = cells[0].textContent.trim();
                 if (pkgId !== String(shipmentId)) continue;

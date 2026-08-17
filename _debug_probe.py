@@ -29,11 +29,22 @@ with sync_playwright() as p:
     page.goto(f"{BASE_URL}/sales/shipping-details/{SO_ID}", wait_until="networkidle")
     page.wait_for_timeout(1000)
 
-    cur = page.evaluate("""() => {
+    info = page.evaluate("""() => {
         const sel = document.querySelector('table select');
         if (!sel) return null;
-        const opt = sel.options[sel.selectedIndex];
-        return opt ? opt.textContent.trim() : null;
+        const form = sel.closest('form');
+        const saveButtons = [...document.querySelectorAll('button, input[type=submit]')]
+            .filter(b => (b.textContent || b.value || '').trim().includes('Save'))
+            .map(b => ({tag: b.tagName, type: b.type, text: (b.textContent||b.value||'').trim(), form: b.form ? true : false}));
+        return {
+            selectName: sel.name,
+            selectId: sel.id,
+            selectClass: sel.className,
+            hasForm: !!form,
+            formAction: form ? form.action : null,
+            formMethod: form ? form.method : null,
+            saveButtons: saveButtons,
+        };
     }""")
-    print(f"現在のShip Method（選択中）: {cur!r}")
+    print(info)
     browser.close()

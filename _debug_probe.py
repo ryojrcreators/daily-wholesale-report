@@ -15,13 +15,22 @@ SO_ID = "4812260"
 SHIPMENT_ID = "3460604"
 TARGET = "Yamato Nekopos"
 
-dialogs_seen = []
+requests_log = []
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     context = browser.new_context(viewport={"width": 1800, "height": 900}, user_agent=USER_AGENT)
     page = context.new_page()
-    page.on("dialog", lambda d: (dialogs_seen.append(d.message), d.accept()))
+
+    def on_request(req):
+        if req.method == "POST":
+            requests_log.append(f"REQUEST POST {req.url} postData={req.post_data}")
+    def on_response(res):
+        if res.request.method == "POST":
+            requests_log.append(f"RESPONSE {res.status} {res.url}")
+
+    page.on("request", on_request)
+    page.on("response", on_response)
 
     page.goto(LOGIN_URL, wait_until="networkidle")
     page.click('a:has-text("Login"), button:has-text("Login")')
@@ -58,31 +67,12 @@ with sync_playwright() as p:
     )
     print(f"select操作結果: {result}")
 
-    before_url = page.url
+    requests_log.clear()
     save_btn = page.locator('button:has-text("Save"), input[type="submit"][value="Save"]').first
     save_btn.click()
     page.wait_for_load_state("networkidle")
-    after_url = page.url
-    print(f"Save前URL: {before_url}")
-    print(f"Save後URL: {after_url}")
-    print(f"ダイアログ検出: {dialogs_seen}")
-
-    # 保存後の値を再確認
-    cur = page.evaluate("""() => {
-        const sel = document.querySelector('table select');
-        const opt = sel ? sel.options[sel.selectedIndex] : null;
-        return opt ? opt.textContent.trim() : null;
-    }""")
-    print(f"Save後の選択値（このページ内）: {cur!r}")
-
-    # 別途、再読み込みして本当に保存されたか確認
-    page.goto(f"{BASE_URL}/sales/shipping-details/{SO_ID}", wait_until="networkidle")
-    page.wait_for_timeout(1000)
-    cur2 = page.evaluate("""() => {
-        const sel = document.querySelector('table select');
-        const opt = sel ? sel.options[sel.selectedIndex] : null;
-        return opt ? opt.textContent.trim() : null;
-    }""")
-    print(f"リロード後の実際の値: {cur2!r}")
+    print("=== Save時の通信ログ ===")
+    for line in requests_log:
+        print(line[:500])
 
     browser.close()

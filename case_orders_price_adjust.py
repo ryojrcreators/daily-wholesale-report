@@ -678,11 +678,21 @@ def main():
                                          expected_purchase_usd=expected_purchase_usd)
 
             # Related Skus にあるのに、どの楽天SKUの接尾辞候補にも一致しなかったYahoo行
-            # （楽天側の出品が既に無い等）。行自体のCalcで個別に計算する。
+            # （楽天側の行がRelated Skusに載っていない等）。行自体のCalcで個別に計算する。
+            # shop_keyword="Yahoo" を明示して、この行のShopがYahooになるようにする
+            # （Calc初期表示のShopは行の実際のモールと一致しないことがあるため）。
             orphan_rows = [r for r in yahoo_rows if r["sku"] not in handled_yahoo_codes]
+
+            # 逆引き：Related Skusに楽天行が無いYahoo行でも、実際には楽天にも出品が
+            # 存在することがある（2026-08-18、ケース155501で実際に発生：Yahoo行
+            # 13016320-akしか載っていなかったが、接尾辞を外した13016320で楽天出品が実在した）。
+            # case_orders_auto_close.py の derived_bases と同じ考え方をこちらにも入れる。
+            rakuten_existing_skus = set(r["sku"] for r in rakuten_rows)
+            orphan_rakuten_done = set()
+
             for row in orphan_rows:
                 current = parse_price(row["salesPrice"])
-                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"],
+                new_price, detail = calc_sell_price(page, case_id, row["rowIndex"], shop_keyword="Yahoo",
                                                      expected_purchase_usd=expected_purchase_usd)
                 if new_price is None:
                     print(f"    [Yahoo] {row['sku']}: 価格を計算できませんでした（{detail}）")
@@ -699,6 +709,57 @@ def main():
                     recheck_yahoo_price(page, case_id, row["rowIndex"], yahoo_token,
                                         {row["sku"]: new_price}, anomalies,
                                         expected_purchase_usd=expected_purchase_usd)
+
+                base = strip_yahoo_suffix(row["sku"])
+                if not base or base in rakuten_existing_skus or base in orphan_rakuten_done:
+                    continue
+                orphan_rakuten_done.add(base)
+
+                try:
+                    rakuten_prices = rakuten_get_current_prices(base)
+                except Exception as e:
+                    print(f"    [楽天(推測)] {base}: 取得エラー: {e}")
+                    continue
+                found_prices = [p for p in rakuten_prices.values() if p is not None]
+                if not found_prices:
+                    continue  # Related Skusに無く、実在もしない＝本当に楽天出品が無いだけ
+
+                print(f"    [{row['sku']}] Related Skusに無いが楽天にも出品を発見: {base}")
+                current_r = found_prices[0]
+                new_price_r, detail_r = calc_sell_price(page, case_id, row["rowIndex"], shop_keyword="楽天",
+                                                         expected_purchase_usd=expected_purchase_usd)
+                if new_price_r is None:
+                    print(f"    [楽天(推測)] {base}: 価格を計算できませんでした（{detail_r}）")
+                    log_rows.append([now, case_id, case["caseType"], SHOP_RAKUTEN, "-", base,
+                                     f"計算失敗: {detail_r}"])
+                    all_ok = False
+                    continue
+
+                ok, changed = apply_price(SHOP_RAKUTEN, base, current_r, new_price_r, detail_r,
+                                          store_hint="（推測）")
+                all_ok = all_ok and ok
+                changed_any = changed_any or changed
+                if changed and not DRY_RUN:
+                    applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
+                                            "sku": base, "price": new_price_r})
+                    recheck_rakuten_price(page, case_id, row["rowIndex"], base, new_price_r, anomalies,
+                                          expected_purchase_usd=expected_purchase_usd)
+
+                if WOWMA_ENABLED:
+                    try:
+                        wowma_item = wowma_get_item(base)
+                    except Exception as e:
+                        print(f"    [Wowma] {base}: 取得エラー: {e}")
+                        wowma_item = None
+                        all_ok = False
+                    if wowma_item is not None:
+                        current_w = parse_price(wowma_item.get("itemPrice", "0"))
+                        ok, w_changed = apply_price(SHOP_WOWMA, base, current_w, new_price_r, detail_r)
+                        all_ok = all_ok and ok
+                        changed_any = changed_any or w_changed
+                        if w_changed and not DRY_RUN:
+                            applied_changes.append({"case_id": case_id, "mall": SHOP_WOWMA,
+                                                    "sku": base, "price": new_price_r})
 
             # 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する。
             # msy/akc など同一商品のYahooバリエーション同士は同額で正しいので除外し、

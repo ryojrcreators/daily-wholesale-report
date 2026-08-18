@@ -1,0 +1,47 @@
+name: 楽天 クーポン文言 一括付与・解除（アメリカーナ）
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'apply=文言を付ける／revert=バックアップから元に戻す'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - 'apply'
+          - 'revert'
+      coupon_text:
+        description: '付ける文言（例: 【最大2000円クーポン 7/26(日)01:59まで】）※applyのみ使用'
+        required: false
+        default: ''
+      dry_run:
+        description: 'DRY RUN（true = 何も変更せず対象と内容の確認だけ）'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests gspread google-auth
+
+      - name: 実行
+        env:
+          RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
+          RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          MODE: ${{ inputs.mode }}
+          COUPON_TEXT: ${{ inputs.coupon_text }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python -u rakuten_coupon_title.py

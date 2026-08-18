@@ -68,6 +68,7 @@ def search_all_titles() -> dict:
     items = {}
     cursor_mark = "*"
     page = 1
+    num_found = None
     while True:
         params = {"hits": HITS_PER_PAGE, "cursorMark": cursor_mark}
         res = requests.get(SEARCH_URL, headers=headers, params=params, timeout=30)
@@ -75,9 +76,20 @@ def search_all_titles() -> dict:
             raise RuntimeError("認証エラー（401）。ライセンスキーの期限切れの可能性があります。")
         res.raise_for_status()
         data = res.json()
+        num_found = data.get("numFound", num_found)
 
         results = data.get("results", [])
-        print(f"  ページ{page}: {len(results)}件取得（累計 {data.get('numFound', '?')}件中）")
+
+        # 楽天API側の一時的な不具合で、numFoundがまだ残っているのにページが0件を
+        # 返すことがある（2026-08-18に実機で確認：32,507件のはずが28,183件で打ち切られた）。
+        # 明らかに取得しきれていない状態で0件が返った場合は、少し待って同じページを
+        # もう一度試す（cursor_markは進めず再試行）。
+        if not results and num_found and len(items) < num_found:
+            print(f"  ページ{page}: 0件（累計{len(items)}/{num_found}件で未達）。5秒待って再試行します。")
+            time.sleep(5)
+            continue
+
+        print(f"  ページ{page}: {len(results)}件取得（累計 {num_found}件中）")
         for r in results:
             item = r.get("item", r)
             manage_number = item.get("manageNumber", "")
@@ -91,6 +103,13 @@ def search_all_titles() -> dict:
         cursor_mark = next_cursor
         page += 1
         time.sleep(PAGE_INTERVAL)
+
+    if num_found and len(items) < num_found:
+        raise RuntimeError(
+            f"取得件数が総数に届きませんでした（{len(items)}/{num_found}件）。"
+            "楽天API側の一時的な不具合の可能性があります。安全のため中断します。"
+            "少し時間を置いてから再実行してください。"
+        )
     return items
 
 

@@ -27,7 +27,7 @@ TARGET_URL = (
 )
 
 CW_TOKEN = os.environ["CW_TOKEN"]
-CW_ROOM_ID = "83351129"
+CW_ROOM_ID = "444852330"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 

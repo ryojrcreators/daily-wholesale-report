@@ -409,9 +409,15 @@ def parse_price(value: str) -> int:
 
 
 def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list,
-                           expected_purchase_usd: float = None):
-    """楽天SKUを再計算＋API再取得して、書き込んだ値と一致するか確認する"""
-    recomputed, _ = calc_sell_price(page, case_id, row_index, expected_purchase_usd=expected_purchase_usd)
+                           expected_purchase_usd: float = None, shop_keyword: str = None):
+    """
+    楽天SKUを再計算＋API再取得して、書き込んだ値と一致するか確認する。
+    shop_keyword は、行自体が楽天ではない（Yahoo行から逆引きした楽天出品など）場合に
+    "楽天" を渡す。渡さないと、その行のCalcを開いたときの初期Shop（＝その行本来のモール）
+    のままになり、楽天ではない価格と比較して誤検知する（2026-08-18、ケース155501で実際に発生）。
+    """
+    recomputed, _ = calc_sell_price(page, case_id, row_index, shop_keyword=shop_keyword,
+                                     expected_purchase_usd=expected_purchase_usd)
     if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
         anomalies.append(
             f"[楽天] {sku}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
@@ -743,7 +749,7 @@ def main():
                     applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
                                             "sku": base, "price": new_price_r})
                     recheck_rakuten_price(page, case_id, row["rowIndex"], base, new_price_r, anomalies,
-                                          expected_purchase_usd=expected_purchase_usd)
+                                          expected_purchase_usd=expected_purchase_usd, shop_keyword="楽天")
 
                 if WOWMA_ENABLED:
                     try:

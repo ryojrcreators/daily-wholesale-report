@@ -15,6 +15,12 @@ on:
         description: '1回で処理する最大ケース数'
         required: true
         default: '20'
+  schedule:
+    # 太平洋時間（PT）9:00〜19:00に1時間おき。本番実行（DRY_RUN=false）。
+    # GitHub Actionsのcronはサマータイムを自動追従しないため、現在（PDT、UTC-7）基準で設定。
+    # PDT 9:00〜19:00 = UTC 16:00〜翌2:00。冬時間（PST、UTC-8）に切り替わったら要調整。
+    - cron: '0 16-23 * * *'
+    - cron: '0 0-2 * * *'
 
 jobs:
   close:
@@ -66,8 +72,8 @@ jobs:
           YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
-          DRY_RUN: ${{ inputs.dry_run }}
-          MAX_PER_RUN: ${{ inputs.max_per_run }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          MAX_PER_RUN: ${{ inputs.max_per_run || '20' }}
         run: python -u case_orders_auto_close.py
 
       - name: デバッグ用スクリーンショット保存

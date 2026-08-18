@@ -5,6 +5,7 @@ Wowma!（現au PAYマーケット）Wow!manager APIのラッパー。
   - Wow!manager_API利用説明書.pdf（ベースURL・認証方式）
   - 商品/【API設計書】_商品管理_価格更新API.xlsx（updateItemPrice）
   - 商品/【API設計書】_商品管理_商品情報取得API（個別）.xlsx（searchItemInfo）
+  - 商品/【API設計書】_商品管理_在庫情報更新API.xlsx（updateStock、未実機検証）
 
 【重要】XMLのタグ名は仕様書の記載から推測して実装している。
 実際のAPIレスポンスと完全に一致するかは未検証のため、本番の価格変更（DRY_RUN=false）に
@@ -128,5 +129,52 @@ def wowma_update_price(item_code: str, price: int, dry_run: bool) -> tuple:
     status = fields.get("status")
     if status == "0":
         return True, f"{item_code}: ¥{price:,} に更新しました"
+    error_msg = fields.get("message", res.text[:200])
+    return False, f"{item_code}: 更新失敗（status={status}）: {error_msg}"
+
+
+def wowma_update_stock(item_code: str, stock_count: int, dry_run: bool) -> tuple:
+    """
+    在庫情報更新API。戻り値は (成功したか, メッセージ)。
+    dry_run=True の場合は実際には呼ばずメッセージのみ返す。
+
+    仕様書「在庫情報更新API」より：stockCount に 0 を送ると、Wowma側が自動的に
+    販売ステータスを「販売終了」に更新してくれる（Closeケース用にはこれで十分で、
+    別途ステータス変更APIを呼ぶ必要はない）。バリエーション商品（選択肢別在庫）は
+    別の項目群が必要になり未対応（単品商品のみを想定）。
+    """
+    if dry_run:
+        return True, f"{item_code}: 【DRY RUN】在庫{stock_count}に更新予定"
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<request>"
+        f"<shopId>{WOWMA_SHOP_ID}</shopId>"
+        "<stockUpdateItem>"
+        f"<itemCode>{item_code}</itemCode>"
+        "<stockSegment>1</stockSegment>"
+        f"<stockCount>{stock_count}</stockCount>"
+        "</stockUpdateItem>"
+        "</request>"
+    )
+    try:
+        res = requests.post(
+            f"{WOWMA_BASE}/updateStock",
+            headers=_xml_headers(),
+            data=body.encode("utf-8"),
+            timeout=30,
+        )
+    except Exception as e:
+        return False, f"{item_code}: 更新エラー: {e}"
+    finally:
+        time.sleep(API_INTERVAL)
+
+    if res.status_code >= 400:
+        return False, f"{item_code}: 更新失敗({res.status_code}): {res.text[:200]}"
+
+    fields = _parse_xml_flat(res.content)
+    status = fields.get("status")
+    if status == "0":
+        return True, f"{item_code}: 在庫{stock_count}に更新しました"
     error_msg = fields.get("message", res.text[:200])
     return False, f"{item_code}: 更新失敗（status={status}）: {error_msg}"

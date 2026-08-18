@@ -20,6 +20,15 @@
   Yahooは editItem が全置換型（省略した項目がデフォルト値で上書きされる）で商品ページを
   壊す危険があるため使わず、在庫数だけを更新する setStock で在庫0にして注文を止める。
   そのため見え方は楽天＝ページ非公開、Yahoo＝在庫切れ表示と異なるが、注文を防ぐ目的は満たす。
+
+Wowmaについて（2026-08-18追加）:
+  Wowma!（現au PAYマーケット）のAPIは登録した固定IPからしか呼べないため、
+  GitHub Actions（毎時の定期実行を含む、IPが毎回変わる）からは接続できない。
+  そのため WOWMA_API_KEY/WOWMA_SHOP_ID を環境変数に設定したとき（GitHub Secretsには
+  登録しない）だけ有効になり、固定IPを許可登録したPC上で手動実行したときだけ、
+  楽天SKUに対応するWowma出品の在庫も0に更新する（stockCount=0を送るとWowma側が
+  自動的に販売終了にしてくれる仕様）。GitHub Actionsの定期実行が先にケースを
+  In-Progressにしてしまうケースの後追いは case_orders_wowma_close_catchup.py で行う。
 """
 
 import os
@@ -37,6 +46,13 @@ from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 
 JST = timezone(timedelta(hours=9))
+
+# Wowmaは固定IPからしか呼べない（Wow!manager側のIP許可リスト制限）ため、
+# GitHub Actions（Secrets未設定）では自然にスキップされ、
+# WOWMA_API_KEY/WOWMA_SHOP_ID を設定したこのPC上で手動実行したときだけ動く。
+WOWMA_ENABLED = bool(os.environ.get("WOWMA_API_KEY")) and bool(os.environ.get("WOWMA_SHOP_ID"))
+if WOWMA_ENABLED:
+    from case_orders_wowma import SHOP_WOWMA, wowma_get_item, wowma_update_stock
 
 # ── 実行モード ────────────────────────────────────
 # DRY_RUN=true の間は、対象の抽出とログ出力だけ行い、モール側もケース側も一切変更しない
@@ -772,6 +788,31 @@ def main():
                     log_rows.append([now, case_id, case["caseType"], "Yahoo", store_name, "-", message])
                     if message != YAHOO_NOT_FOUND:
                         found_any = True
+                    if not ok:
+                        all_ok = False
+
+            # Wowmaは楽天と同じ商品コードで出品されている。楽天SKU・推測コードそれぞれ確認し、
+            # 出品があれば在庫を0にする（無ければ静かにスキップ、失敗にはしない）。
+            if WOWMA_ENABLED:
+                for sku in dict.fromkeys(rakuten_skus + derived_bases):
+                    try:
+                        item = wowma_get_item(sku)
+                    except Exception as e:
+                        print(f"    [Wowma] {sku}: 取得エラー: {e}")
+                        log_rows.append([now, case_id, case["caseType"], SHOP_WOWMA, "-", sku, f"取得エラー: {e}"])
+                        all_ok = False
+                        continue
+                    if item is None:
+                        continue
+                    found_any = True
+                    stock = item.get("stockCount")
+                    if stock == "0":
+                        print(f"    [Wowma] {sku}: すでに在庫0")
+                        log_rows.append([now, case_id, case["caseType"], SHOP_WOWMA, "-", sku, "すでに在庫0"])
+                        continue
+                    ok, message = wowma_update_stock(sku, 0, dry_run=DRY_RUN)
+                    print(f"    [Wowma] {sku}: {message}")
+                    log_rows.append([now, case_id, case["caseType"], SHOP_WOWMA, "-", sku, message])
                     if not ok:
                         all_ok = False
 

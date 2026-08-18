@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .env
 run_*.ps1
+run_*.bat

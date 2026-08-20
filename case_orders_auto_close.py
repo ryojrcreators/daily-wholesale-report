@@ -651,7 +651,16 @@ def update_case(page, case_id: str, reply_message: str) -> str:
 
     # Replyのtextareaは case-order-replies-{n}-message という形でnが可変
     page.fill('textarea[id^="case-order-replies-"][id$="-message"]', reply_message)
-    page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
+
+    # SUBMITボタンを page.click() で押しても、直前のselect2チップ操作の後だと
+    # 何の通信も発生せず（フォームは有効なのに）保存が握りつぶされることがある
+    # （2026-08-20、ケース155561・155718で実際に確認：非GET通信が一切発生しなかった）。
+    # form.requestSubmit() で直接送信すると確実に動く（POST→302を確認済み）ため、
+    # クリックではなくこちらを使う。
+    with page.expect_navigation(timeout=15000):
+        page.evaluate(
+            """() => document.querySelector('form[action*="/case-orders/edit/"]').requestSubmit()"""
+        )
     page.wait_for_load_state("networkidle")
 
     # 保存後のページに出るメッセージを控えておく（失敗時の手がかりになる）

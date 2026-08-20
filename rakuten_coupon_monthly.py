@@ -62,7 +62,7 @@ DEFAULT_STORE = "americana"  # 設定タブに店舗列が無い/空の既存行
 # rakuten_coupon_review_batch.py と同じ対処として、店舗ごとの有効な画像URLに強制的に差し替える。
 IMAGE_URL_BY_STORE = {
     "americana": "https://image.rakuten.co.jp/americana/cabinet/logo1.jpg",
-    "founder": "https://image.rakuten.co.jp/founder/logo/logo1.jpg",
+    "founder": "https://image.rakuten.co.jp/founder/cabinet/logo.jpg",
 }
 
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]

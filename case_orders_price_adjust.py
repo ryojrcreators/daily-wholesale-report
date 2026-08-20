@@ -113,6 +113,33 @@ CW_ROOM_ID = "83994351"
 # 次のジョブ（case_orders_price_verify_delayed.py）に渡す、今回書き込んだ内容
 APPLIED_CHANGES_FILE = "price_adjust_applied_changes.json"
 
+# 通知済みの異常（ケースID＋種別）を記録するタブ。同じ異常を毎時間ずっと通知し続けるのを防ぐ
+# （2026-08-19、ケース155561のケース保存失敗が直るまで5回連続で同じ通知が送られた）。
+ANOMALY_LOG_SHEET_NAME = "価格調整_異常通知済み"
+ANOMALY_LOG_HEADER = ["初回通知日時(JST)", "ケースID", "種別", "内容"]
+
+
+def load_reported_anomalies(spreadsheet) -> set:
+    """既に通知済みの (ケースID, 種別) の組を返す。"""
+    try:
+        ws = spreadsheet.worksheet(ANOMALY_LOG_SHEET_NAME)
+    except Exception:
+        return set()
+    rows = ws.get_all_values()[1:]
+    return {(row[1], row[2]) for row in rows if len(row) >= 3}
+
+
+def mark_anomalies_reported(spreadsheet, anomalies: list, now: str):
+    if not anomalies:
+        return
+    try:
+        ws = spreadsheet.worksheet(ANOMALY_LOG_SHEET_NAME)
+    except Exception:
+        ws = spreadsheet.add_worksheet(title=ANOMALY_LOG_SHEET_NAME, rows=1000, cols=len(ANOMALY_LOG_HEADER))
+        ws.append_row(ANOMALY_LOG_HEADER)
+    rows = [[now, a["case_id"], a["key"], a["message"]] for a in anomalies]
+    ws.append_rows(rows, value_input_option="USER_ENTERED")
+
 
 def post_chatwork(body: str):
     if not CW_TOKEN:
@@ -408,6 +435,16 @@ def parse_price(value: str) -> int:
         return 0
 
 
+def add_anomaly(anomalies: list, case_id: str, key: str, message: str):
+    """
+    異常を (ケースID, 種別キー) 付きで記録する。
+    同じケースの保存が失敗し続けるなどで毎時同じ異常が再検出されると、素の文字列のままでは
+    Chatworkへの重複通知を防げない（2026-08-19、ケース155561で実際に5回連続で同じ通知が
+    送られた）。case_id + key の組で「通知済みか」を判定できるようにする。
+    """
+    anomalies.append({"case_id": case_id, "key": key, "message": message})
+
+
 def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list,
                            expected_purchase_usd: float = None, shop_keyword: str = None):
     """
@@ -419,14 +456,14 @@ def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_
     recomputed, _ = calc_sell_price(page, case_id, row_index, shop_keyword=shop_keyword,
                                      expected_purchase_usd=expected_purchase_usd)
     if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
-        anomalies.append(
+        add_anomaly(anomalies, case_id, f"recheck_calc:{sku}",
             f"[楽天] {sku}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
         )
 
     actual = rakuten_get_current_prices(sku)
     for store_name, price in actual.items():
         if price is not None and abs(price - applied_price) > PRICE_TOLERANCE_YEN:
-            anomalies.append(
+            add_anomaly(anomalies, case_id, f"recheck_api:{sku}:{store_name}",
                 f"[楽天] {sku}（{store_name}）: 書き込んだ値 ¥{applied_price:,} だが実際は ¥{price:,}"
             )
 
@@ -442,7 +479,7 @@ def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, ap
 
     for code, applied_price in applied.items():
         if recomputed is not None and abs(recomputed - applied_price) > PRICE_TOLERANCE_YEN:
-            anomalies.append(
+            add_anomaly(anomalies, case_id, f"recheck_calc:{code}",
                 f"[Yahoo] {code}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
             )
 
@@ -458,7 +495,7 @@ def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, ap
             except ValueError:
                 continue
             if abs(actual_price - applied_price) > PRICE_TOLERANCE_YEN:
-                anomalies.append(
+                add_anomaly(anomalies, case_id, f"recheck_api:{code}:{store['name']}",
                     f"[Yahoo] {code}（{store['name']}）: 書き込んだ値 ¥{applied_price:,} "
                     f"だが実際は ¥{actual_price:,}"
                 )
@@ -615,7 +652,7 @@ def main():
                                 confirm = None
                             confirm_price = parse_price(confirm.get("itemPrice", "0")) if confirm else None
                             if confirm_price is None or abs(confirm_price - new_price) > PRICE_TOLERANCE_YEN:
-                                anomalies.append(
+                                add_anomaly(anomalies, case_id, f"wowma_recheck:{rakuten_sku}",
                                     f"[Wowma] {rakuten_sku}: 書き込んだ値 ¥{new_price:,} だが実際は "
                                     f"{'取得失敗' if confirm_price is None else f'¥{confirm_price:,}'}"
                                 )
@@ -778,7 +815,7 @@ def main():
                     by_price.setdefault((c["mall"], c["price"]), set()).add(base.lower())
                 for (mall, price), bases in by_price.items():
                     if len(bases) > 1:
-                        anomalies.append(
+                        add_anomaly(anomalies, case_id, f"duplicate_price:{mall}:{sorted(bases)}",
                             f"[{mall}] ケース{case_id}: 別商品なのに同じ価格 ¥{price:,} "
                             f"が付いています（{sorted(bases)}）"
                         )
@@ -798,6 +835,13 @@ def main():
             except Exception as e:
                 print(f"  ⚠️ ケース更新に失敗しました（価格は反映済み）: {e}")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", f"ケース更新失敗: {e}"])
+                # ケースが New のまま残るため、直らない限り毎回このケースが再処理され続ける
+                # （2026-08-19、ケース155561でこれが原因で同じ異常が5回連続通知された）。
+                # add_anomaly の重複防止があっても、根本原因自体は毎回検出されて報告に値するため
+                # 通知はする。ただし内容は毎回変わらないはずなので、こちらも重複防止の対象にする。
+                add_anomaly(anomalies, case_id, "case_update_failed",
+                    f"ケース{case_id}: ケースの保存に失敗し続けています（価格は反映済み）: {e}"
+                )
 
         browser.close()
 
@@ -817,14 +861,28 @@ def main():
     if anomalies:
         print(f"\n⚠️ 検証で異常を検出しました（{len(anomalies)}件）:")
         for a in anomalies:
-            print(f"  {a}")
-        body = (
-            f"{CW_MENTION_RYO}\n"
-            f"[info][title]価格調整の検証で異常を検出（{len(anomalies)}件）[/title]"
-            + "\n".join(anomalies)
-            + "\n\n価格は自動では戻していません。内容の確認をお願いします。[/info]"
-        )
-        post_chatwork(body)
+            print(f"  {a['message']}")
+
+        reported = load_reported_anomalies(spreadsheet)
+        new_anomalies = [a for a in anomalies if (a["case_id"], a["key"]) not in reported]
+        already_count = len(anomalies) - len(new_anomalies)
+        if already_count:
+            print(f"  （うち{already_count}件は通知済みのため今回はChatworkへ再送しません）")
+
+        if new_anomalies:
+            body = (
+                f"{CW_MENTION_RYO}\n"
+                f"[info][title]価格調整の検証で異常を検出（{len(new_anomalies)}件）[/title]"
+                + "\n".join(a["message"] for a in new_anomalies)
+                + "\n\n価格は自動では戻していません。内容の確認をお願いします。[/info]"
+            )
+            post_chatwork(body)
+            try:
+                mark_anomalies_reported(spreadsheet, new_anomalies, now)
+            except Exception as e:
+                print(f"  通知済み記録の保存に失敗しました: {e}")
+        else:
+            print("  新規の異常は無いため、Chatworkへは送信しません。")
     else:
         print("\n検証で異常は見つかりませんでした。")
 

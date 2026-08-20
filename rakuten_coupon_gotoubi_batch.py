@@ -48,7 +48,13 @@ CW_TASK_DUE_DAYS = 7  # タスクの期限：発行日から何日後か
 TARGET_COUPON_NAME = f"{SHOP_NAME}で使える5,0の付く日クーポン"
 TARGET_DAYS = [5, 10, 15, 20, 25, 30]
 
-CREATE_FROM_DAY = 20  # 現在の終了日が属する月の、何日以降に作成するか
+# 現在の終了日が属する月の、何日以降に作成するか（日付グループごとに個別設定）。
+# 楽天のクーポンAPIには「今日から一定日数（実測で約31日）以内でないと開始日を設定できない」
+# 制限があり、一律20日トリガーだと25日・30日分は次月分の開始日が31日を超えてしまい
+# COUPON_EE06-001 couponStartDate.over_term で拒否される（2026-08-20に実機で確認）。
+# 25日・30日分だけトリガーを30日に遅らせることで、この制限内に収める。
+CREATE_FROM_DAY_BY_DAY = {5: 20, 10: 20, 15: 20, 20: 20, 25: 30, 30: 30}
+CREATE_FROM_DAY = 20  # 上のマップに無い日付グループが増えた場合のデフォルト
 
 
 # ══ Chatwork 通知 ═════════════════════════════════
@@ -181,8 +187,12 @@ def process_one(day: int, group: list, today: datetime, headers: dict) -> dict:
         result["message"] = f"開始/終了日時が読み取れません（{source.get('couponStartDate')} 〜 {source.get('couponEndDate')}）"
         return result
 
-    # 「現在の終了日が属する月のCREATE_FROM_DAY日」が発行トリガー
-    trigger_date = current_end.replace(day=CREATE_FROM_DAY, hour=0, minute=0, second=0, microsecond=0)
+    # 「現在の終了日が属する月のCREATE_FROM_DAY日」が発行トリガー（日付グループごとに異なる）。
+    # その月に無い日（2月30日等）にならないよう、月末日でクランプする。
+    create_from_day = CREATE_FROM_DAY_BY_DAY.get(day, CREATE_FROM_DAY)
+    last_day = calendar.monthrange(current_end.year, current_end.month)[1]
+    trigger_date = current_end.replace(day=min(create_from_day, last_day),
+                                        hour=0, minute=0, second=0, microsecond=0)
     if not FORCE and today < trigger_date:
         result["message"] = (
             f"まだ発行タイミングではありません（発行予定日: {trigger_date.strftime('%Y-%m-%d')}、"

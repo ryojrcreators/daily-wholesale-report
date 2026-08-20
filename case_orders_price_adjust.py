@@ -24,13 +24,18 @@
 価格変更後の検証について（2026-08-13の事故を受けて追加）:
   過去に「ケース内で最初に計算できたYahoo価格を、無関係な他の商品にも使い回してしまい、
   複数商品を同じ誤った価格で書き換えた」事故が実際に起きた。書き込み自体は成功として
-  記録されるため、ログを見るだけでは異常に気づけない。そのため書き込み直後に以下を行う。
-    1. 同じ行のCalcで再計算し、書き込んだ値と一致するか確認する
-    2. 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する
-  数十円のズレは為替レートの丸め等で起こり得るため許容し、それを超える差だけ異常とする。
+  記録されるため、ログを見るだけでは異常に気づけない。そのため書き込み直後に、同じ行の
+  Calcで再計算し、書き込んだ値と一致するか確認する。数十円のズレは為替レートの丸め等で
+  起こり得るため許容し、それを超える差だけ異常とする。
   異常があれば Chatwork で Ryo Higuchi 宛てに報告する（このスクリプトは自動修正しない）。
   「実際にモールへ反映されたか」の時間差確認（書き込み直後ではなく少し後で再確認）は
   case_orders_price_verify_delayed.py が別ジョブとして行う。
+
+  なお「同じケース内で別商品に同じ価格が付いていないか」という重複チェックも当初は
+  併用していたが、事故の根本原因（Yahoo価格をSKUごとにCalcし直さず使い回していたこと）
+  は上記の per-SKU 計算＋handled_yahoo_codes ガードで既に解消済みのため、このチェックは
+  「別商品だが重量・仕入価格がたまたま同じで計算結果も一致する」誤検知しか出さなくなり
+  （2026-08-20、1日で3回誤検知）、2026-08-20に削除した。
 
 Wowmaについて（2026-08-13追加）:
   Wowma!（現au PAYマーケット）のAPIは登録した固定IPからしか呼べないため、
@@ -803,22 +808,6 @@ def main():
                         if w_changed and not DRY_RUN:
                             applied_changes.append({"case_id": case_id, "mall": SHOP_WOWMA,
                                                     "sku": base, "price": new_price_r})
-
-            # 同じケース内で、別の商品（別の楽天SKU）に同じ価格が付いていないか確認する。
-            # msy/akc など同一商品のYahooバリエーション同士は同額で正しいので除外し、
-            # 「元になった楽天SKUが違うのに同額」だけを異常として扱う。
-            if not DRY_RUN:
-                this_case_changes = [c for c in applied_changes if c["case_id"] == case_id]
-                by_price = {}
-                for c in this_case_changes:
-                    base = strip_yahoo_suffix(c["sku"]) if c["mall"] == SHOP_YAHOO else c["sku"]
-                    by_price.setdefault((c["mall"], c["price"]), set()).add(base.lower())
-                for (mall, price), bases in by_price.items():
-                    if len(bases) > 1:
-                        add_anomaly(anomalies, case_id, f"duplicate_price:{mall}:{sorted(bases)}",
-                            f"[{mall}] ケース{case_id}: 別商品なのに同じ価格 ¥{price:,} "
-                            f"が付いています（{sorted(bases)}）"
-                        )
 
             if not all_ok:
                 print("  ⚠️ 失敗があったため、ケースは New のまま残します（次回再挑戦）。")

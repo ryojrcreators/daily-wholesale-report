@@ -63,7 +63,27 @@ def main():
         submit_count = page.locator('form[action*="/case-orders/edit/"] button[type="submit"]').count()
         print(f"送信ボタンの一致数: {submit_count}")
 
-        page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
+        validity = page.evaluate(
+            """() => {
+                const form = document.querySelector('form[action*="/case-orders/edit/"]');
+                if (!form) return {found: false};
+                const invalid = [...form.querySelectorAll(':invalid')].map(el => ({
+                    tag: el.tagName, name: el.name || el.id, validationMessage: el.validationMessage,
+                }));
+                return {found: true, formValid: form.checkValidity(), invalid};
+            }"""
+        )
+        print(f"送信前のフォーム妥当性チェック: {validity}")
+
+        nav_happened = False
+        try:
+            with page.expect_navigation(timeout=6000):
+                page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
+            nav_happened = True
+        except Exception as e:
+            print(f"expect_navigation がタイムアウト/失敗しました（＝ページ遷移が起きなかった可能性）: {e}")
+        print(f"ナビゲーションが発生したか: {nav_happened}")
+
         print("送信ボタンをクリックしました")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(500)

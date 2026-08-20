@@ -1,0 +1,20 @@
+name: デバッグ（5,0の付く日クーポン 状態確認）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: 確認
+        env:
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+        run: python -u debug_gotoubi.py

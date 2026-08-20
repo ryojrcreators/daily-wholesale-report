@@ -91,15 +91,16 @@ def main():
         nav_happened = False
         try:
             with page.expect_navigation(timeout=6000):
-                page.click('form[action*="/case-orders/edit/"] button[type="submit"]')
+                page.evaluate(
+                    """() => document.querySelector('form[action*="/case-orders/edit/"]').requestSubmit()"""
+                )
             nav_happened = True
         except Exception as e:
             print(f"expect_navigation がタイムアウト/失敗しました（＝ページ遷移が起きなかった可能性）: {e}")
-        print(f"ナビゲーションが発生したか: {nav_happened}")
+        print(f"ナビゲーションが発生したか（requestSubmit方式）: {nav_happened}")
         page.wait_for_timeout(1500)
         print(f"クリック後に発生した非GET通信: {requests_seen}")
 
-        print("送信ボタンをクリックしました")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(500)
 

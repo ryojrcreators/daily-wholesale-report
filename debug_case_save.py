@@ -75,6 +75,19 @@ def main():
         )
         print(f"送信前のフォーム妥当性チェック: {validity}")
 
+        requests_seen = []
+
+        def on_request(req):
+            if req.method != "GET":
+                requests_seen.append(f"{req.method} {req.url}")
+
+        def on_response(res):
+            if res.request.method != "GET":
+                requests_seen.append(f"  -> {res.status} {res.url}")
+
+        page.on("request", on_request)
+        page.on("response", on_response)
+
         nav_happened = False
         try:
             with page.expect_navigation(timeout=6000):
@@ -83,6 +96,8 @@ def main():
         except Exception as e:
             print(f"expect_navigation がタイムアウト/失敗しました（＝ページ遷移が起きなかった可能性）: {e}")
         print(f"ナビゲーションが発生したか: {nav_happened}")
+        page.wait_for_timeout(1500)
+        print(f"クリック後に発生した非GET通信: {requests_seen}")
 
         print("送信ボタンをクリックしました")
         page.wait_for_load_state("networkidle")

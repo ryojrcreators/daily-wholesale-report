@@ -79,6 +79,9 @@ REPLY_MESSAGE = "Rakuten/Yahoo Closed"
 # すでに削除済みなら正しい結果だが、SKUのタイポや古いコードでも同じ見え方になるため、
 # 「何も止めていない」ことがケース上で分かるようにしておく。
 REPLY_MESSAGE_NOT_FOUND = "Rakuten/Yahoo Closed（該当出品なし）"
+# Related Skus に楽天・YahooのSKUが1件も無いケース（担当者がCase Groupsに
+# Rakuten/Yahooを誤って含めてしまった等）用。2026-08-20、ユーザー指示により追加。
+REPLY_MESSAGE_NO_SKU = "No Rakuten/Yahoo listing for this case."
 
 # 出品が見つからなかったときのメッセージ。処理結果の判定にも使う
 RAKUTEN_NOT_FOUND = "楽天には出品が見つかりませんでした"
@@ -727,9 +730,24 @@ def main():
 
             targets = [s for s in skus if s["mall"] in (SHOP_RAKUTEN, SHOP_YAHOO)]
             if not targets:
-                # 楽天/YahooのSKUが無いケースは触らず New のまま残し、人に見てもらう
-                print("  楽天・YahooのSKUがありません。Newのまま残します。")
-                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", "対象SKUなし（Newのまま）"])
+                # Related Skus に楽天・YahooのSKUが1件も無い＝担当者がCase Groupsに
+                # Rakuten/Yahooを誤って含めてしまったケース。モール側で何もする必要が
+                # 無いので、その旨のReplyを入れてCase GroupsからRakuten/Yahooを外すだけ行う。
+                print("  楽天・YahooのSKUがありません。")
+                if DRY_RUN:
+                    print("  【DRY RUN】本番ならReplyを入れてCase GroupsからRakuten/Yahooを外します。")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     "【DRY RUN】対象SKUなし（Rakuten/Yahoo除外予定）"])
+                    continue
+                try:
+                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU)
+                    print(f"  ✅ {action}／Reply「{REPLY_MESSAGE_NO_SKU}」を投稿しました。")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     f"対象SKUなし: {action}"])
+                except Exception as e:
+                    print(f"  ⚠️ ケース更新に失敗しました: {e}")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     f"対象SKUなし・ケース更新失敗: {e}"])
                 continue
 
             rakuten_skus = [t["sku"] for t in targets if t["mall"] == SHOP_RAKUTEN]

@@ -34,15 +34,18 @@ from case_orders_price_adjust import (
 
 
 def check_rakuten(sku: str, expected_price: int) -> list:
+    """
+    出品が見つからない場合は異常扱いしない（意図的にClose・削除された可能性があり、
+    書き込んだ価格が反映されているかとは別の話のため）。2026-08-20、ユーザー指示により変更。
+    """
     anomalies = []
     actual = rakuten_get_current_prices(sku)
     if not actual:
-        anomalies.append(f"[楽天] {sku}: 価格を取得できませんでした（出品が見つからない）")
         return anomalies
     for store_name, price in actual.items():
         if price is None:
-            anomalies.append(f"[楽天] {sku}（{store_name}）: 価格を取得できませんでした")
-        elif abs(price - expected_price) > PRICE_TOLERANCE_YEN:
+            continue
+        if abs(price - expected_price) > PRICE_TOLERANCE_YEN:
             anomalies.append(
                 f"[楽天] {sku}（{store_name}）: 書き込んだはずの ¥{expected_price:,} ではなく "
                 f"現在 ¥{price:,}"
@@ -51,8 +54,8 @@ def check_rakuten(sku: str, expected_price: int) -> list:
 
 
 def check_yahoo(yahoo_token: str, sku: str, expected_price: int) -> list:
+    """出品が見つからない場合は異常扱いしない（check_rakutenと同じ方針）。"""
     anomalies = []
-    found = False
     for store in YAHOO_STORES:
         try:
             item = yahoo_get_item(yahoo_token, store, sku)
@@ -61,7 +64,6 @@ def check_yahoo(yahoo_token: str, sku: str, expected_price: int) -> list:
             continue
         if item is None:
             continue
-        found = True
         try:
             actual_price = int(str(item.get("Price", "")).replace(",", ""))
         except ValueError:
@@ -73,8 +75,6 @@ def check_yahoo(yahoo_token: str, sku: str, expected_price: int) -> list:
                 f"現在 ¥{actual_price:,}"
             )
         break
-    if not found:
-        anomalies.append(f"[Yahoo] {sku}: 出品が見つかりませんでした")
     return anomalies
 
 

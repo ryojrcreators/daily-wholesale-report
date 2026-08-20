@@ -191,6 +191,17 @@ def process_one(day: int, group: list, today: datetime, headers: dict) -> dict:
         return result
 
     new_start, new_end = next_period(current_start, current_end)
+    # 自動化がしばらく実際には発行されていなかった場合、「次の1周期」だけでは
+    # まだ過去の日付になることがある（2026-08-20に実機で確認：COUPON_EE06-001
+    # couponStartDate.over_term で発行拒否された）。楽天が受け付ける未来の周期に
+    # なるまで、周期を追加で進める。
+    catchup_count = 0
+    while new_start < today and catchup_count < 24:
+        new_start, new_end = next_period(new_start, new_end)
+        catchup_count += 1
+    if catchup_count:
+        print(f"    {catchup_count}周期分遅れていたため追加で進めました。")
+
     start_str, end_str = to_rms_str(new_start), to_rms_str(new_end)
     result["start"], result["end"] = start_str, end_str
 

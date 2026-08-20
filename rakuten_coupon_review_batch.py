@@ -233,6 +233,16 @@ def process_one(name: str, coupons: list, today: datetime, headers: dict,
         return result
 
     new_start, new_end = next_period(current_end)
+    # 自動化がしばらく実際には発行されていなかった場合、「次の1周期」だけでは
+    # まだ過去の日付になることがある（2026-08-20に実機で確認：COUPON_EE06-001
+    # couponStartDate.over_term で発行拒否された）。楽天が受け付ける未来の周期に
+    # なるまで、周期を追加で進める。
+    catchup_count = 0
+    while new_start < today and catchup_count < 24:
+        new_start, new_end = next_period(new_end)
+        catchup_count += 1
+    if catchup_count:
+        print(f"    {catchup_count}周期分遅れていたため追加で進めました。")
 
     # すでに次周期分を作っていないか確認（二重発行の防止）
     already = [c for c in matches if c.get("couponStartDate", "").startswith(new_start.strftime("%Y-%m"))]

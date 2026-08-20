@@ -254,10 +254,13 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str, due_days: int = Non
         print(f"  Chatworkタスク作成に失敗しました: {e}")
 
 
-def build_success_message(name, period_label, start, end, code, url, request_message) -> str:
+STORE_LABEL = {"americana": "アメリカーナ", "founder": "Founder"}
+
+
+def build_success_message(store, name, period_label, start, end, code, url, request_message) -> str:
     lines = [
         CW_MENTION,
-        f"[info][title]楽天クーポン更新（{period_label}）[/title]",
+        f"[info][title]楽天クーポン更新（{STORE_LABEL.get(store, store)} / {period_label}）[/title]",
         name,
         f"期間: {format_period(start, end)}",
         f"クーポンコード: {code}",
@@ -485,7 +488,7 @@ def main():
                 if template_id:
                     print(f"  【DRY RUN】テンプレートID {template_id} も更新予定（実際には更新しません）")
                 print("  【DRY RUN】Chatworkに送る予定のメッセージ：")
-                print(build_success_message(name, period_label, new_start, new_end,
+                print(build_success_message(store, name, period_label, new_start, new_end,
                                             "（発行後に決まります）", "（発行後に決まります）",
                                             request_message))
                 log_rows.append([now_label, name, period_label, "【DRY RUN】発行対象", "", ""])
@@ -517,13 +520,14 @@ def main():
                         )
 
                 post_chatwork_task(room_id, CW_ASSIGNEE_ID, build_success_message(
-                    name, period_label, new_start, new_end, code, url, request_message) + template_note,
+                    store, name, period_label, new_start, new_end, code, url, request_message) + template_note,
                     due_days=CW_TASK_DUE_DAYS)
             else:
                 # 失敗も知らせる。気づかないまま月をまたぐのを防ぐため
                 post_chatwork_task(room_id, CW_ASSIGNEE_ID,
                                     f"{CW_MENTION}\n"
-                                    f"[info][title]楽天クーポン更新の失敗（{period_label}）[/title]"
+                                    f"[info][title]楽天クーポン更新の失敗"
+                                    f"（{STORE_LABEL.get(store, store)} / {period_label}）[/title]"
                                     f"{name}\n{message}\n手動での対応をお願いします。[/info]",
                                     due_days=CW_TASK_DUE_DAYS)
             log_rows.append([now_label, name, period_label, message, code or "", url or ""])

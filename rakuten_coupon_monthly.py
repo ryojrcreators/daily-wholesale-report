@@ -56,6 +56,15 @@ STORES = {
 }
 DEFAULT_STORE = "americana"  # 設定タブに店舗列が無い/空の既存行はこの店舗扱いにする
 
+# コピー元クーポンのcouponImageをそのまま引き継ぐと、画像が古くなっている場合に
+# 「couponImage.not_available_url」エラーで発行が失敗することがある
+# （2026-08-19、Founder店の「ショップまたは商品レビュー投稿で1,000円OFFクーポン」で実際に発生）。
+# rakuten_coupon_review_batch.py と同じ対処として、店舗ごとの有効な画像URLに強制的に差し替える。
+IMAGE_URL_BY_STORE = {
+    "americana": "https://image.rakuten.co.jp/americana/cabinet/logo1.jpg",
+    "founder": "https://image.rakuten.co.jp/founder/logo/logo1.jpg",
+}
+
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
 SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 
@@ -460,6 +469,11 @@ def main():
                 print("  コピー元の詳細取得に失敗しました。")
                 log_rows.append([now_label, name, period_label, "コピー元の取得に失敗", "", ""])
                 continue
+
+            image_url = IMAGE_URL_BY_STORE.get(store)
+            if image_url and src.get("couponImage") != image_url:
+                print(f"    クーポン画像を差し替えます（元の値: {src.get('couponImage')} → {image_url}）")
+                src["couponImage"] = image_url
 
             xml = build_issue_xml(src, new_start, new_end, nested)
 

@@ -37,6 +37,6 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
           RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
           FORCE: ${{ inputs.force || 'false' }}
         run: python -u rakuten_coupon_review_batch.py

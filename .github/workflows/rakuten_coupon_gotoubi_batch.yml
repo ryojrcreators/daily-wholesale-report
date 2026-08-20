@@ -42,7 +42,7 @@ jobs:
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
           RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
-          DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
           FORCE: ${{ inputs.force || 'false' }}
           CW_ROOM_ID: ${{ inputs.cw_room_id }}
         run: python -u rakuten_coupon_gotoubi_batch.py

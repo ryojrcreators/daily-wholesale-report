@@ -1,0 +1,55 @@
+name: デバッグ（ケース保存失敗の調査）
+
+on:
+  workflow_dispatch:
+    inputs:
+      case_id:
+        description: '調査対象のケースID'
+        required: true
+        default: '155718'
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: ライブラリをインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libgbm1 libgtk-3-0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libxshmfence1
+      - name: 調査実行
+        env:
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          RAKUTEN_RMS_SERVICE_SECRET_1: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_1 }}
+          RAKUTEN_RMS_LICENSE_KEY_1: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_1 }}
+          RAKUTEN_SHOP_NAME_1: ${{ secrets.RAKUTEN_SHOP_NAME_1 }}
+          RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
+          RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
+          RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
+          YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
+          YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}
+          YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          DEBUG_CASE_ID: ${{ inputs.case_id }}
+        run: python -u debug_case_save.py
+      - name: スクリーンショット保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug_after_submit.png
+          if-no-files-found: ignore

@@ -81,6 +81,7 @@ from case_orders_auto_close import (
     login,
     fetch_target_cases,
     update_case,
+    REPLY_MESSAGE_NO_SKU,
     get_spreadsheet,
     get_yahoo_access_token,
     append_log,
@@ -543,8 +544,25 @@ def main():
 
             rows = fetch_price_rows(page, case_id)
             if not rows:
-                print("  楽天・YahooのSKUがありません。Newのまま残します。")
-                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", "対象SKUなし（Newのまま）"])
+                # Related Skus に楽天・YahooのSKUが1件も無い＝担当者がCase Groupsに
+                # Rakuten/Yahooを誤って含めてしまったケース。case_orders_auto_close.py の
+                # 同様の分岐（2026-08-20追加）と同じ方針で、モール側で何もする必要が無い旨の
+                # Replyを入れてCase GroupsからRakuten/Yahooを外すだけ行う。
+                print("  楽天・YahooのSKUがありません。")
+                if DRY_RUN:
+                    print("  【DRY RUN】本番ならReplyを入れてCase GroupsからRakuten/Yahooを外します。")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     "【DRY RUN】対象SKUなし（Rakuten/Yahoo除外予定）"])
+                    continue
+                try:
+                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU)
+                    print(f"  ✅ {action}／Reply「{REPLY_MESSAGE_NO_SKU}」を投稿しました。")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     f"対象SKUなし: {action}"])
+                except Exception as e:
+                    print(f"  ⚠️ ケース更新に失敗しました: {e}")
+                    log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
+                                     f"対象SKUなし・ケース更新失敗: {e}"])
                 continue
 
             expected_purchase_usd = get_case_purchase_price_usd(page)

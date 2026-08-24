@@ -65,8 +65,8 @@ def check_yahoo(yahoo_token: str, sku: str, expected_price: int) -> list:
         if item is None:
             continue
         try:
-            actual_price = int(str(item.get("Price", "")).replace(",", ""))
-        except ValueError:
+            actual_price = int(round(float(str(item.get("Price", "")).replace(",", ""))))
+        except (ValueError, TypeError):
             anomalies.append(f"[Yahoo] {sku}（{store['name']}）: 価格を読み取れません")
             continue
         if abs(actual_price - expected_price) > PRICE_TOLERANCE_YEN:

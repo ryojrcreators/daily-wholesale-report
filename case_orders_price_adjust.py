@@ -285,8 +285,8 @@ def read_sell_price(calc_page):
     if not result or not result.get("sellPrice"):
         return None, "Sell Price を読み取れませんでした"
     try:
-        price = int(str(result["sellPrice"]).replace(",", "").replace("¥", "").strip())
-    except ValueError:
+        price = int(round(float(str(result["sellPrice"]).replace(",", "").replace("¥", "").strip())))
+    except (ValueError, TypeError):
         return None, f"Sell Price が数値ではありません: {result['sellPrice']}"
 
     detail = (f"為替={result.get('exchangeRate')} / 利益率={result.get('profit')}% "
@@ -435,9 +435,16 @@ def calc_sell_price(page, case_id: str, row_index: int, shop_keyword: str = None
 
 
 def parse_price(value: str) -> int:
+    """
+    int() だけだと小数点付きの文字列（例: "6099.9996"、社内システムの
+    Sales Price欄に実際に入っていた）で ValueError になり、黙って0円を返して
+    しまっていた（2026-08-24、ケース155907で実際に発見：現在¥6,099.9996が
+    ¥0と誤認識され、「現在価格が計算結果以上なら変更しない」安全装置が
+    効かなくなっていた）。float() を経由してから丸める。
+    """
     try:
-        return int(str(value).replace(",", "").replace("¥", "").strip())
-    except ValueError:
+        return int(round(float(str(value).replace(",", "").replace("¥", "").strip())))
+    except (ValueError, TypeError):
         return 0
 
 
@@ -497,8 +504,8 @@ def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, ap
             if item is None:
                 continue
             try:
-                actual_price = int(str(item.get("Price", "")).replace(",", ""))
-            except ValueError:
+                actual_price = int(round(float(str(item.get("Price", "")).replace(",", ""))))
+            except (ValueError, TypeError):
                 continue
             if abs(actual_price - applied_price) > PRICE_TOLERANCE_YEN:
                 add_anomaly(anomalies, case_id, f"recheck_api:{code}:{store['name']}",

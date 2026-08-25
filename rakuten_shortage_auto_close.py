@@ -44,6 +44,7 @@ from case_orders_auto_close import (
     yahoo_restock,
     append_log,
 )
+from case_orders_price_adjust import CW_MENTION_RYO, post_chatwork
 
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "3"))
 RESTOCK_QUANTITY = int(os.environ.get("RESTOCK_QUANTITY", "100"))
@@ -234,6 +235,10 @@ def main():
     reopen_targets = find_reopen_targets(values)
     print(f"\n--- 再開対象（Close済みだが仕入れ可能に戻った）: {len(reopen_targets)}件 ---")
     reopened = 0
+    reopened_items = []  # Chatwork通知用（商品管理番号・商品名）
+
+    name_by_item = {row[COL_ITEM_NUMBER].strip(): (row[COL_NAME].strip() if len(row) > COL_NAME else "")
+                     for row in values[1:] if len(row) > COL_ITEM_NUMBER}
 
     for row_num, item_number in reopen_targets[:MAX_PER_RUN]:
         print(f"\n--- [再開] {item_number}（{row_num}行目） ---")
@@ -257,6 +262,7 @@ def main():
             continue
 
         reopened += 1
+        reopened_items.append((item_number, name_by_item.get(item_number, "")))
         if DRY_RUN:
             print("  【DRY RUN】本番ならここでI列の在庫対応済みを解除します。")
             continue
@@ -270,6 +276,20 @@ def main():
                 print(f"  ✅ I列（{current_row}行目）の在庫対応済みを解除しました。")
         except Exception as e:
             print(f"  ⚠️ シート更新に失敗しました（モール側は再開済み）: {e}")
+
+    if reopened_items and not DRY_RUN:
+        lines = [
+            CW_MENTION_RYO,
+            f"[info][title]仕入不可だった商品が再び仕入れ可能になりました（{len(reopened_items)}件）[/title]",
+        ]
+        for item_number, name in reopened_items:
+            lines.append(f"・{item_number} {name}".strip())
+        lines.append("楽天・Yahooの出品を自動的に再開しました。[/info]")
+        try:
+            post_chatwork("\n".join(lines))
+            print(f"\nChatworkへ再開通知を送信しました（{len(reopened_items)}件）。")
+        except Exception as e:
+            print(f"\nChatwork通知の送信に失敗しました: {e}")
 
     try:
         append_log(spreadsheet, log_rows)

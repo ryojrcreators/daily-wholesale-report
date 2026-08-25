@@ -61,4 +61,6 @@ jobs:
           YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          # 仕入れ可能に戻った際のChatwork通知に必要
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
         run: python -u rakuten_shortage_auto_close.py

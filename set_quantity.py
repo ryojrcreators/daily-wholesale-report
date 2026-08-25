@@ -116,7 +116,14 @@ def annotation_updates(positions: dict, sheet_row: int, name: str, product) -> l
         pkg, ratio, title = "", "", "（Keepaにデータなし）"
     else:
         pkg = package_quantity(product)
-        ratio = round(qty / pkg, 3)
+        # 「N個」「N個入」は出品者が複数個をセットにしたのではなく、商品自体の梱包を
+        # 説明した表記（例: 「30個入り」＝ASIN自体が30粒入りパッケージ）であるため、
+        # 実際の購入倍率は常に1とみなす。「N個セット」「セット×N」「×N」（出品者が
+        # 複数パックをまとめて売っている表記）とは区別する。2026-08-25、ユーザー確認済み。
+        if pattern in ("N個", "N個入"):
+            ratio = 1
+        else:
+            ratio = round(qty / pkg, 3)
         title = (product.get("title") or "")[:120]
 
     def cell(col_key):

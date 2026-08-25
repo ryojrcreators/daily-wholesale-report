@@ -77,25 +77,15 @@ MAKER_EXCLUDE_KEYWORDS = [
     "クレスト",
     "Colgate",
     "コルゲート",
-]
-
-# 単独の単語だと誤マッチしやすいメーカー（例："Secret"は一般的すぎる）は、
-# 組み合わせの両方が商品名に含まれる場合だけ除外する（AND条件）
-MAKER_EXCLUDE_COMBOS = [
-    (["Secret", "シークレット"], ["Deodorant", "デオドラント"]),  # Secret（デオドラントブランド）
-    (["Old Spice", "オールドスパイス"], ["Deodorant", "デオドラント"]),  # Old Spice（デオドラントブランド）
-    (["Speed Stick", "スピードスティック"], ["Deodorant", "デオドラント"]),  # Speed Stick（デオドラントブランド）
+    # デオドラント類はブランド問わずAmazon仕入れではないため、まとめて除外
+    "Deodorant",
+    "デオドラント",
 ]
 
 
 def has_excluded_maker(name: str) -> bool:
     lowered = name.lower()
-    if any(keyword.lower() in lowered for keyword in MAKER_EXCLUDE_KEYWORDS):
-        return True
-    for group_a, group_b in MAKER_EXCLUDE_COMBOS:
-        if any(a.lower() in lowered for a in group_a) and any(b.lower() in lowered for b in group_b):
-            return True
-    return False
+    return any(keyword.lower() in lowered for keyword in MAKER_EXCLUDE_KEYWORDS)
 
 
 def find_row_by_item_number(ws, item_number: str):

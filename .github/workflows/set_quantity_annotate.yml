@@ -15,6 +15,14 @@ on:
         description: '1回の実行で処理するバッチ数（1バッチ100件）'
         required: true
         default: '10'
+      force_reprocess:
+        description: '既に書き出し済みの行も再計算する（package_quantityロジック修正後の再計算用）'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   annotate:
@@ -32,4 +40,5 @@ jobs:
           KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
           ONLY_SETS: ${{ inputs.only_sets }}
           BATCHES_PER_RUN: ${{ inputs.batches_per_run }}
+          FORCE_REPROCESS: ${{ inputs.force_reprocess }}
         run: python -u set_quantity_annotate.py

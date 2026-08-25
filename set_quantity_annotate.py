@@ -47,6 +47,11 @@ BATCHES_PER_RUN = int(os.environ.get("BATCHES_PER_RUN", "10"))  # 1回の実行�
 # セット表記のある行だけに絞るか。Keepaトークンを節約したいときに使う
 ONLY_SETS = os.environ.get("ONLY_SETS", "true").lower() == "true"
 
+# true にすると「ASIN入数」が既に埋まっている行もスキップせず再処理する。
+# package_quantity()のロジックを直した後、既に書き出し済みの行を再計算するために使う
+# （2026-08-25、numberOfItems優先に変更した際に追加）
+FORCE_REPROCESS = os.environ.get("FORCE_REPROCESS", "false").lower() == "true"
+
 # トークンが尽きたときに補充を待つ上限（秒）。GitHub Actionsのジョブ上限は6時間
 MAX_WAIT_SECONDS = int(os.environ.get("MAX_WAIT_SECONDS", "14400"))
 
@@ -106,7 +111,7 @@ def main():
         if not asin:
             continue
         # すでに書き出し済みの行はとばす（再実行で続きから進められる）
-        if len(row) > col_pkg and row[col_pkg].strip():
+        if not FORCE_REPROCESS and len(row) > col_pkg and row[col_pkg].strip():
             continue
 
         name = row[COL_NAME] if len(row) > COL_NAME else ""

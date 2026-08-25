@@ -73,6 +73,10 @@ MAKER_EXCLUDE_KEYWORDS = [
     "トレーダージョーズ", "トレージョーズ", "トレーダージョーズ",
     "Obagi",
     "オバジ",
+    "Crest",
+    "クレスト",
+    "Colgate",
+    "コルゲート",
 ]
 
 # 単独の単語だと誤マッチしやすいメーカー（例："Secret"は一般的すぎる）は、
@@ -80,6 +84,7 @@ MAKER_EXCLUDE_KEYWORDS = [
 MAKER_EXCLUDE_COMBOS = [
     (["Secret", "シークレット"], ["Deodorant", "デオドラント"]),  # Secret（デオドラントブランド）
     (["Old Spice", "オールドスパイス"], ["Deodorant", "デオドラント"]),  # Old Spice（デオドラントブランド）
+    (["Speed Stick", "スピードスティック"], ["Deodorant", "デオドラント"]),  # Speed Stick（デオドラントブランド）
 ]
 
 

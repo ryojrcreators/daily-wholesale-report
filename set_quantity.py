@@ -135,10 +135,13 @@ def package_quantity(product: dict) -> int:
     """
     Keepaの商品情報から「1購入あたりの入数」を返す。判別できなければ 1。
 
-    packageQuantity と numberOfItems は同じ値を返すことが多いが、
-    未設定だと -1 が入るため、有効な値だけを採用する。
+    packageQuantity は「梱包（パッケージ）の数」、numberOfItems は「実際の個数」を
+    表すことが多く、単品梱包の商品では packageQuantity=1・numberOfItems=実個数
+    となってズレることがある（例: "30 Count (Pack of 1)" は packageQuantity=1、
+    numberOfItems=30。2026-08-25、ロリポップ商品で実際に発見・購入倍率が誤って
+    30になっていた）。numberOfItems を優先する。
     """
-    for key in ("packageQuantity", "numberOfItems"):
+    for key in ("numberOfItems", "packageQuantity"):
         value = product.get(key)
         if isinstance(value, int) and value > 0:
             return value

@@ -66,12 +66,15 @@ SHOP_NAME_TO_SELLER_ID = {
 }
 
 # ship_method（社内システムの表記）→ Yahooの配送会社コード
-# 楽天側のCARRIER_CODESと対になる表。ePacket等の未確認分は意図的に含めていない
-# （未マッピングとしてunmapped_carriersに回り、Chatworkで報告される）
+# 楽天側のCARRIER_CODESと対になる表。Yahoo!デベロッパーネットワークの
+# 注文詳細API・配送会社コード一覧より（1000:その他 1001:ヤマト運輸 1002:佐川急便
+# 1003:日本郵便 1004:西濃運輸）。ePacketは日本郵便の国際配送サービスのため1003を使う
+# （2026-08-27、実際にChatworkで未マッピング報告された7件を受けて追加）。
 YAHOO_CARRIER_CODES = {
     "Sagawa CDS": "1002",
     "Yamato Nekopos": "1001",
     "Yamato Over Size": "1001",
+    "ePacket": "1003",
 }
 
 SHIP_STATUS_SHIPPED = "3"     # 出荷済み

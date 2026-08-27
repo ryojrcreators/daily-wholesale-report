@@ -6,6 +6,8 @@ Wowma!（現au PAYマーケット）Wow!manager APIのラッパー。
   - 商品/【API設計書】_商品管理_価格更新API.xlsx（updateItemPrice）
   - 商品/【API設計書】_商品管理_商品情報取得API（個別）.xlsx（searchItemInfo）
   - 商品/【API設計書】_商品管理_在庫情報更新API.xlsx（updateStock、未実機検証）
+  - 受注・決済/【API設計書】_受注管理_受注情報取得API.xlsx（searchTradeInfoProc、未実機検証）
+  - 受注・決済/【API設計書】_受注管理_受注情報更新API.xlsx（updateTradeInfoProc、未実機検証）
 
 【重要】XMLのタグ名は仕様書の記載から推測して実装している。
 実際のAPIレスポンスと完全に一致するかは未検証のため、本番の価格変更（DRY_RUN=false）に
@@ -178,3 +180,79 @@ def wowma_update_stock(item_code: str, stock_count: int, dry_run: bool) -> tuple
         return True, f"{item_code}: 在庫{stock_count}に更新しました"
     error_msg = fields.get("message", res.text[:200])
     return False, f"{item_code}: 更新失敗（status={status}）: {error_msg}"
+
+
+# 配送業者コード（仕様書「受注情報更新API」「受注情報取得API」共通）
+WOWMA_CARRIER_CODES = {
+    "Yamato Nekopos": "1",   # クロネコヤマト
+    "Yamato Over Size": "1",
+    "Sagawa CDS": "2",       # 佐川急便
+    "ePacket": "6",          # 日本郵便
+}
+
+
+def wowma_get_order_info(order_id: str):
+    """
+    受注情報取得API（searchTradeInfoProc）。存在しない場合・エラー時は None を返す。
+    shippingNumber の有無で「既に発送情報が登録済みか」を判定するために使う
+    （orderStatus は貴店様カスタムステータスも含む文字列のため、シンプルに追跡番号の
+    有無で判定する）。未実機検証。
+    """
+    res = requests.get(
+        f"{WOWMA_BASE}/searchTradeInfoProc",
+        headers=_headers(),
+        params={"shopId": WOWMA_SHOP_ID, "orderId": order_id},
+        timeout=30,
+    )
+    fields = _parse_xml_flat(res.content)
+    status = fields.get("status")
+
+    if res.status_code >= 400 or status == "1":
+        return None
+
+    return fields
+
+
+def wowma_update_trade_info(order_id: str, shipping_date: str, carrier_code: str,
+                             tracking_num: str, dry_run: bool) -> tuple:
+    """
+    受注情報更新API（updateTradeInfoProc）。発送日・配送業者・追跡番号を登録する。
+    戻り値は (成功したか, メッセージ)。dry_run=True の場合は実際には呼ばない。
+    未実機検証（本番反映前にDRY RUNで1件、レスポンスのタグ名を必ず確認すること）。
+    """
+    if dry_run:
+        return True, f"{order_id}: 【DRY RUN】{shipping_date} / carrier={carrier_code} / {tracking_num} で登録予定"
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<request>"
+        f"<shopId>{WOWMA_SHOP_ID}</shopId>"
+        "<updateTradeInfo>"
+        f"<orderId>{order_id}</orderId>"
+        f"<shippingDate>{shipping_date}</shippingDate>"
+        f"<shippingCarrier>{carrier_code}</shippingCarrier>"
+        f"<shippingNumber>{tracking_num}</shippingNumber>"
+        "</updateTradeInfo>"
+        "</request>"
+    )
+    try:
+        res = requests.post(
+            f"{WOWMA_BASE}/updateTradeInfoProc",
+            headers=_xml_headers(),
+            data=body.encode("utf-8"),
+            timeout=30,
+        )
+    except Exception as e:
+        return False, f"{order_id}: 更新エラー: {e}"
+    finally:
+        time.sleep(API_INTERVAL)
+
+    if res.status_code >= 400:
+        return False, f"{order_id}: 更新失敗({res.status_code}): {res.text[:200]}"
+
+    fields = _parse_xml_flat(res.content)
+    status = fields.get("status")
+    if status == "0":
+        return True, f"{order_id}: 発送情報を登録しました"
+    error_msg = fields.get("message", res.text[:200])
+    return False, f"{order_id}: 更新失敗（status={status}）: {error_msg}"

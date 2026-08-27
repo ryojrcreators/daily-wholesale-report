@@ -218,7 +218,11 @@ def wowma_update_trade_info(order_id: str, shipping_date: str, carrier_code: str
     """
     受注情報更新API（updateTradeInfoProc）。発送日・配送業者・追跡番号を登録する。
     戻り値は (成功したか, メッセージ)。dry_run=True の場合は実際には呼ばない。
-    未実機検証（本番反映前にDRY RUNで1件、レスポンスのタグ名を必ず確認すること）。
+
+    仕様書の「request」はラッパータグではなく、shopId/orderId/shippingDate等が
+    直接requestの子要素になるフラットな構造（updateItemInfo/stockUpdateItemのような
+    中間タグは無い）。2026-08-27、実機で「<updateTradeInfo>」でラップした版が
+    「[orderId]必須入力項目です」エラーになったのを受けて修正。
     """
     if dry_run:
         return True, f"{order_id}: 【DRY RUN】{shipping_date} / carrier={carrier_code} / {tracking_num} で登録予定"
@@ -227,12 +231,10 @@ def wowma_update_trade_info(order_id: str, shipping_date: str, carrier_code: str
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<request>"
         f"<shopId>{WOWMA_SHOP_ID}</shopId>"
-        "<updateTradeInfo>"
         f"<orderId>{order_id}</orderId>"
         f"<shippingDate>{shipping_date}</shippingDate>"
         f"<shippingCarrier>{carrier_code}</shippingCarrier>"
         f"<shippingNumber>{tracking_num}</shippingNumber>"
-        "</updateTradeInfo>"
         "</request>"
     )
     try:

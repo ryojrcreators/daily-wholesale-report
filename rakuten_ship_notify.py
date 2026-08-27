@@ -62,16 +62,20 @@ SO_HEADS_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{APP_DOMAIN}/so-hea
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 # ── 楽天RMS 店舗ごとの認証情報 ────────────────────
-STORES = {
-    "americana": {
-        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"],
-        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_1"],
-    },
-    "founder": {
-        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"],
-        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_2"],
-    },
-}
+# 遅延読み込みにしている。login/collect_shipped_ordersはこの認証情報を使わないため、
+# yahoo_ship_notify.pyがそれらだけを再利用する際にRAKUTEN_RMS_*の設定を不要にするため
+# （2026-08-26、モジュールimport時点でos.environ[...]するとYahoo側にも必須になってしまう問題を修正）
+def get_rakuten_stores() -> dict:
+    return {
+        "americana": {
+            "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"],
+            "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_1"],
+        },
+        "founder": {
+            "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"],
+            "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_2"],
+        },
+    }
 
 # 注文番号のプレフィックスから店舗を判定する
 ORDER_PREFIX_TO_STORE = {
@@ -379,11 +383,12 @@ def main():
     skipped_already = 0
     not_found = 0
 
+    rakuten_stores = get_rakuten_stores()
     for store, targets in by_store.items():
         if not targets:
             continue
         print(f"\n--- {store}（{len(targets)}件） ---")
-        headers = auth_headers(**STORES[store])
+        headers = auth_headers(**rakuten_stores[store])
         order_numbers = [api_order_number(t["order_number"]) for t in targets]
         order_map = get_orders(headers, order_numbers)
 

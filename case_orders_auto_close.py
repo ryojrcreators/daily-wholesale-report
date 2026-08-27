@@ -106,18 +106,25 @@ YAHOO_SUFFIXES = ["", "msy", "akc", "-ak", "-msy", "-akc", "-mys"]
 
 # ── 楽天 RMS API ──────────────────────────────────
 RMS_BASE = "https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers"
-RAKUTEN_STORES = [
-    {
-        "name": os.environ["RAKUTEN_SHOP_NAME_1"],
-        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"],
-        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_1"],
-    },
-    {
-        "name": os.environ["RAKUTEN_SHOP_NAME_2"],
-        "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"],
-        "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_2"],
-    },
-]
+
+
+# 遅延読み込みにしている。yahoo_ship_notify.pyのようにYahoo関連のimportだけ必要な
+# 呼び出し元にまで、モジュールimport時点でRAKUTEN_RMS_*の設定を必須にしないため
+# （2026-08-26）。RAKUTEN_STORESという名前のグローバル変数として直接参照していた
+# 既存コードは get_rakuten_stores() の呼び出しに変更している。
+def get_rakuten_stores() -> list:
+    return [
+        {
+            "name": os.environ["RAKUTEN_SHOP_NAME_1"],
+            "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_1"],
+            "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_1"],
+        },
+        {
+            "name": os.environ["RAKUTEN_SHOP_NAME_2"],
+            "service_secret": os.environ["RAKUTEN_RMS_SERVICE_SECRET_2"],
+            "license_key": os.environ["RAKUTEN_RMS_LICENSE_KEY_2"],
+        },
+    ]
 
 # ── Yahoo API ─────────────────────────────────────
 YAHOO_CLIENT_ID = os.environ["YAHOO_CLIENT_ID"]
@@ -211,7 +218,7 @@ def rakuten_get_current_prices(manage_number: str) -> dict:
     価格調整後の検証（実際に書き込まれた値の確認）に使う。
     """
     prices = {}
-    for store in RAKUTEN_STORES:
+    for store in get_rakuten_stores():
         headers = rakuten_auth_headers(store)
         try:
             res = requests.get(f"{RMS_BASE}/{manage_number}", headers=headers, timeout=30)
@@ -242,7 +249,7 @@ def rakuten_hide(manage_number: str) -> list:
     （＝止めるべき出品が無いだけで異常ではない）。ログには残す。
     """
     results = []
-    for store in RAKUTEN_STORES:
+    for store in get_rakuten_stores():
         headers = rakuten_auth_headers(store)
         url = f"{RMS_BASE}/{manage_number}"
 
@@ -290,7 +297,7 @@ def rakuten_reopen(manage_number: str) -> list:
     hideItem=falseに戻す（＝販売再開）。戻り値の形式はrakuten_hideと同じ。
     """
     results = []
-    for store in RAKUTEN_STORES:
+    for store in get_rakuten_stores():
         headers = rakuten_auth_headers(store)
         url = f"{RMS_BASE}/{manage_number}"
 

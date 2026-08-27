@@ -37,7 +37,7 @@ from case_orders_auto_close import (
     DRY_RUN,
     JST,
     YAHOO_SUFFIXES,
-    RAKUTEN_STORES,
+    get_rakuten_stores,
     YAHOO_STORES,
     YAHOO_BASE,
     RMS_BASE,
@@ -142,7 +142,7 @@ def rakuten_update_price(manage_number: str, new_price: int) -> list:
     戻り値は [(店舗名, 結果文字列, 成功したか)] のリスト。
     """
     results = []
-    for store in RAKUTEN_STORES:
+    for store in get_rakuten_stores():
         headers = rakuten_auth_headers(store)
         url = f"{RMS_BASE}/{manage_number}"
 

@@ -317,7 +317,9 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
   let memoCache = {{}};
   let memoLoadFailed = false;
 
-  // メモはGoogle Apps Script経由でスプレッドシートに保存する（全PC・全ブラウザで共有される）
+  // メモはGoogle Apps Script経由でスプレッドシートに保存する（全PC・全ブラウザで共有される）。
+  // ページを開いた直後、この読み込みが終わる前にタイルをクリックすると空欄のまま表示されて
+  // しまうため、memoLoadPromiseをtoggleDetail側でawaitして読み込み完了を待ってから描画する。
   async function loadAllMemos() {{
     if (!MEMO_API_URL) return;
     try {{
@@ -349,7 +351,7 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
     }})[c]);
   }}
 
-  function toggleDetail(btn) {{
+  async function toggleDetail(btn) {{
     const status = btn.getAttribute('data-status');
     const detail = document.getElementById('detail');
     document.querySelectorAll('.tile').forEach(t => t.classList.remove('active'));
@@ -362,6 +364,13 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
 
     activeStatus = status;
     btn.classList.add('active');
+    document.getElementById('detail-title').textContent = '読み込み中…';
+    detail.classList.add('open');
+
+    await memoLoadPromise;
+
+    if (activeStatus !== status) return; // 待っている間に別のタイルへ切り替わった場合は何もしない
+
     document.getElementById('detail-title').textContent = status + '（' + (ORDER_DATA[status] || []).length.toLocaleString() + '件）'
       + (memoLoadFailed ? '　※メモの読み込みに失敗しました' : '');
 
@@ -394,7 +403,7 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
     setTimeout(() => badge.classList.remove('show'), 1500);
   }});
 
-  loadAllMemos();
+  const memoLoadPromise = loadAllMemos();
 </script>
 </body>
 </html>

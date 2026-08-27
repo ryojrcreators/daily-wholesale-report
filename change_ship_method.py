@@ -62,9 +62,14 @@ def find_internal_order_id(page, shipment_id):
     page.goto(url, wait_until="networkidle")
     page.wait_for_timeout(500)
 
+    # 注意: ページ右上の通知ベル（お知らせ）にも無関係な /sales/view/ リンクが
+    # 複数含まれているため、単純に最初のリンクを使うと別の注文を誤って
+    # 掴んでしまう（実際にこれが原因で誤検出したことがある）。
+    # 「SO# 1234567」本体のリンクはリンクテキストが数字のみなので、それで絞り込む。
     href = page.evaluate(
         """() => {
-            const a = document.querySelector('a[href*="/sales/view/"]');
+            const links = [...document.querySelectorAll('a[href*="/sales/view/"]')];
+            const a = links.find(l => /^\\d+$/.test(l.textContent.trim()));
             return a ? a.getAttribute('href') : null;
         }"""
     )

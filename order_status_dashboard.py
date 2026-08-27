@@ -136,6 +136,7 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
 
     data_json = json.dumps(by_status, ensure_ascii=False).replace("</", "<\\/")
     memo_api_url_json = json.dumps(memo_api_url or "")
+    shop_options = "".join(f'<option value="{shop}">{shop}</option>' for shop in TARGET_SHOPS)
 
     return f'''<!doctype html>
 <html lang="ja">
@@ -228,6 +229,27 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
     font-weight: 500;
     margin: 0 0 12px;
   }}
+  .detail-filters {{
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }}
+  .filter-input {{
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+  }}
+  .filter-input:focus {{
+    outline: none;
+    border-color: var(--text-secondary);
+  }}
+  #filter-order {{
+    flex: 1;
+    min-width: 160px;
+  }}
   .detail-table-wrap {{
     max-height: 480px;
     overflow: auto;
@@ -294,6 +316,13 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
 
   <div class="detail" id="detail">
     <h2 id="detail-title"></h2>
+    <div class="detail-filters">
+      <input type="text" id="filter-order" class="filter-input" placeholder="受注番号で検索">
+      <select id="filter-shop" class="filter-input">
+        <option value="">すべての店舗</option>
+        {shop_options}
+      </select>
+    </div>
     <div class="detail-table-wrap">
       <table>
         <thead>
@@ -314,6 +343,7 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
   const ORDER_DATA = JSON.parse(document.getElementById('order-data').textContent);
   const MEMO_API_URL = {memo_api_url_json};
   let activeStatus = null;
+  let currentRows = [];
   let memoCache = {{}};
   let memoLoadFailed = false;
 
@@ -374,7 +404,16 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
     document.getElementById('detail-title').textContent = status + '（' + (ORDER_DATA[status] || []).length.toLocaleString() + '件）'
       + (memoLoadFailed ? '　※メモの読み込みに失敗しました' : '');
 
-    const rows = (ORDER_DATA[status] || []).map(r => {{
+    currentRows = ORDER_DATA[status] || [];
+    document.getElementById('filter-order').value = '';
+    document.getElementById('filter-shop').value = '';
+    renderRows(currentRows);
+    detail.classList.add('open');
+    detail.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+  }}
+
+  function renderRows(rows) {{
+    const html = rows.map(r => {{
       const memo = escapeHtml(memoCache[r.order_number] || '');
       return '<tr>' +
         '<td>' + escapeHtml(r.shop) + '</td>' +
@@ -388,10 +427,22 @@ def build_html(by_status, start, end, generated_at, memo_api_url):
         '</td>' +
         '</tr>';
     }}).join('');
-    document.getElementById('detail-body').innerHTML = rows || '<tr><td colspan="6">データがありません</td></tr>';
-    detail.classList.add('open');
-    detail.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+    document.getElementById('detail-body').innerHTML = html || '<tr><td colspan="6">該当する注文がありません</td></tr>';
   }}
+
+  function applyFilters() {{
+    const orderQuery = document.getElementById('filter-order').value.trim().toLowerCase();
+    const shopQuery = document.getElementById('filter-shop').value;
+    const filtered = currentRows.filter(r => {{
+      if (shopQuery && r.shop !== shopQuery) return false;
+      if (orderQuery && !r.order_number.toLowerCase().includes(orderQuery)) return false;
+      return true;
+    }});
+    renderRows(filtered);
+  }}
+
+  document.getElementById('filter-order').addEventListener('input', applyFilters);
+  document.getElementById('filter-shop').addEventListener('change', applyFilters);
 
   document.getElementById('detail-body').addEventListener('change', async e => {{
     if (!e.target.classList.contains('memo-input')) return;

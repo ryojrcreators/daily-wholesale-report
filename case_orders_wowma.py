@@ -258,3 +258,47 @@ def wowma_update_trade_info(order_id: str, shipping_date: str, carrier_code: str
         return True, f"{order_id}: 発送情報を登録しました"
     error_msg = fields.get("message", res.text[:200])
     return False, f"{order_id}: 更新失敗（status={status}）: {error_msg}"
+
+
+TRADE_STATUS_COMPLETE = "完了"
+
+
+def wowma_update_trade_status(order_id: str, order_status: str, dry_run: bool) -> tuple:
+    """
+    受注ステータス更新API（updateTradeStsProc）。orderStatusは文字列指定
+    （新規受付/出荷待ち/完了/保留 等、貴店様カスタムステータスも含む）。
+    戻り値は (成功したか, メッセージ)。dry_run=True の場合は実際には呼ばない。
+    updateTradeInfoProcと同じくrequestはフラット構造（未実機検証）。
+    """
+    if dry_run:
+        return True, f"{order_id}: 【DRY RUN】ステータスを「{order_status}」に更新予定"
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<request>"
+        f"<shopId>{WOWMA_SHOP_ID}</shopId>"
+        f"<orderId>{order_id}</orderId>"
+        f"<orderStatus>{order_status}</orderStatus>"
+        "</request>"
+    )
+    try:
+        res = requests.post(
+            f"{WOWMA_BASE}/updateTradeStsProc",
+            headers=_xml_headers(),
+            data=body.encode("utf-8"),
+            timeout=30,
+        )
+    except Exception as e:
+        return False, f"{order_id}: ステータス更新エラー: {e}"
+    finally:
+        time.sleep(API_INTERVAL)
+
+    if res.status_code >= 400:
+        return False, f"{order_id}: ステータス更新失敗({res.status_code}): {res.text[:200]}"
+
+    fields = _parse_xml_flat(res.content)
+    status = fields.get("status")
+    if status == "0":
+        return True, f"{order_id}: ステータスを「{order_status}」に更新しました"
+    error_msg = fields.get("message", res.text[:200])
+    return False, f"{order_id}: ステータス更新失敗（status={status}）: {error_msg}"

@@ -47,13 +47,18 @@ from rakuten_ship_notify import (
 )
 from case_orders_wowma import (
     WOWMA_CARRIER_CODES,
+    TRADE_STATUS_COMPLETE,
     wowma_get_order_info,
     wowma_update_trade_info,
+    wowma_update_trade_status,
 )
 
 from playwright.sync_api import sync_playwright
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
+# 発送情報登録→ステータス完了の間の待機（秒）。Yahoo側で同様の連続呼び出しが
+# 前提条件エラーになる可能性があった前例に倣い、未検証のWowmaでも安全側に待機を入れる
+WAIT_BETWEEN_STATUS_SEC = int(os.environ.get("WAIT_BETWEEN_STATUS_SEC", "5"))
 
 SHOP_NAME_LA_EXPRESS = "LA Express"
 
@@ -164,12 +169,22 @@ def main():
             continue
 
         ok, message = wowma_update_trade_info(order_id, shipping_date, carrier_code, o["tracking_num"], DRY_RUN)
-        if ok:
-            registered += 1
-            print(f"  {o['order_number']}（{order_id}）: {message}")
-        else:
+        if not ok:
             errors.append({"order_number": o["order_number"], "message": message})
             print(f"  {o['order_number']}（{order_id}）: {message}")
+            continue
+
+        print(f"  {o['order_number']}（{order_id}）: {message}"
+              f"、{WAIT_BETWEEN_STATUS_SEC}秒待機してからステータスを完了にします")
+        time.sleep(WAIT_BETWEEN_STATUS_SEC)
+
+        ok2, message2 = wowma_update_trade_status(order_id, TRADE_STATUS_COMPLETE, DRY_RUN)
+        if ok2:
+            registered += 1
+            print(f"  {o['order_number']}（{order_id}）: {message2}")
+        else:
+            errors.append({"order_number": o["order_number"], "message": message2})
+            print(f"  {o['order_number']}（{order_id}）: {message2}")
 
     print(f"\n=== 完了: 登録{registered}件 / 既登録スキップ{skipped_already}件 / "
           f"情報不足{missing_info}件 / 見つからず{not_found}件 / エラー{len(errors)}件 / "

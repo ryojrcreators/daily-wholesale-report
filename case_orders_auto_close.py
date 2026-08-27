@@ -131,10 +131,14 @@ YAHOO_CLIENT_ID = os.environ["YAHOO_CLIENT_ID"]
 YAHOO_CLIENT_SECRET = os.environ["YAHOO_CLIENT_SECRET"]
 YAHOO_TOKEN_URL = "https://auth.login.yahoo.co.jp/yconnect/v2/token"
 YAHOO_BASE = "https://circus.shopping.yahooapis.jp/ShoppingWebService/V1"
-YAHOO_STORES = [
-    {"name": os.environ["YAHOO_SHOP_NAME_1"], "seller_id": os.environ["YAHOO_SELLER_ID_1"]},
-    {"name": os.environ["YAHOO_SHOP_NAME_2"], "seller_id": os.environ["YAHOO_SELLER_ID_2"]},
-]
+
+
+# 遅延読み込みにしている。理由はget_rakuten_stores()と同じ（2026-08-26）。
+def get_yahoo_stores() -> list:
+    return [
+        {"name": os.environ["YAHOO_SHOP_NAME_1"], "seller_id": os.environ["YAHOO_SELLER_ID_1"]},
+        {"name": os.environ["YAHOO_SHOP_NAME_2"], "seller_id": os.environ["YAHOO_SELLER_ID_2"]},
+    ]
 
 # ── スプレッドシート ──────────────────────────────
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
@@ -385,7 +389,7 @@ def yahoo_close(token: str, candidates: list) -> list:
     results = []
     found_any = False
 
-    for store in YAHOO_STORES:
+    for store in get_yahoo_stores():
         for item_code in candidates:
             try:
                 item = yahoo_get_item(token, store, item_code)
@@ -438,7 +442,7 @@ def yahoo_restock(token: str, candidates: list, quantity: int = 100) -> list:
     results = []
     found_any = False
 
-    for store in YAHOO_STORES:
+    for store in get_yahoo_stores():
         for item_code in candidates:
             try:
                 item = yahoo_get_item(token, store, item_code)

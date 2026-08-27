@@ -38,7 +38,7 @@ from case_orders_auto_close import (
     JST,
     YAHOO_SUFFIXES,
     get_rakuten_stores,
-    YAHOO_STORES,
+    get_yahoo_stores,
     YAHOO_BASE,
     RMS_BASE,
     API_INTERVAL,
@@ -228,7 +228,7 @@ def yahoo_check_sale_conflict(token: str, candidates: list) -> bool:
     候補の商品コードを2店舗それぞれで実在確認し、特価(SalePrice)が通常価格(Price)と
     異なる＝セール中のものが1つでもあればTrueを返す。
     """
-    for store in YAHOO_STORES:
+    for store in get_yahoo_stores():
         for item_code in candidates:
             try:
                 item = yahoo_get_item(token, store, item_code)
@@ -256,7 +256,7 @@ def yahoo_update_price(token: str, candidates: list, new_price: int) -> list:
     results = []
     found_any = False
 
-    for store in YAHOO_STORES:
+    for store in get_yahoo_stores():
         for item_code in candidates:
             try:
                 item = yahoo_get_item(token, store, item_code)

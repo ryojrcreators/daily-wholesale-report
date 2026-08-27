@@ -23,7 +23,7 @@ from case_orders_auto_close import (
     rakuten_get_current_prices,
     SHOP_RAKUTEN,
     SHOP_YAHOO,
-    YAHOO_STORES,
+    get_yahoo_stores,
 )
 from case_orders_price_adjust import (
     PRICE_TOLERANCE_YEN,
@@ -56,7 +56,7 @@ def check_rakuten(sku: str, expected_price: int) -> list:
 def check_yahoo(yahoo_token: str, sku: str, expected_price: int) -> list:
     """出品が見つからない場合は異常扱いしない（check_rakutenと同じ方針）。"""
     anomalies = []
-    for store in YAHOO_STORES:
+    for store in get_yahoo_stores():
         try:
             item = yahoo_get_item(yahoo_token, store, sku)
         except Exception as e:

@@ -70,7 +70,7 @@ from playwright.sync_api import sync_playwright
 from case_orders_auto_close import (
     BASE_URL,
     YAHOO_SUFFIXES,
-    YAHOO_STORES,
+    get_yahoo_stores,
     yahoo_get_item,
     rakuten_get_current_prices,
     SHOP_RAKUTEN,
@@ -496,7 +496,7 @@ def recheck_yahoo_price(page, case_id: str, row_index: int, yahoo_token: str, ap
                 f"[Yahoo] {code}: 書き込んだ値 ¥{applied_price:,} だが再計算すると ¥{recomputed:,}"
             )
 
-        for store in YAHOO_STORES:
+        for store in get_yahoo_stores():
             try:
                 item = yahoo_get_item(yahoo_token, store, code)
             except Exception:
@@ -708,7 +708,7 @@ def main():
                         # 他の楽天SKUで既に確定済み（想定外の衝突）。二重処理を避けるためスキップ
                         print(f"    ⚠️ {code} は他の商品で既に処理済みのためスキップします")
                         continue
-                    for store in YAHOO_STORES:
+                    for store in get_yahoo_stores():
                         try:
                             item = yahoo_get_item(yahoo_token, store, code)
                         except Exception as e:

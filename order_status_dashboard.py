@@ -31,9 +31,7 @@ TARGET_SHOPS = ["アメリカーナ", "Founder", "LA Express", "American Kitchen
 COL_ORDER_NUMBER = 0
 COL_CREATED_TIME = 1
 COL_SHOP_NAME = 4
-COL_PRICE = 11
 COL_ORDER_STATUS = 14
-COL_NAME = 17
 COL_SHIP_METHOD = 23
 COL_TRACKING_NUM = 24
 
@@ -97,17 +95,10 @@ def build_order_records(rows):
         if not order_number or order_number in seen:
             continue
 
-        try:
-            price = round(float(row[COL_PRICE]))
-        except (ValueError, TypeError, IndexError):
-            price = None
-
         seen[order_number] = {
             "shop": shop_name,
             "order_number": order_number,
             "created_time": row[COL_CREATED_TIME].strip() if len(row) > COL_CREATED_TIME else "",
-            "name": row[COL_NAME].strip() if len(row) > COL_NAME else "",
-            "price": price,
             "ship_method": row[COL_SHIP_METHOD].strip() if len(row) > COL_SHIP_METHOD else "",
             "tracking_num": row[COL_TRACKING_NUM].strip() if len(row) > COL_TRACKING_NUM else "",
             "status": (row[COL_ORDER_STATUS].strip() if len(row) > COL_ORDER_STATUS else "") or "(未設定)",
@@ -258,8 +249,32 @@ def build_html(by_status, start, end, generated_at):
     color: var(--text-secondary);
     font-weight: 500;
   }}
-  td.price {{
-    text-align: right;
+  td.memo-cell {{
+    white-space: normal;
+    width: 240px;
+  }}
+  .memo-input {{
+    width: 100%;
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+  }}
+  .memo-input:focus {{
+    outline: none;
+    border-color: var(--text-secondary);
+  }}
+  .memo-saved {{
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 6px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }}
+  .memo-saved.show {{
+    opacity: 1;
   }}
   .footer {{
     margin-top: 2rem;
@@ -282,8 +297,8 @@ def build_html(by_status, start, end, generated_at):
       <table>
         <thead>
           <tr>
-            <th>店舗</th><th>受注番号</th><th>受注日時</th><th>商品名</th>
-            <th>金額</th><th>配送方法</th><th>追跡番号</th>
+            <th>店舗</th><th>受注番号</th><th>受注日時</th>
+            <th>配送方法</th><th>追跡番号</th><th>メモ</th>
           </tr>
         </thead>
         <tbody id="detail-body"></tbody>
@@ -296,7 +311,30 @@ def build_html(by_status, start, end, generated_at):
 <script id="order-data" type="application/json">{data_json}</script>
 <script>
   const ORDER_DATA = JSON.parse(document.getElementById('order-data').textContent);
+  const MEMO_KEY_PREFIX = 'order_memo:';
   let activeStatus = null;
+
+  // メモはこのブラウザのlocalStorageにのみ保存される（他のPC・ブラウザとは共有されない）
+  function loadMemo(orderNumber) {{
+    try {{
+      return localStorage.getItem(MEMO_KEY_PREFIX + orderNumber) || '';
+    }} catch (e) {{
+      return '';
+    }}
+  }}
+
+  function saveMemo(orderNumber, value) {{
+    try {{
+      if (value) {{
+        localStorage.setItem(MEMO_KEY_PREFIX + orderNumber, value);
+      }} else {{
+        localStorage.removeItem(MEMO_KEY_PREFIX + orderNumber);
+      }}
+      return true;
+    }} catch (e) {{
+      return false;
+    }}
+  }}
 
   function escapeHtml(s) {{
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({{
@@ -320,21 +358,32 @@ def build_html(by_status, start, end, generated_at):
     document.getElementById('detail-title').textContent = status + '（' + (ORDER_DATA[status] || []).length.toLocaleString() + '件）';
 
     const rows = (ORDER_DATA[status] || []).map(r => {{
-      const price = (r.price === null || r.price === undefined) ? '-' : '¥' + r.price.toLocaleString();
+      const memo = escapeHtml(loadMemo(r.order_number));
       return '<tr>' +
         '<td>' + escapeHtml(r.shop) + '</td>' +
         '<td>' + escapeHtml(r.order_number) + '</td>' +
         '<td>' + escapeHtml(r.created_time) + '</td>' +
-        '<td>' + escapeHtml(r.name) + '</td>' +
-        '<td class="price">' + price + '</td>' +
         '<td>' + escapeHtml(r.ship_method) + '</td>' +
         '<td>' + escapeHtml(r.tracking_num) + '</td>' +
+        '<td class="memo-cell">' +
+          '<input type="text" class="memo-input" data-order="' + escapeHtml(r.order_number) + '" value="' + memo + '">' +
+          '<span class="memo-saved">保存済み</span>' +
+        '</td>' +
         '</tr>';
     }}).join('');
-    document.getElementById('detail-body').innerHTML = rows || '<tr><td colspan="7">データがありません</td></tr>';
+    document.getElementById('detail-body').innerHTML = rows || '<tr><td colspan="6">データがありません</td></tr>';
     detail.classList.add('open');
     detail.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
   }}
+
+  document.getElementById('detail-body').addEventListener('change', e => {{
+    if (!e.target.classList.contains('memo-input')) return;
+    const orderNumber = e.target.getAttribute('data-order');
+    saveMemo(orderNumber, e.target.value.trim());
+    const badge = e.target.parentElement.querySelector('.memo-saved');
+    badge.classList.add('show');
+    setTimeout(() => badge.classList.remove('show'), 1500);
+  }});
 </script>
 </body>
 </html>

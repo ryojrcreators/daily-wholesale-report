@@ -188,14 +188,35 @@ def save_refresh_token(spreadsheet, new_token: str):
     ws.append_row(["refresh_token", new_token])
 
 
-def get_yahoo_access_token(spreadsheet) -> str:
-    current = load_refresh_token(spreadsheet)
-    res = requests.post(
+def _refresh_yahoo_token(refresh_token: str):
+    return requests.post(
         YAHOO_TOKEN_URL,
         auth=(YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET),
-        data={"grant_type": "refresh_token", "refresh_token": current},
+        data={"grant_type": "refresh_token", "refresh_token": refresh_token},
         timeout=30,
     )
+
+
+def get_yahoo_access_token(spreadsheet) -> str:
+    """
+    refresh_tokenは全スクリプト共通でYahoo_Configタブに1つだけ保存されており、
+    使うたびにローテーション（新しい値に更新）される。Close自動化・価格調整自動化が
+    同じ毎時0分に走るなど、複数のスクリプトがほぼ同時に更新しようとすると、
+    片方が更新した直後にもう片方が「もう無効になった」古いトークンで更新しようとして
+    invalid_grant（refresh token has expired）になることがある（2026-08-27、実際に
+    価格調整で発生）。失敗したらシートから最新のrefresh_tokenを読み直して1回だけ
+    再試行する。
+    """
+    current = load_refresh_token(spreadsheet)
+    res = _refresh_yahoo_token(current)
+
+    if res.status_code != 200:
+        print(f"  Yahooアクセストークン更新失敗（1回目、status={res.status_code}）: {res.text[:300]}")
+        print("  他のスクリプトが直前に更新した可能性があるため、少し待って最新のrefresh_tokenで再試行します。")
+        time.sleep(5)
+        current = load_refresh_token(spreadsheet)
+        res = _refresh_yahoo_token(current)
+
     if res.status_code != 200:
         raise RuntimeError(f"Yahooアクセストークン更新失敗（status={res.status_code}）: {res.text[:300]}")
     data = res.json()

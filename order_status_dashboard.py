@@ -112,7 +112,7 @@ def build_order_records(rows):
     return by_status
 
 
-def build_html(by_status, start, end, generated_at):
+def build_html(by_status, start, end, generated_at, memo_api_url):
     status_counts = Counter({status: len(records) for status, records in by_status.items()})
     total = sum(status_counts.values())
 
@@ -135,6 +135,7 @@ def build_html(by_status, start, end, generated_at):
         </button>''')
 
     data_json = json.dumps(by_status, ensure_ascii=False).replace("</", "<\\/")
+    memo_api_url_json = json.dumps(memo_api_url or "")
 
     return f'''<!doctype html>
 <html lang="ja">
@@ -311,25 +312,31 @@ def build_html(by_status, start, end, generated_at):
 <script id="order-data" type="application/json">{data_json}</script>
 <script>
   const ORDER_DATA = JSON.parse(document.getElementById('order-data').textContent);
-  const MEMO_KEY_PREFIX = 'order_memo:';
+  const MEMO_API_URL = {memo_api_url_json};
   let activeStatus = null;
+  let memoCache = {{}};
+  let memoLoadFailed = false;
 
-  // メモはこのブラウザのlocalStorageにのみ保存される（他のPC・ブラウザとは共有されない）
-  function loadMemo(orderNumber) {{
+  // メモはGoogle Apps Script経由でスプレッドシートに保存する（全PC・全ブラウザで共有される）
+  async function loadAllMemos() {{
+    if (!MEMO_API_URL) return;
     try {{
-      return localStorage.getItem(MEMO_KEY_PREFIX + orderNumber) || '';
+      const res = await fetch(MEMO_API_URL);
+      memoCache = await res.json();
     }} catch (e) {{
-      return '';
+      memoLoadFailed = true;
     }}
   }}
 
-  function saveMemo(orderNumber, value) {{
+  async function saveMemo(orderNumber, value) {{
+    if (!MEMO_API_URL) return false;
     try {{
-      if (value) {{
-        localStorage.setItem(MEMO_KEY_PREFIX + orderNumber, value);
-      }} else {{
-        localStorage.removeItem(MEMO_KEY_PREFIX + orderNumber);
-      }}
+      await fetch(MEMO_API_URL, {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'text/plain;charset=utf-8' }},
+        body: JSON.stringify({{ order_number: orderNumber, memo: value }}),
+      }});
+      memoCache[orderNumber] = value;
       return true;
     }} catch (e) {{
       return false;
@@ -355,10 +362,11 @@ def build_html(by_status, start, end, generated_at):
 
     activeStatus = status;
     btn.classList.add('active');
-    document.getElementById('detail-title').textContent = status + '（' + (ORDER_DATA[status] || []).length.toLocaleString() + '件）';
+    document.getElementById('detail-title').textContent = status + '（' + (ORDER_DATA[status] || []).length.toLocaleString() + '件）'
+      + (memoLoadFailed ? '　※メモの読み込みに失敗しました' : '');
 
     const rows = (ORDER_DATA[status] || []).map(r => {{
-      const memo = escapeHtml(loadMemo(r.order_number));
+      const memo = escapeHtml(memoCache[r.order_number] || '');
       return '<tr>' +
         '<td>' + escapeHtml(r.shop) + '</td>' +
         '<td>' + escapeHtml(r.order_number) + '</td>' +
@@ -376,14 +384,17 @@ def build_html(by_status, start, end, generated_at):
     detail.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
   }}
 
-  document.getElementById('detail-body').addEventListener('change', e => {{
+  document.getElementById('detail-body').addEventListener('change', async e => {{
     if (!e.target.classList.contains('memo-input')) return;
     const orderNumber = e.target.getAttribute('data-order');
-    saveMemo(orderNumber, e.target.value.trim());
     const badge = e.target.parentElement.querySelector('.memo-saved');
+    const ok = await saveMemo(orderNumber, e.target.value.trim());
+    badge.textContent = ok ? '保存済み' : '保存失敗';
     badge.classList.add('show');
     setTimeout(() => badge.classList.remove('show'), 1500);
   }});
+
+  loadAllMemos();
 </script>
 </body>
 </html>
@@ -400,7 +411,8 @@ def main():
     for status, records in sorted(by_status.items(), key=lambda x: -len(x[1])):
         print(f"  {status}: {len(records)}件")
 
-    html = build_html(by_status, start, end, datetime.now(LA_TZ))
+    memo_api_url = os.environ.get("ORDER_MEMO_API_URL", "")
+    html = build_html(by_status, start, end, datetime.now(LA_TZ), memo_api_url)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"\n{OUTPUT_PATH} に出力しました。")

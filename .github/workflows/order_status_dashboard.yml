@@ -31,6 +31,7 @@ jobs:
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           LOOKBACK_DAYS: ${{ inputs.lookback_days || '21' }}
+          ORDER_MEMO_API_URL: ${{ secrets.ORDER_MEMO_API_URL }}
         run: python -u order_status_dashboard.py
       - name: アップロード
         uses: actions/upload-artifact@v4

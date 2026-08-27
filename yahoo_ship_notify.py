@@ -90,8 +90,14 @@ def resolve_yahoo_store(shop_name: str):
 def build_order_id(shop_name: str, order_number: str, seller_id: str) -> str:
     """社内システムのorder_number（例: "American Kitchen10053228"）から
     shop_name部分を取り除いた数字部分と、seller_idを組み合わせてYahooのOrderIdを作る。
+
+    末尾の"-R"（再送注文を表す社内システム独自の表記）はYahoo側のOrderIdには
+    存在しないため取り除く（2026-08-27、americankitchen-10053490-Rが
+    "Not Exists"エラーになったのを受けて追加）。
     """
     numeric_part = order_number[len(shop_name):].strip()
+    if numeric_part.endswith("-R"):
+        numeric_part = numeric_part[:-2]
     return f"{seller_id}-{numeric_part}"
 
 

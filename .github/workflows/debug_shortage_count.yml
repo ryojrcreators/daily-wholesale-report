@@ -16,4 +16,10 @@ jobs:
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           RAKUTEN_SPREADSHEET_ID: ${{ secrets.RAKUTEN_SPREADSHEET_ID }}
+          # import経路上のcase_orders_auto_close.pyがモジュール読み込み時に必須とするだけで、
+          # このスクリプトでは実際には使わない（ダミー値でよい）
+          LOGIN_ID_1: dummy
+          LOGIN_PASS_1: dummy
+          LOGIN_ID_2: dummy
+          LOGIN_PASS_2: dummy
         run: python debug_shortage_count.py

@@ -53,6 +53,7 @@ CATEGORY_EXCLUDE_KEYWORDS = {
     "ペットフード・ペットサプリ・ペットヘアケア": [
         "ディスペンサー", "dispenser", "ボウル", "bowl", "おもちゃ", "toy",
         "パズル", "puzzle", "フィーダー", "feeder",
+        "カーペットクリーナー", "カーペットシャンプー", "carpet cleaner", "carpet shampoo",
     ],
 }
 

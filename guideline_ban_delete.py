@@ -10,8 +10,9 @@ F列「確認済み」に承認マーク（ok/OK/○/削除/承認 のいずれ�
 実行結果は各行の「対応メモ」列と、既存の「自動Close_ログ」タブ（他の自動化と共通）
 の両方に記録する。
 
-Wowma（LA Express）はguideline_ban_scan.py側で全件出品データを取得する仕組みが
-まだ無く候補リストに含まれないため、このスクリプトの対象外（別途手動確認）。
+Wowma（LA Express）はcase_orders_wowma.pyのdeleteItemInfos（商品削除API）を使う。
+このAPIは仕様書から実装したのみで未実機検証のため、本番実行前に必ずONLY_ITEM_CODESで
+1件に絞ってDRY RUN→本番の順で試すこと。
 """
 
 import os
@@ -33,8 +34,10 @@ from case_orders_auto_close import (
     append_log,
     API_INTERVAL,
 )
+from case_orders_wowma import wowma_delete_items
 
 CANDIDATE_SHEET_NAME = "削除候補_ガイドライン対応"
+WOWMA_SHOP_LABEL = "LA Express"
 APPROVE_VALUES = {"ok", "○", "delete", "削除", "済", "承認"}
 
 # テスト用：指定した場合、この商品管理番号/商品コードだけを対象にする（カンマ区切りで複数可）
@@ -131,6 +134,8 @@ def main():
                 ok, note = False, f"店舗「{shop}」の認証情報が見つかりません"
             else:
                 ok, note = yahoo_delete_item(yahoo_token, store, code)
+        elif mall == "Wowma":
+            _, ok, note = wowma_delete_items([code], DRY_RUN)[0]
         else:
             ok, note = False, f"未対応モール: {mall}"
 

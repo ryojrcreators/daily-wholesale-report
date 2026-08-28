@@ -62,6 +62,97 @@ def _parse_xml_flat(content: bytes) -> dict:
     return fields
 
 
+def _strip_ns(root):
+    """名前空間プレフィックスを落として、通常のfind/findall/iter(タグ名)を使えるようにする。"""
+    for elem in root.iter():
+        if "}" in elem.tag:
+            elem.tag = elem.tag.split("}", 1)[1]
+    return root
+
+
+def wowma_search_items(start_count: int, total_count: int = 500) -> tuple:
+    """
+    商品情報取得API（複数）（searchItemInfos）。ページング用。
+    仕様書（【API設計書】_商品管理_商品情報取得API（複数）.xlsx）確認済み（2026-08-28、未実機検証）：
+      - GET /searchItemInfos、Content-Type: application/x-www-form-urlencoded
+      - startCount: 何件目から取得するか（1始まり）、totalCount: 1回の取得件数（最大500）
+      - レスポンスの maxCount が全体のヒット件数（＝これに達するまでstartCountを進めてループする）
+
+    戻り値: (items: list[dict（itemCode/itemName/itemPriceなど）], max_count: int)
+    """
+    res = requests.get(
+        f"{WOWMA_BASE}/searchItemInfos",
+        headers=_headers(),
+        params={"shopId": WOWMA_SHOP_ID, "startCount": str(start_count), "totalCount": str(total_count)},
+        timeout=30,
+    )
+    if res.status_code >= 400:
+        raise RuntimeError(f"searchItemInfos エラー({res.status_code}): {res.text[:300]}")
+
+    root = _strip_ns(ElementTree.fromstring(res.content))
+    status = root.findtext(".//status")
+    if status == "1":
+        err = root.find(".//error")
+        code = err.findtext("code") if err is not None else ""
+        message = err.findtext("message") if err is not None else ""
+        raise RuntimeError(f"searchItemInfos エラー: {code} {message}")
+
+    max_count = int(root.findtext(".//maxCount") or "0")
+    items = []
+    for item_el in root.iter("resultItems"):
+        item = {child.tag: (child.text or "").strip() for child in item_el if child.text}
+        items.append(item)
+    return items, max_count
+
+
+def wowma_delete_items(item_codes: list, dry_run: bool) -> list:
+    """
+    商品削除API（複数）（deleteItemInfos）。1回のリクエストで最大1000件まとめて削除できる。
+    仕様書（【API設計書】_商品管理_商品削除API.xlsx）確認済み（2026-08-28、未実機検証）：
+      - POST /deleteItemInfos、Content-Type: application/xml; charset=utf-8
+      - <request><shopId>…</shopId><deleteItemInfo><itemCode>…</itemCode></deleteItemInfo>…</request>
+
+    戻り値: [(item_code, 成功したか, メッセージ)]
+    """
+    if not item_codes:
+        return []
+    if dry_run:
+        return [(code, True, "【DRY RUN】削除対象") for code in item_codes]
+
+    from xml.sax.saxutils import escape
+
+    delete_blocks = "".join(
+        f"<deleteItemInfo><itemCode>{escape(code)}</itemCode></deleteItemInfo>" for code in item_codes
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<request><shopId>{WOWMA_SHOP_ID}</shopId>{delete_blocks}</request>"
+    )
+    try:
+        res = requests.post(
+            f"{WOWMA_BASE}/deleteItemInfos", headers=_xml_headers(), data=body.encode("utf-8"), timeout=30
+        )
+    except Exception as e:
+        return [(code, False, f"削除エラー: {e}") for code in item_codes]
+
+    if res.status_code >= 400:
+        return [(code, False, f"削除失敗({res.status_code}) {res.text[:150]}") for code in item_codes]
+
+    root = _strip_ns(ElementTree.fromstring(res.content))
+    status = root.findtext(".//status")
+    if status == "1":
+        err = root.find(".//error")
+        code_ = err.findtext("code") if err is not None else ""
+        message = err.findtext("message") if err is not None else ""
+        return [(code, False, f"削除失敗: {code_} {message}") for code in item_codes]
+
+    deleted_codes = {el.findtext("itemCode") for el in root.iter("deleteResult")}
+    return [
+        (code, code in deleted_codes, "削除しました" if code in deleted_codes else "削除結果に含まれず（要確認）")
+        for code in item_codes
+    ]
+
+
 def wowma_get_item(item_code: str):
     """
     商品情報取得API（個別）。存在しない場合は None を返す。

@@ -16,4 +16,6 @@ jobs:
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          WOWMA_API_KEY: ${{ secrets.WOWMA_API_KEY }}
+          WOWMA_SHOP_ID: ${{ secrets.WOWMA_SHOP_ID }}
         run: python guideline_ban_scan.py

@@ -47,4 +47,6 @@ jobs:
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          WOWMA_API_KEY: ${{ secrets.WOWMA_API_KEY }}
+          WOWMA_SHOP_ID: ${{ secrets.WOWMA_SHOP_ID }}
         run: python -u guideline_ban_delete.py

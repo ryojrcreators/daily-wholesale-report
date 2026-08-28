@@ -13,14 +13,18 @@
 
 import os
 import re
+import time
 
 import gspread
 from google.oauth2.service_account import Credentials
+
+from case_orders_wowma import wowma_search_items, API_INTERVAL as WOWMA_API_INTERVAL
 
 SPREADSHEET_ID = os.environ["RAKUTEN_LISTING_SPREADSHEET_ID"]
 RAKUTEN_SHEET_NAME = "楽天_出品データ"
 YAHOO_SHEET_NAME = "Yahoo_出品データ"
 OUTPUT_SHEET_NAME = "削除候補_ガイドライン対応"
+WOWMA_SHOP_LABEL = "LA Express"
 
 # カテゴリごとのキーワード（商品名に部分一致すれば候補にする。大文字小文字は無視）
 CATEGORY_KEYWORDS = {
@@ -113,6 +117,22 @@ def main():
         all_results += find_matches("Yahoo", yahoo_rows)
     except gspread.exceptions.WorksheetNotFound:
         print(f"「{YAHOO_SHEET_NAME}」タブが見つかりません。スキップします。")
+
+    wowma_rows = []
+    start_count = 1
+    page_size = 500
+    try:
+        while True:
+            items, max_count = wowma_search_items(start_count, page_size)
+            wowma_rows += [[WOWMA_SHOP_LABEL, item.get("itemCode", ""), item.get("itemName", "")] for item in items]
+            time.sleep(WOWMA_API_INTERVAL)
+            if not items or start_count + len(items) > max_count:
+                break
+            start_count += len(items)
+        print(f"Wowma（{WOWMA_SHOP_LABEL}）: {len(wowma_rows)}件読み込み")
+        all_results += find_matches("Wowma", wowma_rows)
+    except Exception as e:
+        print(f"Wowmaの取得でエラーが発生したためスキップします: {e}")
 
     print(f"\n該当候補: {len(all_results)}件")
     for r in all_results[:50]:

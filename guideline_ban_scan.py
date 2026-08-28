@@ -44,6 +44,13 @@ CATEGORY_KEYWORDS = {
     "牛エキス入り食品": ["牛エキス", "ビーフエキス", "beef extract"],
 }
 
+# カテゴリごとの除外キーワード。「玄米」等はお米そのもの以外の加工食品（茶・パスタ・
+# プロテイン等）にも使われる表記のため、これらを含む場合は対象から外す。
+# 2026-08-28、ユーザー確認: 玄米茶・玄米パスタは対象外。
+CATEGORY_EXCLUDE_KEYWORDS = {
+    "外国産米": ["茶", "パスタ", "プロテイン", "protein", "シロップ", "syrup"],
+}
+
 
 def get_spreadsheet():
     creds_json = os.environ["GOOGLE_CREDENTIALS"]
@@ -68,6 +75,11 @@ def find_matches(mall: str, rows: list):
         lowered = name.lower()
         for category, keywords in CATEGORY_KEYWORDS.items():
             hit_keywords = [kw for kw in keywords if kw.lower() in lowered]
+            if not hit_keywords:
+                continue
+            exclude_keywords = CATEGORY_EXCLUDE_KEYWORDS.get(category, [])
+            if any(ex.lower() in lowered for ex in exclude_keywords):
+                continue
             if hit_keywords:
                 results.append([mall, shop, code, name, category, "、".join(hit_keywords)])
                 break  # 1商品1カテゴリで十分（複数該当しても最初の1つだけ記録）

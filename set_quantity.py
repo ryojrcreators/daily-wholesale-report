@@ -103,6 +103,25 @@ def ensure_annotation_columns(sheet, header: list, extra_headers: list = None) -
     return positions
 
 
+def compute_pkg_and_ratio(name: str, product) -> tuple:
+    """
+    商品名とKeepa商品情報から (ASIN入数, 購入倍率) を計算する。
+    原価計算（rakuten_price_check.judge）とシート書き出し（annotation_updates）の
+    両方から呼ばれる共通ロジック。product が None なら ("", "") を返す。
+    """
+    qty, pattern, _ = extract_quantity(name)
+    pkg = package_quantity(product)
+    # 「N個」「N個入」は出品者が複数個をセットにしたのではなく、商品自体の梱包を
+    # 説明した表記（例: 「30個入り」＝ASIN自体が30粒入りパッケージ）であるため、
+    # 実際の購入倍率は常に1とみなす。「N個セット」「セット×N」「×N」（出品者が
+    # 複数パックをまとめて売っている表記）とは区別する。2026-08-25、ユーザー確認済み。
+    if pattern in ("N個", "N個入"):
+        ratio = 1
+    else:
+        ratio = round(qty / pkg, 3)
+    return pkg, ratio
+
+
 def annotation_updates(positions: dict, sheet_row: int, name: str, product) -> list:
     """
     1行ぶんの書き出し内容を batch_update 用の形で返す。
@@ -115,15 +134,7 @@ def annotation_updates(positions: dict, sheet_row: int, name: str, product) -> l
     if product is None:
         pkg, ratio, title = "", "", "（Keepaにデータなし）"
     else:
-        pkg = package_quantity(product)
-        # 「N個」「N個入」は出品者が複数個をセットにしたのではなく、商品自体の梱包を
-        # 説明した表記（例: 「30個入り」＝ASIN自体が30粒入りパッケージ）であるため、
-        # 実際の購入倍率は常に1とみなす。「N個セット」「セット×N」「×N」（出品者が
-        # 複数パックをまとめて売っている表記）とは区別する。2026-08-25、ユーザー確認済み。
-        if pattern in ("N個", "N個入"):
-            ratio = 1
-        else:
-            ratio = round(qty / pkg, 3)
+        pkg, ratio = compute_pkg_and_ratio(name, product)
         title = (product.get("title") or "")[:120]
 
     def cell(col_key):

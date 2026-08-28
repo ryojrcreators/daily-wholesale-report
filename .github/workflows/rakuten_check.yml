@@ -7,6 +7,11 @@ on:
     - cron: '0 4 * * *'   # JST 13:00
     - cron: '0 8 * * *'   # JST 17:00
   workflow_dispatch:       # 手動実行ボタンも有効化
+    inputs:
+      only_item_numbers:
+        description: '動作確認用: 商品管理番号をカンマ区切りで指定すると、その行だけ処理する（空欄なら通常の巡回）'
+        required: false
+        default: ''
 
 jobs:
   check:
@@ -34,4 +39,5 @@ jobs:
           # D列（楽天販売価格）を最新化するため「楽天_出品データ」タブを読み込む用
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          ONLY_ITEM_NUMBERS: ${{ github.event.inputs.only_item_numbers }}
         run: python rakuten_price_check.py

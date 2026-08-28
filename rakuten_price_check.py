@@ -19,7 +19,7 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
-from set_quantity import ensure_annotation_columns, annotation_updates
+from set_quantity import ensure_annotation_columns, annotation_updates, compute_pkg_and_ratio
 
 JST = timezone(timedelta(hours=9))
 
@@ -231,7 +231,7 @@ def fetch_keepa_batch(asins: list):
         return None  # API失敗。呼び出し側でバッチをスキップさせる
 
 # ── 在庫・価格判定 ────────────────────────────────
-def judge(product: dict, rakuten_price_jpy: int, exchange_rate: float) -> tuple:
+def judge(product: dict, rakuten_price_jpy: int, exchange_rate: float, ratio: float = 1) -> tuple:
     stats = product.get("stats", {})
     current = stats.get("current", [])
 
@@ -271,7 +271,11 @@ def judge(product: dict, rakuten_price_jpy: int, exchange_rate: float) -> tuple:
         weight_lbs = 1.0
 
     shipping_usd = get_shipping_cost(weight_lbs)
-    cost_jpy = (source_price_usd + shipping_usd) * exchange_rate
+    # 楽天1個の販売に対して実際に必要なASIN購入量（購入倍率）を反映する。
+    # 例: 「3個セット」出品でASINが6個入りパックの場合、ratio=0.5 →
+    # 楽天1個あたりの仕入コストはASIN価格の半分で済む。逆に単品ずつ切り出して
+    # 売っている出品では ratio<1、まとめ買いが必要な出品では ratio>1 になる。
+    cost_jpy = (source_price_usd + shipping_usd) * exchange_rate * ratio
     breakeven = rakuten_price_jpy * (1 - PROFIT_RATE - COMMISSION_RATE)
 
     if cost_jpy <= breakeven:
@@ -309,8 +313,9 @@ def main():
 
     # セット数・ASIN入数の書き出し先。Keepaはどのみち全行ぶん叩いているので、
     # ついでに書き出しておけば追加のトークン消費なしで情報が揃う。
-    # ※ 適正価格・赤字判定の計算には、まだこの倍率を使っていない
+    # 適正価格・赤字判定の計算にもこの倍率を使う（2026-08-28〜）。
     annotation_pos = ensure_annotation_columns(sheet, all_rows[0])
+    col_manual_ratio = annotation_pos["手修正倍率"]
 
     # チェック済みかどうかに関わらず、ASINが入っている行すべてを対象プールにする
     pool = [
@@ -318,6 +323,17 @@ def main():
         for i, row in enumerate(rows)
         if len(row) > COL_ASIN and row[COL_ASIN].strip() != ""
     ]
+
+    # 動作確認用: 指定した商品管理番号だけに絞り込む（カンマ区切り）
+    only_items_raw = os.environ.get("ONLY_ITEM_NUMBERS", "").strip()
+    if only_items_raw:
+        only_items = {s.strip() for s in only_items_raw.split(",") if s.strip()}
+        pool = [
+            (i, row) for i, row in pool
+            if len(row) > COL_ITEM_ID and row[COL_ITEM_ID].strip() in only_items
+        ]
+        print(f"ONLY_ITEM_NUMBERS指定により{len(pool)}件に絞り込みました。")
+
     total = len(pool)
     print(f"巡回対象プール: {total}件")
 
@@ -382,13 +398,24 @@ def main():
 
             product = keepa_data.get(asin)
 
+            item_name = row[COL_NAME] if len(row) > COL_NAME else ""
+
             if product is None:
                 # バッチ取得は成功したがこのASINだけデータなし＝廃盤/無効ASIN
                 stock_result = "⚠️ 仕入不可"
                 price_result = "-"
                 proper_price_result = "-"
             else:
-                stock_result, price_result, proper_price_result = judge(product, rakuten_price, exchange_rate)
+                # 手修正倍率（人がシートに直接入力した値）があればそちらを優先する
+                manual_ratio_raw = row[col_manual_ratio].strip() if len(row) > col_manual_ratio else ""
+                if manual_ratio_raw:
+                    try:
+                        ratio = float(manual_ratio_raw)
+                    except ValueError:
+                        _, ratio = compute_pkg_and_ratio(item_name, product)
+                else:
+                    _, ratio = compute_pkg_and_ratio(item_name, product)
+                stock_result, price_result, proper_price_result = judge(product, rakuten_price, exchange_rate, ratio)
 
             # 1件ずつ即書き込み（途中停止しても結果を無駄にしない）
             stock_cell = gspread.utils.rowcol_to_a1(sheet_row_idx + 1, COL_STOCK_CHECK + 1)
@@ -398,7 +425,6 @@ def main():
             checked_at = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
             # 判定結果と同じリクエストで、セット数・ASIN入数の情報も書く
             # （書き込み回数が増えないので、Sheetsのクォータには影響しない）
-            item_name = row[COL_NAME] if len(row) > COL_NAME else ""
             write_with_retry(sheet, price_updates + [
                 {"range": stock_cell, "values": [[stock_result]]},
                 {"range": price_cell, "values": [[price_result]]},
@@ -418,9 +444,12 @@ def main():
             print("次のバッチまで30秒待機...")
             time.sleep(30)
 
-    new_cursor = (cursor + processed_count) % total
-    save_cursor(spreadsheet, new_cursor)
-    print(f"カーソル位置を更新: {cursor} → {new_cursor}（{processed_count}件処理）")
+    if only_items_raw:
+        print("ONLY_ITEM_NUMBERS指定時はカーソル位置を更新しません（通常の巡回に影響させないため）。")
+    else:
+        new_cursor = (cursor + processed_count) % total
+        save_cursor(spreadsheet, new_cursor)
+        print(f"カーソル位置を更新: {cursor} → {new_cursor}（{processed_count}件処理）")
 
     # フォントをArialに設定（在庫・価格チェック列）
     sheet.format("E2:G10000", {"textFormat": {"fontFamily": "Arial"}})

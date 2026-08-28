@@ -217,7 +217,19 @@ def main():
         print("※ DRY RUN モード：出荷/注文ステータス変更APIは呼びません")
 
     spreadsheet = get_spreadsheet()
-    token = get_yahoo_access_token(spreadsheet)
+    # 注文系API（orderList/orderInfo/orderChange）はアクセストークンの有効期間が
+    # 他のYahoo APIより短く、実際に処理の途中で「AccessToken has been expired.
+    # This API session is shorter than another API.」(px-04102)が発生した
+    # （2026-08-27）。そのため短い間隔で再取得する。
+    YAHOO_TOKEN_REFRESH_SEC = 5 * 60  # 5分ごとに再取得
+    yahoo_token_state = {"token": get_yahoo_access_token(spreadsheet), "fetched_at": time.time()}
+
+    def get_fresh_yahoo_token():
+        if time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
+            print("  （Yahooアクセストークンを再取得します）")
+            yahoo_token_state["token"] = get_yahoo_access_token(spreadsheet)
+            yahoo_token_state["fetched_at"] = time.time()
+        return yahoo_token_state["token"]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -274,7 +286,7 @@ def main():
 
         order_id = o["yahoo_order_id"]
         try:
-            info = get_order_info(token, o["seller_id"], order_id)
+            info = get_order_info(get_fresh_yahoo_token(), o["seller_id"], order_id)
         except Exception as e:
             print(f"  {o['order_number']}（{order_id}）: orderInfo取得エラー: {e}")
             errors.append({"order_number": o["order_number"], "message": f"orderInfo取得エラー: {e}"})
@@ -300,7 +312,7 @@ def main():
             registered += 1
             continue
 
-        ok, message = change_ship_status(token, o["seller_id"], order_id, carrier_code, o["tracking_num"])
+        ok, message = change_ship_status(get_fresh_yahoo_token(), o["seller_id"], order_id, carrier_code, o["tracking_num"])
         time.sleep(API_INTERVAL)
         if not ok:
             errors.append({"order_number": o["order_number"], "message": f"出荷ステータス変更失敗: {message}"})
@@ -311,7 +323,7 @@ def main():
               f"{WAIT_BETWEEN_STATUS_SEC}秒待機してから完了にします")
         time.sleep(WAIT_BETWEEN_STATUS_SEC)
 
-        ok, message = change_order_status(token, o["seller_id"], order_id)
+        ok, message = change_order_status(get_fresh_yahoo_token(), o["seller_id"], order_id)
         time.sleep(API_INTERVAL)
         if ok:
             registered += 1

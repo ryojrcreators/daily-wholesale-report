@@ -1,0 +1,41 @@
+name: Yahoo出荷通知専用トークン 延命更新
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 4時間おき（このPCの稼働時間外・夜間もカバーする）
+    - cron: '0 */4 * * *'
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: 実行
+        env:
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
+          YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
+          YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}
+          YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+        run: python -u yahoo_order_token_keepalive.py
+      - name: 失敗時にChatworkへ通知
+        if: ${{ failure() }}
+        env:
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+        run: |
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/60101971/tasks" \
+            -H "X-ChatWorkToken: $CW_TOKEN" \
+            --data-urlencode "body=[title]Yahoo出荷通知専用トークンの延命更新が失敗しました[/title]このまま放置すると次回のYahoo出荷通知実行時に再認可が必要になる可能性があります。実行ログを確認してください: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --data-urlencode "to_ids=2618849"

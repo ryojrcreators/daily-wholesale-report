@@ -73,18 +73,20 @@ def _strip_ns(root):
 def wowma_search_items(start_count: int, total_count: int = 500) -> tuple:
     """
     商品情報取得API（複数）（searchItemInfos）。ページング用。
-    仕様書「Wow!manager_API利用説明書.pdf」P27のリクエストサンプルで実際のエンドポイントが
-    確認できた（2026-08-28、未実機検証）：
-      - GET /serchItemInfos（"search"ではなく"serch"という綴りが正しい。Excel設計書側の
-        メソッド名 searchItemInfos とは異なるが、PDF利用説明書のURLサンプルを優先する）
-      - Content-Type: application/x-www-form-urlencoded
+    仕様書（【API設計書】_商品管理_商品情報取得API（複数）.xlsx「IF仕様」シート）確認済み
+    （2026-08-28）：REST API = /searchItemInfos（PDF利用説明書P27のサンプルURLは
+    "/serchItemInfos"という綴りだったが、これはPDF側の誤植。Excel設計書のREST API欄が
+    正なので、こちらに合わせる）。GET, Content-Type: application/x-www-form-urlencoded。
+    それでも401（code=0002 認証に失敗しました）が出る場合はエンドポイント名の問題では
+    なく、APIキーにこのAPI区分の利用権限が付与されていない可能性が高い（要:
+    Wow!manager管理画面でのAPIキー権限確認）。
       - startCount: 何件目から取得するか（1始まり）、totalCount: 1回の取得件数（最大500）
       - レスポンスの maxCount が全体のヒット件数（＝これに達するまでstartCountを進めてループする）
 
     戻り値: (items: list[dict（itemCode/itemName/itemPriceなど）], max_count: int)
     """
     res = requests.get(
-        f"{WOWMA_BASE}/serchItemInfos",
+        f"{WOWMA_BASE}/searchItemInfos",
         headers=_headers(),
         params={"shopId": WOWMA_SHOP_ID, "startCount": str(start_count), "totalCount": str(total_count)},
         timeout=30,

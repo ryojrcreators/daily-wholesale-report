@@ -45,7 +45,8 @@ def main():
     c_manual = col("手修正倍率")
 
     print(f"総行数: {len(rows)}")
-    print(f"列位置: qty={c_qty} pattern={c_pattern} pkg={c_pkg} ratio={c_ratio} manual={c_manual}")
+    print(f"ヘッダー: {header}")
+    print(f"列位置: item={c_item} name={c_name} qty={c_qty} pattern={c_pattern} pkg={c_pkg} ratio={c_ratio} manual={c_manual}")
 
     flagged_high = []
     flagged_low = []

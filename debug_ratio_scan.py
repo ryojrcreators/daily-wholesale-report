@@ -36,7 +36,7 @@ def main():
     def col(name):
         return header.index(name) if name in header else None
 
-    c_item = col("商品管理番号")
+    c_item = col("商品管理番号（商品URL）")
     c_name = col("商品名")
     c_qty = col("楽天販売個数")
     c_pattern = col("抽出パターン")

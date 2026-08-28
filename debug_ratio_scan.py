@@ -79,8 +79,8 @@ def main():
         elif ratio <= 0.1:
             flagged_low.append(info)
 
-        if pattern in ("×N", "セット×N") and ratio >= 10:
-            print(f"[FULLTITLE] 行{i} {item} ratio={ratio} 「{name}」")
+        if pattern in ("×N", "セット×N"):
+            print(f"[XN] 行{i} item=[{item}] ratio={ratio} 「{name}」")
 
         if manual:
             try:

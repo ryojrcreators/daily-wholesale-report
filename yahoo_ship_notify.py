@@ -51,10 +51,50 @@ from case_orders_auto_close import (
     YAHOO_BASE,
     API_INTERVAL,
     get_spreadsheet,
-    get_yahoo_access_token,
 )
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
+
+# 注文系API（orderList/orderInfo/orderChange）は、Close/価格調整と共有しているrefresh_token
+# （Yahoo_Configタブ）を使うと「AccessToken has been expired. This API session is shorter
+# than another API.」(px-04102)になることが実機で確認できた（2026-08-27）。Close/価格調整が
+# 同じトークンを通常APIで使い続けることでセッションの扱いが競合するとみられるため、
+# 出荷通知専用の完全に独立したrefresh_tokenを別タブ（Yahoo_Config_Order）で持つ。
+ORDER_CONFIG_SHEET_NAME = "Yahoo_Config_Order"
+
+
+def load_order_refresh_token(spreadsheet) -> str:
+    ws = spreadsheet.worksheet(ORDER_CONFIG_SHEET_NAME)
+    for row in ws.get_all_values():
+        if row and row[0] == "refresh_token":
+            return row[1]
+    raise RuntimeError(f"「{ORDER_CONFIG_SHEET_NAME}」タブに refresh_token が見つかりません。")
+
+
+def save_order_refresh_token(spreadsheet, new_token: str):
+    ws = spreadsheet.worksheet(ORDER_CONFIG_SHEET_NAME)
+    for i, row in enumerate(ws.get_all_values(), start=1):
+        if row and row[0] == "refresh_token":
+            ws.update(range_name=f"A{i}:B{i}", values=[["refresh_token", new_token]])
+            return
+    ws.append_row(["refresh_token", new_token])
+
+
+def get_yahoo_order_access_token(spreadsheet) -> str:
+    current = load_order_refresh_token(spreadsheet)
+    res = requests.post(
+        YAHOO_TOKEN_URL,
+        auth=(YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET),
+        data={"grant_type": "refresh_token", "refresh_token": current},
+        timeout=30,
+    )
+    if res.status_code != 200:
+        raise RuntimeError(f"Yahoo（出荷通知専用）アクセストークン更新失敗（status={res.status_code}）: {res.text[:300]}")
+    data = res.json()
+    save_order_refresh_token(spreadsheet, data.get("refresh_token", current))
+    return data["access_token"]
+
+
 # orderShipStatusChangeの直後にorderStatusChangeを呼ぶと前提条件エラーになる可能性があるため待機する。
 # ドキュメントに具体的な秒数の記載が無いため、初期値は10秒（実地テストで調整する）
 WAIT_BETWEEN_STATUS_SEC = int(os.environ.get("WAIT_BETWEEN_STATUS_SEC", "10"))
@@ -222,12 +262,12 @@ def main():
     # This API session is shorter than another API.」(px-04102)が発生した
     # （2026-08-27）。そのため短い間隔で再取得する。
     YAHOO_TOKEN_REFRESH_SEC = 5 * 60  # 5分ごとに再取得
-    yahoo_token_state = {"token": get_yahoo_access_token(spreadsheet), "fetched_at": time.time()}
+    yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet), "fetched_at": time.time()}
 
     def get_fresh_yahoo_token():
         if time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
             print("  （Yahooアクセストークンを再取得します）")
-            yahoo_token_state["token"] = get_yahoo_access_token(spreadsheet)
+            yahoo_token_state["token"] = get_yahoo_order_access_token(spreadsheet)
             yahoo_token_state["fetched_at"] = time.time()
         return yahoo_token_state["token"]
 

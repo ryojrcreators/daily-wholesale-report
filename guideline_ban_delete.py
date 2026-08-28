@@ -34,7 +34,7 @@ from case_orders_auto_close import (
     append_log,
     API_INTERVAL,
 )
-from case_orders_wowma import wowma_delete_items
+from case_orders_wowma import wowma_delete_items, wowma_end_sale
 
 CANDIDATE_SHEET_NAME = "削除候補_ガイドライン対応"
 WOWMA_SHOP_LABEL = "LA Express"
@@ -135,7 +135,12 @@ def main():
             else:
                 ok, note = yahoo_delete_item(yahoo_token, store, code)
         elif mall == "Wowma":
-            _, ok, note = wowma_delete_items([code], DRY_RUN)[0]
+            end_ok, end_note = wowma_end_sale(code, DRY_RUN)
+            if not end_ok:
+                ok, note = False, f"販売終了への変更に失敗したため削除は行っていません: {end_note}"
+            else:
+                _, ok, note = wowma_delete_items([code], DRY_RUN)[0]
+                note = f"{end_note} → {note}"
         else:
             ok, note = False, f"未対応モール: {mall}"
 

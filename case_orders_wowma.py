@@ -73,15 +73,18 @@ def _strip_ns(root):
 def wowma_search_items(start_count: int, total_count: int = 500) -> tuple:
     """
     商品情報取得API（複数）（searchItemInfos）。ページング用。
-    仕様書（【API設計書】_商品管理_商品情報取得API（複数）.xlsx）確認済み（2026-08-28、未実機検証）：
-      - GET /searchItemInfos、Content-Type: application/x-www-form-urlencoded
+    仕様書「Wow!manager_API利用説明書.pdf」P27のリクエストサンプルで実際のエンドポイントが
+    確認できた（2026-08-28、未実機検証）：
+      - GET /serchItemInfos（"search"ではなく"serch"という綴りが正しい。Excel設計書側の
+        メソッド名 searchItemInfos とは異なるが、PDF利用説明書のURLサンプルを優先する）
+      - Content-Type: application/x-www-form-urlencoded
       - startCount: 何件目から取得するか（1始まり）、totalCount: 1回の取得件数（最大500）
       - レスポンスの maxCount が全体のヒット件数（＝これに達するまでstartCountを進めてループする）
 
     戻り値: (items: list[dict（itemCode/itemName/itemPriceなど）], max_count: int)
     """
     res = requests.get(
-        f"{WOWMA_BASE}/searchItemInfos",
+        f"{WOWMA_BASE}/serchItemInfos",
         headers=_headers(),
         params={"shopId": WOWMA_SHOP_ID, "startCount": str(start_count), "totalCount": str(total_count)},
         timeout=30,
@@ -105,12 +108,53 @@ def wowma_search_items(start_count: int, total_count: int = 500) -> tuple:
     return items, max_count
 
 
+def wowma_end_sale(item_code: str, dry_run: bool) -> tuple:
+    """
+    商品削除の前段階として、対象商品の販売ステータスを「販売終了」(saleStatus=2)に
+    更新する。仕様書P59「商品削除API」に「※削除できる商品は販売ステータスが
+    「販売終了」の場合に限ります」と明記されているため、販売中の商品はこれを経ないと
+    削除できない。エンドポイント名は他の個別更新系（updateItemPrice/updateStock）の
+    命名パターンからの推測であり未実機検証（2026-08-28）。
+
+    戻り値: (成功したか, メッセージ)
+    """
+    if dry_run:
+        return True, "【DRY RUN】販売終了への変更対象"
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<request><shopId>{WOWMA_SHOP_ID}</shopId>"
+        f"<updateItem><itemCode>{item_code}</itemCode><saleStatus>2</saleStatus></updateItem>"
+        "</request>"
+    )
+    try:
+        res = requests.post(
+            f"{WOWMA_BASE}/updateItemInfo", headers=_xml_headers(), data=body.encode("utf-8"), timeout=30
+        )
+    except Exception as e:
+        return False, f"販売終了への変更エラー: {e}"
+
+    if res.status_code >= 400:
+        return False, f"販売終了への変更失敗({res.status_code}) {res.text[:150]}"
+
+    root = _strip_ns(ElementTree.fromstring(res.content))
+    status = root.findtext(".//status")
+    if status == "1":
+        err = root.find(".//error")
+        code_ = err.findtext("code") if err is not None else ""
+        message = err.findtext("message") if err is not None else ""
+        return False, f"販売終了への変更失敗: {code_} {message}"
+    return True, "販売終了に変更しました"
+
+
 def wowma_delete_items(item_codes: list, dry_run: bool) -> list:
     """
     商品削除API（複数）（deleteItemInfos）。1回のリクエストで最大1000件まとめて削除できる。
     仕様書（【API設計書】_商品管理_商品削除API.xlsx）確認済み（2026-08-28、未実機検証）：
       - POST /deleteItemInfos、Content-Type: application/xml; charset=utf-8
       - <request><shopId>…</shopId><deleteItemInfo><itemCode>…</itemCode></deleteItemInfo>…</request>
+      - 削除できる商品は販売ステータスが「販売終了」の場合に限る（P59）。事前に
+        wowma_end_sale() で販売終了にしていない商品を渡すと失敗する可能性が高い。
 
     戻り値: [(item_code, 成功したか, メッセージ)]
     """

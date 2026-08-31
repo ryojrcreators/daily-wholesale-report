@@ -49,10 +49,15 @@ TARGET_COUPON_NAME = f"{SHOP_NAME}で使える5,0の付く日クーポン"
 TARGET_DAYS = [5, 10, 15, 20, 25, 30]
 
 # 現在の終了日が属する月の、何日以降に作成するか（日付グループごとに個別設定）。
-# 楽天のクーポンAPIには「今日から一定日数（実測で約31日）以内でないと開始日を設定できない」
-# 制限があり、一律20日トリガーだと25日・30日分は次月分の開始日が31日を超えてしまい
+# 楽天のクーポンAPIには「今日から一定日数以内でないと開始日を設定できない」制限があり、
+# 一律20日トリガーだと25日・30日分は次月分の開始日までの日数が長くなりすぎて
 # COUPON_EE06-001 couponStartDate.over_term で拒否される（2026-08-20に実機で確認）。
-# 25日・30日分だけトリガーを30日に遅らせることで、この制限内に収める。
+# 25日・30日分だけトリガーを30日に遅らせることでほぼ収まるが、30日分は31日ある月
+# （1,3,5,7,8,10,12月）だと翌月開始日までの間隔が31日になり、境界ぎりぎりで
+# over_termになることがある（2026-08-31、実機で確認）。この場合は本スクリプトが
+# 毎日実行されているため、日が進んで間隔が1日縮まれば自動的に成功する
+# （実際、翌日には解消する見込み）。恒久対策ではなく自然に回復する事象のため、
+# コード上の変更はしていない。
 CREATE_FROM_DAY_BY_DAY = {5: 20, 10: 20, 15: 20, 20: 20, 25: 30, 30: 30}
 CREATE_FROM_DAY = 20  # 上のマップに無い日付グループが増えた場合のデフォルト
 
@@ -118,7 +123,11 @@ def build_report(results: list) -> str:
             lines.append(f"■ {r['day']}日分  既に更新済みでした")
             lines.append("")
 
-    failed = [r for r in results if r["status"] == "error"]
+    # over_termは「来月分の開始日が楽天の許容期間にまだ入っていない」だけの一時的な
+    # 状態で、毎日実行しているうちに間隔が縮まって自動的に成功する（2026-08-31、
+    # 実機で確認・31日ある月の30日分で発生）。人が対応しても解決しないので、
+    # Chatwork通知には出さない（ログには残る）。
+    failed = [r for r in results if r["status"] == "error" and "over_term" not in r["message"]]
     if failed:
         lines.append("---")
         lines.append("以下は発行に失敗しました。手動で確認してください：")
@@ -291,7 +300,10 @@ def main():
     print(f"\n=== 完了: 発行{len(issued)}件 / 既に更新済み{len(already)}件 / エラー{len(errored)}件 / "
           f"対象外{len(results) - len(issued) - len(already) - len(errored)}件 ===")
 
-    if issued or already or errored:
+    # over_termだけの場合は自動的に自己解消するので通知しない（build_report側でも
+    # 同じ条件でメッセージから除外している）
+    reportable_errors = [r for r in errored if "over_term" not in r["message"]]
+    if issued or already or reportable_errors:
         post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(results), due_days=CW_TASK_DUE_DAYS)
     else:
         print("発行対象・エラーとも無かったため、Chatworkへは通知しません。")

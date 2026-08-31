@@ -1,10 +1,13 @@
 name: Yahoo出荷通知専用トークン 延命更新
 
+# 2026-09-01、定期実行を無効化した。refresh_tokenでの更新を繰り返すたびに
+# 注文系APIのセッションが劣化し、px-04102（session is shorter than another API）が
+# 常時発生する状態になることが実機で確認できた（新規OAuth認可でのみ回復する）。
+# つまりこのkeepalive自体が「延命」ではなく劣化を早める原因だった可能性が高い。
+# ローカルPCの定期実行（7:45/11:45/15:45 PT）だけに依存し、何日も動かせない見込みが
+# 立った場合のみ、手動実行（workflow_dispatch）で必要な分だけ更新する。
 on:
   workflow_dispatch:
-  schedule:
-    # 4時間おき（このPCの稼働時間外・夜間もカバーする）
-    - cron: '0 */4 * * *'
 
 jobs:
   keepalive:

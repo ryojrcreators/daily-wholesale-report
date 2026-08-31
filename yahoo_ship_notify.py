@@ -264,12 +264,35 @@ def main():
     YAHOO_TOKEN_REFRESH_SEC = 5 * 60  # 5分ごとに再取得
     yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet), "fetched_at": time.time()}
 
-    def get_fresh_yahoo_token():
-        if time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
+    def get_fresh_yahoo_token(force: bool = False):
+        if force or time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
             print("  （Yahooアクセストークンを再取得します）")
             yahoo_token_state["token"] = get_yahoo_order_access_token(spreadsheet)
             yahoo_token_state["fetched_at"] = time.time()
         return yahoo_token_state["token"]
+
+    def call_with_session_conflict_retry(func, *args):
+        """
+        px-04102（「AccessToken has been expired. This API session is shorter than
+        another API.」＝セッション競合）が出た場合、専用トークンを強制的に取り直して
+        1回だけ再試行する。2026-08-31、5分ごとの定期更新だけでは足りず全件が
+        px-04102で失敗する事象が発生（GitHub Actions側の延命更新keepaliveの実行タイミング
+        が数十分〜1時間ずれることがあり、ローカルPCでの実行中と偶然重なって
+        refresh_tokenを取り合ってしまうことが原因と推測）。
+        """
+        try:
+            result = func(get_fresh_yahoo_token(), *args)
+        except RuntimeError as e:
+            if "px-04102" not in str(e):
+                raise
+            print("  セッション競合(px-04102)を検知。トークンを強制的に取り直して再試行します。")
+            return func(get_fresh_yahoo_token(force=True), *args)
+
+        # change_ship_status/change_order_status は例外ではなく (成功したか, メッセージ) を返す
+        if isinstance(result, tuple) and len(result) == 2 and result[0] is False and "px-04102" in str(result[1]):
+            print("  セッション競合(px-04102)を検知。トークンを強制的に取り直して再試行します。")
+            return func(get_fresh_yahoo_token(force=True), *args)
+        return result
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -326,7 +349,7 @@ def main():
 
         order_id = o["yahoo_order_id"]
         try:
-            info = get_order_info(get_fresh_yahoo_token(), o["seller_id"], order_id)
+            info = call_with_session_conflict_retry(get_order_info, o["seller_id"], order_id)
         except Exception as e:
             print(f"  {o['order_number']}（{order_id}）: orderInfo取得エラー: {e}")
             errors.append({"order_number": o["order_number"], "message": f"orderInfo取得エラー: {e}"})
@@ -352,7 +375,7 @@ def main():
             registered += 1
             continue
 
-        ok, message = change_ship_status(get_fresh_yahoo_token(), o["seller_id"], order_id, carrier_code, o["tracking_num"])
+        ok, message = call_with_session_conflict_retry(change_ship_status, o["seller_id"], order_id, carrier_code, o["tracking_num"])
         time.sleep(API_INTERVAL)
         if not ok:
             errors.append({"order_number": o["order_number"], "message": f"出荷ステータス変更失敗: {message}"})
@@ -363,7 +386,7 @@ def main():
               f"{WAIT_BETWEEN_STATUS_SEC}秒待機してから完了にします")
         time.sleep(WAIT_BETWEEN_STATUS_SEC)
 
-        ok, message = change_order_status(get_fresh_yahoo_token(), o["seller_id"], order_id)
+        ok, message = call_with_session_conflict_retry(change_order_status, o["seller_id"], order_id)
         time.sleep(API_INTERVAL)
         if ok:
             registered += 1

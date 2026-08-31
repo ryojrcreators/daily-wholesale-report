@@ -63,18 +63,38 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 ORDER_CONFIG_SHEET_NAME = "Yahoo_Config_Order"
 
 
+# 2026-08-31、実機で確認：注文系APIのアクセストークンは事実上1回使うとすぐに
+# 「session is shorter than another API」(px-04102)になり、5分キャッシュではもたない。
+# call_with_session_conflict_retry() が失敗のたびに強制再取得するため、結果的に
+# ほぼ毎注文でrefresh_tokenの読み書きが発生する。元の実装は毎回シート全体を
+# 読みに行っていたため、注文数が多いと Google Sheets API の読み取りクォータ
+# （429 Quota exceeded）に達してしまった。行位置とトークン値をプロセス内に
+# キャッシュし、シートへのアクセスを最小限（初回の読み込み1回＋更新のたびの
+# 書き込みのみ）に減らす。
+_order_token_cache = {"token": None, "row": None}
+
+
 def load_order_refresh_token(spreadsheet) -> str:
+    if _order_token_cache["token"] is not None:
+        return _order_token_cache["token"]
     ws = spreadsheet.worksheet(ORDER_CONFIG_SHEET_NAME)
-    for row in ws.get_all_values():
+    for i, row in enumerate(ws.get_all_values(), start=1):
         if row and row[0] == "refresh_token":
+            _order_token_cache["token"] = row[1]
+            _order_token_cache["row"] = i
             return row[1]
     raise RuntimeError(f"「{ORDER_CONFIG_SHEET_NAME}」タブに refresh_token が見つかりません。")
 
 
 def save_order_refresh_token(spreadsheet, new_token: str):
+    _order_token_cache["token"] = new_token
     ws = spreadsheet.worksheet(ORDER_CONFIG_SHEET_NAME)
+    if _order_token_cache["row"] is not None:
+        ws.update(range_name=f"A{_order_token_cache['row']}:B{_order_token_cache['row']}", values=[["refresh_token", new_token]])
+        return
     for i, row in enumerate(ws.get_all_values(), start=1):
         if row and row[0] == "refresh_token":
+            _order_token_cache["row"] = i
             ws.update(range_name=f"A{i}:B{i}", values=[["refresh_token", new_token]])
             return
     ws.append_row(["refresh_token", new_token])
@@ -91,7 +111,11 @@ def get_yahoo_order_access_token(spreadsheet) -> str:
     if res.status_code != 200:
         raise RuntimeError(f"Yahoo（出荷通知専用）アクセストークン更新失敗（status={res.status_code}）: {res.text[:300]}")
     data = res.json()
-    save_order_refresh_token(spreadsheet, data.get("refresh_token", current))
+    new_refresh = data.get("refresh_token", current)
+    if new_refresh != current:
+        save_order_refresh_token(spreadsheet, new_refresh)
+    else:
+        _order_token_cache["token"] = new_refresh
     return data["access_token"]
 
 
@@ -257,18 +281,17 @@ def main():
         print("※ DRY RUN モード：出荷/注文ステータス変更APIは呼びません")
 
     spreadsheet = get_spreadsheet()
-    # 注文系API（orderList/orderInfo/orderChange）はアクセストークンの有効期間が
-    # 他のYahoo APIより短く、実際に処理の途中で「AccessToken has been expired.
-    # This API session is shorter than another API.」(px-04102)が発生した
-    # （2026-08-27）。そのため短い間隔で再取得する。
-    YAHOO_TOKEN_REFRESH_SEC = 5 * 60  # 5分ごとに再取得
-    yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet), "fetched_at": time.time()}
+    # 注文系API（orderList/orderInfo/orderChange）のアクセストークンは、5分キャッシュを
+    # 試しても効果が無く、実質1回使うとすぐに「AccessToken has been expired. This API
+    # session is shorter than another API.」(px-04102)になることが実機で確認できた
+    # （2026-08-27、2026-08-31）。そのため毎回のAPI呼び出し前に必ず取り直す
+    # （キャッシュしない）。無駄な失敗呼び出しを減らすため、call_with_session_conflict_retry
+    # 経由の呼び出しは常にforce=Trueで取得する。
+    yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet)}
 
-    def get_fresh_yahoo_token(force: bool = False):
-        if force or time.time() - yahoo_token_state["fetched_at"] > YAHOO_TOKEN_REFRESH_SEC:
-            print("  （Yahooアクセストークンを再取得します）")
+    def get_fresh_yahoo_token(force: bool = True):
+        if force:
             yahoo_token_state["token"] = get_yahoo_order_access_token(spreadsheet)
-            yahoo_token_state["fetched_at"] = time.time()
         return yahoo_token_state["token"]
 
     def call_with_session_conflict_retry(func, *args):

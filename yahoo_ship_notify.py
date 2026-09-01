@@ -53,6 +53,13 @@ from case_orders_auto_close import (
     get_spreadsheet,
 )
 
+# 2026-09-01、専用アプリ（YAHOO_ORDER_CLIENT_ID/SECRET）に切り替えたところ
+# px-04102（セッション競合）は解消したが、新アプリはまだYahoo側のIP許可申請が
+# 通っておらず px-04306（Access from this IP address is not allowed）になった。
+# IP申請が通るまでの一時措置として、Close/価格調整と共有のYAHOO_CLIENT_ID/SECRETに
+# 戻す（px-04102が数時間おきに再発するリスクはあるが、IP拒否より復旧しやすいため）。
+# 申請が通ったら YAHOO_ORDER_CLIENT_ID/SECRET を使う元の実装に戻すこと。
+
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 
 # 注文系API（orderList/orderInfo/orderChange）は、Close/価格調整と共有しているrefresh_token

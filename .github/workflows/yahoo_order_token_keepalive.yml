@@ -1,14 +1,19 @@
 name: Yahoo出荷通知専用トークン 延命更新
 
-# 2026-09-01、4時間おき（1日6回）だった定期実行を1日1回に減らした。
-# refresh_tokenでの更新を繰り返すたびに注文系APIのセッションが劣化し、
-# px-04102（session is shorter than another API）が常時発生する状態になることが
-# 実機で確認できた（新規OAuth認可でのみ回復する）。つまりこのkeepalive自体が
-# 「延命」ではなく劣化を早める原因だった。
-# 一方で、ローカルPCの定期実行（7:45/11:45/15:45 PT）だけに頼ると、15:45→翌7:45で
-# 約16時間の空白ができ、Yahooから案内のあった「セッション最大12時間」を超えてしまう。
-# そのため完全に廃止はせず、この空白のちょうど中間（23:45 PT頃）に1日1回だけ実行し、
-# 空白を約8時間×2に分割することで、劣化を最小限に抑えつつ12時間の壁を回避する。
+# 2026-09-01：
+# ・4時間おき（1日6回）だった定期実行を1日1回に減らした。頻度を落としても
+#   数時間おきにpx-04102（session is shorter than another API）が再発したため、
+#   「更新頻度」の問題ではなく、Close/価格調整と共有していたYAHOO_CLIENT_ID自体に
+#   起因すると判断。出荷通知の注文系API専用にYahooへ別途Client ID/Secretを発行して
+#   もらい、YAHOO_ORDER_CLIENT_ID/SECRETとして完全に別アプリで運用するよう切り替えた。
+# ・ただし新アプリはYahoo側のIP許可申請がまだ通っておらず px-04306（Access from this
+#   IP address is not allowed）になったため、申請が通るまでの一時措置として
+#   yahoo_ship_notify.py / yahoo_order_token_keepalive.py とも
+#   共有のYAHOO_CLIENT_ID/SECRETに戻している。申請が通ったらYAHOO_ORDER_CLIENT_ID/
+#   SECRETを使う実装に戻すこと。
+# ・ローカルPCの定期実行（7:45/11:45/15:30 PT）だけに頼ると、15:30→翌7:45で
+#   約16時間の空白ができ、Yahooから案内のあった「セッション最大12時間」を超えてしまう
+#   ため、空白の中間（23:45 PT頃）に1日1回だけ実行して空白を分割している。
 on:
   workflow_dispatch:
   schedule:
@@ -26,8 +31,12 @@ jobs:
       - run: pip install -r requirements.txt
       - name: 実行
         env:
+          # case_orders_auto_close.py（import元）がモジュール読み込み時に必須とするため必要
+          # （keepalive自体はこの値を使わない）
           YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
           YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_ORDER_CLIENT_ID: ${{ secrets.YAHOO_ORDER_CLIENT_ID }}
+          YAHOO_ORDER_CLIENT_SECRET: ${{ secrets.YAHOO_ORDER_CLIENT_SECRET }}
           YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
           YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
           YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}

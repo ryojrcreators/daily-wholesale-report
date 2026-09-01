@@ -21,6 +21,10 @@ from case_orders_auto_close import (
     get_spreadsheet,
 )
 
+# 2026-09-01、専用アプリ（YAHOO_ORDER_CLIENT_ID/SECRET）のIP許可申請が通るまでの
+# 一時措置として、Close/価格調整と共有のYAHOO_CLIENT_ID/SECRETに戻している。
+# 詳細はyahoo_ship_notify.py側の同日コメント参照。申請が通ったら戻すこと。
+
 ORDER_CONFIG_SHEET_NAME = "Yahoo_Config_Order"
 
 

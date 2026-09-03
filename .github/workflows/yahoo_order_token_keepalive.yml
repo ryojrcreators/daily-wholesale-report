@@ -6,11 +6,8 @@ name: Yahoo出荷通知専用トークン 延命更新
 #   「更新頻度」の問題ではなく、Close/価格調整と共有していたYAHOO_CLIENT_ID自体に
 #   起因すると判断。出荷通知の注文系API専用にYahooへ別途Client ID/Secretを発行して
 #   もらい、YAHOO_ORDER_CLIENT_ID/SECRETとして完全に別アプリで運用するよう切り替えた。
-# ・ただし新アプリはYahoo側のIP許可申請がまだ通っておらず px-04306（Access from this
-#   IP address is not allowed）になったため、申請が通るまでの一時措置として
-#   yahoo_ship_notify.py / yahoo_order_token_keepalive.py とも
-#   共有のYAHOO_CLIENT_ID/SECRETに戻している。申請が通ったらYAHOO_ORDER_CLIENT_ID/
-#   SECRETを使う実装に戻すこと。
+# ・2026-09-03、YahooのIP許可申請が承認されたため、yahoo_ship_notify.py /
+#   yahoo_order_token_keepalive.py とも専用のYAHOO_ORDER_CLIENT_ID/SECRETに戻した。
 # ・ローカルPCの定期実行（7:45/11:45/15:30 PT）だけに頼ると、15:30→翌7:45で
 #   約16時間の空白ができ、Yahooから案内のあった「セッション最大12時間」を超えてしまう
 #   ため、空白の中間（23:45 PT頃）に1日1回だけ実行して空白を分割している。

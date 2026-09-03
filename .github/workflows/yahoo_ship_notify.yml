@@ -75,6 +75,9 @@ jobs:
           # case_orders_auto_close.pyのget_yahoo_access_token/get_spreadsheetの再利用に必要
           YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
           YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          # 出荷通知専用アプリ（2026-09-03、IP許可承認済みにつき使用再開）
+          YAHOO_ORDER_CLIENT_ID: ${{ secrets.YAHOO_ORDER_CLIENT_ID }}
+          YAHOO_ORDER_CLIENT_SECRET: ${{ secrets.YAHOO_ORDER_CLIENT_SECRET }}
           YAHOO_SHOP_NAME_1: ${{ secrets.YAHOO_SHOP_NAME_1 }}
           YAHOO_SELLER_ID_1: ${{ secrets.YAHOO_SELLER_ID_1 }}
           YAHOO_SHOP_NAME_2: ${{ secrets.YAHOO_SHOP_NAME_2 }}

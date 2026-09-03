@@ -45,20 +45,17 @@ from rakuten_ship_notify import (
     CW_MENTION,
 )
 from case_orders_auto_close import (
-    YAHOO_CLIENT_ID,
-    YAHOO_CLIENT_SECRET,
     YAHOO_TOKEN_URL,
     YAHOO_BASE,
     API_INTERVAL,
     get_spreadsheet,
 )
 
-# 2026-09-01、専用アプリ（YAHOO_ORDER_CLIENT_ID/SECRET）に切り替えたところ
-# px-04102（セッション競合）は解消したが、新アプリはまだYahoo側のIP許可申請が
-# 通っておらず px-04306（Access from this IP address is not allowed）になった。
-# IP申請が通るまでの一時措置として、Close/価格調整と共有のYAHOO_CLIENT_ID/SECRETに
-# 戻す（px-04102が数時間おきに再発するリスクはあるが、IP拒否より復旧しやすいため）。
-# 申請が通ったら YAHOO_ORDER_CLIENT_ID/SECRET を使う元の実装に戻すこと。
+# 2026-09-03、YahooのIP許可申請が承認されたため、出荷通知専用アプリ
+# （YAHOO_ORDER_CLIENT_ID/SECRET）に戻した。px-04102（セッション競合）は
+# 共有YAHOO_CLIENT_IDに起因していたため、専用アプリ運用で発生しないはず。
+YAHOO_ORDER_CLIENT_ID = os.environ["YAHOO_ORDER_CLIENT_ID"]
+YAHOO_ORDER_CLIENT_SECRET = os.environ["YAHOO_ORDER_CLIENT_SECRET"]
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 
@@ -111,7 +108,7 @@ def get_yahoo_order_access_token(spreadsheet) -> str:
     current = load_order_refresh_token(spreadsheet)
     res = requests.post(
         YAHOO_TOKEN_URL,
-        auth=(YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET),
+        auth=(YAHOO_ORDER_CLIENT_ID, YAHOO_ORDER_CLIENT_SECRET),
         data={"grant_type": "refresh_token", "refresh_token": current},
         timeout=30,
     )

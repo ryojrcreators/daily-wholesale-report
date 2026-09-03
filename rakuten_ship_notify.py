@@ -266,17 +266,27 @@ def resolve_store(order_number: str):
 def api_order_number(order_number: str) -> str:
     """社内システムの注文番号から、楽天RMS APIに渡せる実際の注文番号を求める。
 
-    再送注文は社内システム側で末尾に -R, -R2 のような接尾辞が付くが、これは楽天RMS上に
-    存在しない番号でgetOrder/updateOrderShippingがエラーになる。実際の楽天注文はあくまで
-    接尾辞なしの元注文なので、それを取り除いた番号でAPIを呼ぶ（1回の実行で同じ元注文の
-    通常発送分・再送分の両方が同時に対象になることはない前提）。
+    再送注文は社内システム側で末尾に -R, -R2 のような接尾辞が付き、分割発送注文は
+    -A, -B, -C のような接尾辞が付くが、これらは楽天RMS上に存在しない番号で
+    getOrder/updateOrderShippingがエラーになる（2026-09-03、-B付き注文1件が原因で
+    同じバッチの他の全注文まで「見つかりません」になる事象が発生。getOrderは
+    100件まとめてのバッチ呼び出しのため、1件でも書式不正があるとバッチ全体が失敗する）。
+    実際の楽天注文はあくまで接尾辞なしの元注文なので、それを取り除いた番号でAPIを呼ぶ
+    （1回の実行で同じ元注文の複数分割・再送分が同時に対象になることはない前提）。
     """
-    return re.sub(r"-R\d*$", "", order_number)
+    return re.sub(r"-[A-Z]\d*$", "", order_number)
 
 
 # ══ 楽天RMS 受注管理API ═══════════════════════════
 def get_orders(headers: dict, order_numbers: list) -> dict:
-    """getOrderをまとめて呼び、{orderNumber: OrderModel} を返す。"""
+    """getOrderをまとめて呼び、{orderNumber: OrderModel} を返す。
+
+    バッチ（最大100件）内に1件でも書式不正等の注文番号があると、楽天API側は
+    バッチ全体をエラーにして返す（2026-09-03、分割発送の-B接尾辞が原因で同じ
+    バッチの他の全注文まで巻き添えで「見つかりません」になる事象が発生）。
+    バッチが失敗した場合は1件ずつ再試行し、本当に問題のある注文番号だけを
+    エラーとして扱う。
+    """
     result = {}
     for i in range(0, len(order_numbers), 100):
         batch = order_numbers[i:i + 100]
@@ -286,12 +296,27 @@ def get_orders(headers: dict, order_numbers: list) -> dict:
             json={"orderNumberList": batch, "version": ORDER_API_VERSION},
             timeout=30,
         )
-        if res.status_code != 200:
-            print(f"  getOrder失敗: status={res.status_code} {res.text[:300]}")
+        if res.status_code == 200:
+            data = res.json()
+            for order in data.get("OrderModelList", []) or []:
+                result[order.get("orderNumber")] = order
             continue
-        data = res.json()
-        for order in data.get("OrderModelList", []) or []:
-            result[order.get("orderNumber")] = order
+
+        print(f"  getOrder失敗: status={res.status_code} {res.text[:300]}")
+        print(f"  バッチ内の{len(batch)}件を1件ずつ再試行します。")
+        for order_number in batch:
+            res_single = requests.post(
+                f"{ORDER_BASE}/getOrder/",
+                headers={**headers, "Content-Type": "application/json; charset=utf-8"},
+                json={"orderNumberList": [order_number], "version": ORDER_API_VERSION},
+                timeout=30,
+            )
+            if res_single.status_code != 200:
+                print(f"    {order_number}: getOrder失敗 status={res_single.status_code} {res_single.text[:200]}")
+                continue
+            data_single = res_single.json()
+            for order in data_single.get("OrderModelList", []) or []:
+                result[order.get("orderNumber")] = order
     return result
 
 

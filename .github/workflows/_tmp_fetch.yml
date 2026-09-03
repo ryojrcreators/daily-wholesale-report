@@ -1,0 +1,40 @@
+name: （一時）分析用CSV取得
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: '対象月（例 2026-08）'
+        required: false
+        default: ''
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxshmfence1
+      - env:
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SALES_KPI_SPREADSHEET_ID: ${{ secrets.SALES_KPI_SPREADSHEET_ID }}
+          TARGET_MONTH: ${{ inputs.target_month }}
+        run: python -u _tmp_fetch.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cancel-csv
+          path: '*.csv'
+          if-no-files-found: ignore

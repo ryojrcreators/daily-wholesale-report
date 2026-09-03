@@ -15,6 +15,11 @@
 4列だけ。パーセントの2列はシート側の数式で計算されるため、値を入れて数式を壊さないよう
 意図的に触らない。
 
+実行のたびに、CSVから機械的に出せる範囲の分析ヒント（高額キャンセル上位・メーカーの偏り・
+店舗をまたぐ重複ASIN・同一ASINの繰り返しキャンセル・集中日）もコンソールに表示する。
+理由の分類（Alt/欠品/価格エラー等）や文章のまとめはCSVに含まれる情報だけでは作れないため、
+ここでは事実の一覧を出すだけで、それ以上の解釈・要約は行わない。
+
 安全策:
   - 既定はドライラン。実際に書き込むのは WRITE=1 のときだけ。
   - すでに値が入っているセルは書き換えない（OVERWRITE=1 で明示的に許可した場合のみ上書き）。
@@ -35,8 +40,8 @@ import json
 import math
 import os
 from calendar import monthrange
-from collections import defaultdict
-from datetime import date
+from collections import Counter, defaultdict
+from datetime import date, datetime
 from urllib.parse import quote
 
 import gspread
@@ -156,6 +161,16 @@ def download_csv(context, query, label):
     return rows
 
 
+def line_amount(r):
+    """明細1行の金額（qty × price）。不正な値は0として扱う"""
+    try:
+        qty = float((r.get("qty") or "0").replace(",", ""))
+        price = float((r.get("price") or "0").replace(",", ""))
+    except ValueError:
+        return 0.0
+    return qty * price
+
+
 def aggregate(rows):
     """Excelマクロの AggregateSheet と同じ集計。{店舗名: (件数, 金額)} を返す"""
     orders = defaultdict(set)
@@ -165,13 +180,116 @@ def aggregate(rows):
         if not shop:
             continue
         orders[shop].add(r.get("order_number", ""))
-        try:
-            qty = float((r.get("qty") or "0").replace(",", ""))
-            price = float((r.get("price") or "0").replace(",", ""))
-        except ValueError:
-            qty, price = 0.0, 0.0
-        totals[shop] += qty * price
+        totals[shop] += line_amount(r)
     return {shop: (len(ids), math.ceil(totals[shop])) for shop, ids in orders.items()}
+
+
+# ---------------------------------------------------------------- 分析ヒント
+#
+# ここで出すのはCSVから機械的に導ける「事実」だけ（高額商品名・金額・日付・ASINの一致等）。
+# キャンセル理由（Alt/欠品/価格エラー等）の分類や、そこからの文章化は行わない
+# ―CSVに理由の列が入っていないため、この情報だけでは判断できない。
+
+def parse_created(r):
+    """created_time を日付にする。例: '8/1/26, 8:24 AM' → date(2026, 8, 1)"""
+    try:
+        return datetime.strptime(r.get("created_time", "").strip(), "%m/%d/%y, %I:%M %p").date()
+    except (ValueError, KeyError):
+        return None
+
+
+def dedupe_by_order(rows):
+    """CSVは1注文が複数行に分かれることがあるため、注文番号で1行に絞り込む。
+
+    （例: 1注文7行がすべて同じ order_number ということがあり、行数のまま数えると
+    「同じ商品が7回キャンセルされた」ように見えてしまう）
+    """
+    seen = {}
+    for r in rows:
+        key = r.get("order_number", "")
+        if key and key not in seen:
+            seen[key] = r
+    return list(seen.values())
+
+
+def print_clues(all_rows, shop_rows):
+    """データだけで機械的に出せる範囲のヒントを表示する。"""
+    print("\n--- 分析ヒント（データから機械的に出せる範囲。理由分類・文章化はしていません）---")
+
+    by_shop_line = defaultdict(list)
+    for r in shop_rows:
+        shop = (r.get("shop_name") or "").strip()
+        if shop:
+            by_shop_line[shop].append(r)
+
+    print("  [高額キャンセル 上位3件（店舗ごと・弊社都合）]")
+    for csv_name in STORE_MAP:
+        ranked = sorted(by_shop_line.get(csv_name, []), key=lambda r: -line_amount(r))[:3]
+        for r in ranked:
+            print(f"    {csv_name:<18} {round(line_amount(r)):>9,}円  "
+                  f"{(r.get('name') or '')[:34]:<34} maker={r.get('maker') or '-'}  "
+                  f"{r.get('created_time', '')}")
+
+    makers = Counter((r.get("maker") or "").strip() for r in shop_rows if (r.get("maker") or "").strip())
+    top_makers = makers.most_common(5)
+    if top_makers:
+        print("  [メーカー別件数 上位5（弊社都合・全店舗）]")
+        print("    " + ", ".join(f"{m}:{c}件" for m, c in top_makers))
+
+    # 全体のキャンセルの方が母数が多いので、店舗をまたぐ重複・繰り返しはこちらで見る
+    all_orders = dedupe_by_order(all_rows)
+    by_asin = defaultdict(list)
+    for r in all_orders:
+        asin = (r.get("asin") or "").strip()
+        if asin:
+            by_asin[asin].append(r)
+
+    cross_store = [(asin, items) for asin, items in by_asin.items()
+                   if len({(r.get("shop_name") or "").strip() for r in items}) >= 2]
+    if cross_store:
+        cross_store.sort(key=lambda x: -sum(line_amount(r) for r in x[1]))
+        print("  [店舗をまたぐ重複ASIN（同一商品が複数店舗・別注文でキャンセル）]")
+        for asin, items in cross_store[:5]:
+            shops = sorted({(r.get("shop_name") or "").strip() for r in items})
+            dates = sorted({(r.get("created_time") or "").split(",")[0] for r in items})
+            print(f"    ASIN {asin:<16} {(items[0].get('name') or '')[:28]:<28} "
+                  f"店舗={','.join(shops)}  合計{round(sum(line_amount(r) for r in items)):,}円  "
+                  f"日付={dates}")
+
+    by_store_asin = defaultdict(list)
+    for r in all_orders:
+        asin = (r.get("asin") or "").strip()
+        shop = (r.get("shop_name") or "").strip()
+        if asin and shop:
+            by_store_asin[(shop, asin)].append(r)
+    repeated = [(k, v) for k, v in by_store_asin.items() if len(v) >= 3]
+    if repeated:
+        repeated.sort(key=lambda x: -len(x[1]))
+        print("  [同一店舗×同一ASINが別注文で3回以上キャンセル（在庫が実質0のまま出品されている疑い）]")
+        for (shop, asin), items in repeated[:5]:
+            dates = sorted({(r.get("created_time") or "").split(",")[0] for r in items})
+            msg = (f"{shop} の {asin}（{(items[0].get('name') or '')[:28]}）が"
+                   f"{len(items)}回キャンセルされています。日付: {dates}")
+            print(f"    {msg}")
+            print(f"::notice title=繰り返しキャンセル::{msg}")
+
+    by_day = defaultdict(list)
+    for r in shop_rows:
+        d = parse_created(r)
+        if d:
+            by_day[d].append(r)
+    concentrated = [(d, items) for d, items in by_day.items() if len(items) >= 3]
+    if concentrated:
+        concentrated.sort(key=lambda x: -sum(line_amount(r) for r in x[1]))
+        print("  [キャンセルが集中した日（弊社都合・3件以上）]")
+        for d, items in concentrated[:5]:
+            by_shop_count = Counter((r.get("shop_name") or "").strip() for r in items)
+            print(f"    {d}（{d.strftime('%a')}）{len(items)}件  "
+                  f"合計{round(sum(line_amount(r) for r in items)):,}円  "
+                  f"内訳={dict(by_shop_count)}")
+
+    if not (top_makers or cross_store or repeated or concentrated):
+        print("  目立った偏りは見つかりませんでした")
 
 
 # ---------------------------------------------------------------- シート
@@ -417,6 +535,8 @@ def main():
     others = sorted(set(all_agg) - set(STORE_MAP))
     if others:
         print(f"  （対象外の店舗: {', '.join(others)}）")
+
+    print_clues(all_rows, shop_rows)
 
     # 3) 書き込む内容を組み立てる
     updates = []

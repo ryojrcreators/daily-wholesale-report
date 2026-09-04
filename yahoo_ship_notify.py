@@ -164,6 +164,17 @@ SELLER_ID_TO_PUBKEY_ENV = {
     "drplus": "YAHOO_PUBKEY_METASTORE",
     "rainbowfarms": "YAHOO_PUBKEY_RAINBOWFARMS",
 }
+# ストアクリエイターPro「暗号鍵管理」に表示される鍵のバージョン番号（固定の暗号方式
+# バージョンではなく、店舗ごとに発行した鍵自体の版数）。X-sws-signature-versionには
+# これを送る必要がある（2026-09-04、"1"固定で送っていたところ実際は"5"で不一致・
+# px-04102が解消しなかったことが判明）。3店舗とも同じ版数である前提だが、店舗ごとに
+# 異なる場合はSELLER_ID_TO_PUBKEY_VERSIONで個別に上書きする。
+YAHOO_PUBKEY_VERSION = os.environ.get("YAHOO_PUBKEY_VERSION", "1")
+SELLER_ID_TO_PUBKEY_VERSION_ENV = {
+    "americankitchen": "YAHOO_PUBKEY_VERSION_AMERICANKITCHEN",
+    "drplus": "YAHOO_PUBKEY_VERSION_METASTORE",
+    "rainbowfarms": "YAHOO_PUBKEY_VERSION_RAINBOWFARMS",
+}
 _signature_cipher_cache: dict[str, PKCS1_v1_5.PKCS115_Cipher] = {}
 
 
@@ -177,6 +188,10 @@ def build_signature_headers(seller_id: str) -> dict:
     if not public_key_pem:
         return {}
 
+    version_env_name = SELLER_ID_TO_PUBKEY_VERSION_ENV.get(seller_id)
+    key_version = os.environ.get(version_env_name, "") if version_env_name else ""
+    key_version = key_version or YAHOO_PUBKEY_VERSION
+
     cipher = _signature_cipher_cache.get(seller_id)
     if cipher is None:
         cipher = PKCS1_v1_5.new(RSA.import_key(public_key_pem))
@@ -185,7 +200,7 @@ def build_signature_headers(seller_id: str) -> dict:
     message = f"{seller_id}:{int(time.time())}"
     encrypted = cipher.encrypt(message.encode("utf-8"))
     signature = base64.b64encode(encrypted).decode("utf-8")
-    return {"X-sws-signature": signature, "X-sws-signature-version": "1"}
+    return {"X-sws-signature": signature, "X-sws-signature-version": key_version}
 
 
 def resolve_yahoo_store(shop_name: str):

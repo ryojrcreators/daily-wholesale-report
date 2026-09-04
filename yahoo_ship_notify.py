@@ -23,6 +23,7 @@
   - Yahoo側の配送会社コードの完全な一覧（Yamato/Sagawa以外は未確認）
 """
 
+import base64
 import os
 import re
 import sys
@@ -30,6 +31,8 @@ import time
 import requests
 from xml.etree import ElementTree
 from datetime import timedelta
+from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
 from playwright.sync_api import sync_playwright
 
 from rakuten_ship_notify import (
@@ -151,6 +154,39 @@ ORDER_STATUS_COMPLETE = "5"   # 完了
 
 CW_TITLE = "Yahoo出荷通知の自動反映でエラー・要確認がありました"
 
+# 2026-09-04、px-04102の根本原因が判明：公開鍵認証を設定していないアプリは、
+# 注文検索/注文詳細/注文変更APIのセッションが（refresh_tokenの延命更新とは無関係に）
+# 認可から最大12時間で無効になる仕様だった。ストアクリエイターPro（店舗ごと）で
+# 発行した公開鍵で認証情報を暗号化してリクエストに添付すると、有効期間が最大4週間に
+# 延びる。seller_id（店舗）ごとに鍵が異なるため、環境変数も店舗ごとに分ける。
+SELLER_ID_TO_PUBKEY_ENV = {
+    "americankitchen": "YAHOO_PUBKEY_AMERICANKITCHEN",
+    "drplus": "YAHOO_PUBKEY_METASTORE",
+    "rainbowfarms": "YAHOO_PUBKEY_RAINBOWFARMS",
+}
+_signature_cipher_cache: dict[str, PKCS1_v1_5.PKCS115_Cipher] = {}
+
+
+def build_signature_headers(seller_id: str) -> dict:
+    """公開鍵認証用のヘッダー（X-sws-signature / X-sws-signature-version）を作る。
+    「店舗アカウント名:現在unixtime」を公開鍵でRSA暗号化しBase64化したもの。
+    対応する公開鍵が環境変数に無い店舗は、従来通り未設定のまま呼ぶ（12時間制限のまま）。
+    """
+    env_name = SELLER_ID_TO_PUBKEY_ENV.get(seller_id)
+    public_key_pem = os.environ.get(env_name, "") if env_name else ""
+    if not public_key_pem:
+        return {}
+
+    cipher = _signature_cipher_cache.get(seller_id)
+    if cipher is None:
+        cipher = PKCS1_v1_5.new(RSA.import_key(public_key_pem))
+        _signature_cipher_cache[seller_id] = cipher
+
+    message = f"{seller_id}:{int(time.time())}"
+    encrypted = cipher.encrypt(message.encode("utf-8"))
+    signature = base64.b64encode(encrypted).decode("utf-8")
+    return {"X-sws-signature": signature, "X-sws-signature-version": "1"}
+
 
 def resolve_yahoo_store(shop_name: str):
     return SHOP_NAME_TO_SELLER_ID.get(shop_name)
@@ -199,7 +235,11 @@ def get_order_info(token: str, seller_id: str, order_id: str):
     )
     res = requests.post(
         f"{YAHOO_BASE}/orderInfo",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/xml",
+            **build_signature_headers(seller_id),
+        },
         data=body.encode("utf-8"),
         timeout=30,
     )
@@ -228,7 +268,11 @@ def change_ship_status(token: str, seller_id: str, order_id: str, carrier_code: 
     )
     res = requests.post(
         f"{YAHOO_BASE}/orderShipStatusChange",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/xml",
+            **build_signature_headers(seller_id),
+        },
         data=body.encode("utf-8"),
         timeout=30,
     )
@@ -253,7 +297,11 @@ def change_order_status(token: str, seller_id: str, order_id: str):
     )
     res = requests.post(
         f"{YAHOO_BASE}/orderStatusChange",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/xml",
+            **build_signature_headers(seller_id),
+        },
         data=body.encode("utf-8"),
         timeout=30,
     )

@@ -298,28 +298,43 @@ def main():
             yahoo_token_state["token"] = get_yahoo_order_access_token(spreadsheet)
         return yahoo_token_state["token"]
 
-    def call_with_session_conflict_retry(func, *args):
+    def call_with_session_conflict_retry(func, *args, _max_retries: int = 2):
         """
         px-04102（「AccessToken has been expired. This API session is shorter than
         another API.」＝セッション競合）が出た場合、専用トークンを強制的に取り直して
-        1回だけ再試行する。2026-08-31、5分ごとの定期更新だけでは足りず全件が
+        再試行する。2026-08-31、5分ごとの定期更新だけでは足りず全件が
         px-04102で失敗する事象が発生（GitHub Actions側の延命更新keepaliveの実行タイミング
         が数十分〜1時間ずれることがあり、ローカルPCでの実行中と偶然重なって
         refresh_tokenを取り合ってしまうことが原因と推測）。
+        2026-09-04、専用アプリに切り替え後もタイミングの重なりが見当たらないまま
+        全件px-04102で失敗する事象を確認。即座の1回リトライだけでは間に合わない
+        可能性があるため、少し待ってから最大2回まで再試行するようにする。
         """
-        try:
-            result = func(get_fresh_yahoo_token(), *args)
-        except RuntimeError as e:
-            if "px-04102" not in str(e):
-                raise
-            print("  セッション競合(px-04102)を検知。トークンを強制的に取り直して再試行します。")
-            return func(get_fresh_yahoo_token(force=True), *args)
+        def is_conflict(exc_or_result) -> bool:
+            if isinstance(exc_or_result, Exception):
+                return "px-04102" in str(exc_or_result)
+            return (
+                isinstance(exc_or_result, tuple)
+                and len(exc_or_result) == 2
+                and exc_or_result[0] is False
+                and "px-04102" in str(exc_or_result[1])
+            )
 
-        # change_ship_status/change_order_status は例外ではなく (成功したか, メッセージ) を返す
-        if isinstance(result, tuple) and len(result) == 2 and result[0] is False and "px-04102" in str(result[1]):
-            print("  セッション競合(px-04102)を検知。トークンを強制的に取り直して再試行します。")
-            return func(get_fresh_yahoo_token(force=True), *args)
-        return result
+        for attempt in range(_max_retries + 1):
+            try:
+                result = func(get_fresh_yahoo_token(force=(attempt > 0)), *args)
+            except RuntimeError as e:
+                if not is_conflict(e) or attempt == _max_retries:
+                    raise
+                print(f"  セッション競合(px-04102)を検知。{3 * (attempt + 1)}秒待機してトークンを取り直し、再試行します（{attempt + 1}/{_max_retries}）。")
+                time.sleep(3 * (attempt + 1))
+                continue
+
+            if is_conflict(result) and attempt < _max_retries:
+                print(f"  セッション競合(px-04102)を検知。{3 * (attempt + 1)}秒待機してトークンを取り直し、再試行します（{attempt + 1}/{_max_retries}）。")
+                time.sleep(3 * (attempt + 1))
+                continue
+            return result
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)

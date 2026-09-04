@@ -1,6 +1,7 @@
 """
 ChatworkにShipment ID（Package id）が届いたら、社内システムの
 「Edit Shipping Details」からShip Methodを Yamato Nekopos に変更する。
+ただし、既に Yamato Nekopos だった場合は逆に Sagawa CDS に切り替える（トグル動作）。
 
 処理の流れ:
 - ログインは他のPlaywright系スクリプトと同じ2段階（Basic認証 + フォームログイン）
@@ -9,8 +10,9 @@ ChatworkにShipment ID（Package id）が届いたら、社内システムの
   描画されないため、この経路で内部IDを得る）
 - /sales/shipping-details/{内部ID} を開き、Shipping Country が JP であること・商品明細に
   BLOCKED_PRODUCT_CODE（例: W-229）が含まれていないことを確認してから、Package id が
-  一致する行の Ship Method を変更してSave（条件を満たさない場合や Block Upgrade
-  チェック済みの場合は変更せずエラー報告）
+  一致する行の Ship Method を変更してSave（現在値がYamato Nekoposなら代わりにSagawa CDSへ、
+  それ以外ならYamato Nekoposへ。条件を満たさない場合や Block Upgrade チェック済みの場合は
+  変更せずエラー報告）
 - 完了後、Chatworkルーム(442638900)へ結果を通知
 """
 
@@ -33,6 +35,7 @@ CW_TOKEN = os.environ["CW_TOKEN"]
 CW_ROOM_ID = "442638900"
 
 TARGET_SHIP_METHOD = "Yamato Nekopos"
+ALT_SHIP_METHOD = "Sagawa CDS"  # 既にTARGET_SHIP_METHODだった場合の切り替え先
 BLOCKED_PRODUCT_CODE = "W-229"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -174,10 +177,12 @@ def change_ship_method(page, shipment_id):
     print(f"商品コード確認OK（{len(product_codes)}件、{BLOCKED_PRODUCT_CODE}なし）。変更を続行します")
 
     # Package id が一致する行の Ship Method セレクトを操作。
-    # Block Upgrade がチェック済みなら 'block-upgrade'、既に目的の値なら 'already'、
-    # 変更したら 'changed'、見つからなければ理由を返す。
+    # 既に TARGET_SHIP_METHOD（Yamato Nekopos）になっている場合は、
+    # 逆に ALT_SHIP_METHOD（Sagawa CDS）へ切り替える（トグル動作）。
+    # Block Upgrade がチェック済みなら 'block-upgrade'、切り替え先が既に選択済みなら
+    # 'already'、変更したら 'changed'、見つからなければ理由を返す。
     result = page.evaluate(
-        """({shipmentId, target}) => {
+        """({shipmentId, target, altTarget}) => {
             const rows = [...document.querySelectorAll('table tr')];
             for (const tr of rows) {
                 const cells = [...tr.cells];
@@ -185,37 +190,41 @@ def change_ship_method(page, shipment_id):
                 const pkgId = cells[0].textContent.trim();
                 if (pkgId !== String(shipmentId)) continue;
                 const blockCb = tr.querySelector('input[type="checkbox"]');
-                if (blockCb && blockCb.checked) return 'block-upgrade';
+                if (blockCb && blockCb.checked) return {result: 'block-upgrade'};
                 const select = tr.querySelector('select');
-                if (!select) return 'no-select';
+                if (!select) return {result: 'no-select'};
                 const cur = select.options[select.selectedIndex];
-                if (cur && cur.textContent.trim() === target) return 'already';
-                const opt = [...select.options].find(o => o.textContent.trim() === target);
-                if (!opt) return 'no-option';
+                const curText = cur ? cur.textContent.trim() : '';
+                const effectiveTarget = curText === target ? altTarget : target;
+                if (curText === effectiveTarget) return {result: 'already', target: effectiveTarget};
+                const opt = [...select.options].find(o => o.textContent.trim() === effectiveTarget);
+                if (!opt) return {result: 'no-option', target: effectiveTarget};
                 select.value = opt.value;
                 select.dispatchEvent(new Event('input', {bubbles:true}));
                 select.dispatchEvent(new Event('change', {bubbles:true}));
-                return 'changed';
+                return {result: 'changed', target: effectiveTarget};
             }
-            return 'no-row';
+            return {result: 'no-row'};
         }""",
-        {"shipmentId": shipment_id, "target": TARGET_SHIP_METHOD},
+        {"shipmentId": shipment_id, "target": TARGET_SHIP_METHOD, "altTarget": ALT_SHIP_METHOD},
     )
-    if result == "already":
-        print("既に Yamato Nekopos のため変更不要")
-        return True, "already Yamato Nekopos"
-    if result == "block-upgrade":
+    outcome = result["result"]
+    applied_target = result.get("target")
+    if outcome == "already":
+        print(f"既に {applied_target} のため変更不要")
+        return True, f"already {applied_target}"
+    if outcome == "block-upgrade":
         print("！Block Upgrade がチェック済みのため変更を中止します")
         return False, "Block Upgrade is checked — Ship Method not changed"
-    if result != "changed":
-        print(f"！変更できませんでした（{result}）: Package id {shipment_id}")
+    if outcome != "changed":
+        print(f"！変更できませんでした（{outcome}）: Package id {shipment_id}")
         try:
             page.screenshot(path="debug_shipping.png", full_page=True)
         except Exception:
             pass
-        return False, f"Ship method not changed ({result})"
+        return False, f"Ship method not changed ({outcome})"
 
-    print("Ship Methodを変更しました。Saveをクリックします...")
+    print(f"Ship Methodを {applied_target} に変更しました。Saveをクリックします...")
     save_btn = page.locator('button:has-text("Save"), input[type="submit"][value="Save"]').first
     if save_btn.count() == 0:
         print("！Saveボタンが見つかりません")
@@ -223,14 +232,14 @@ def change_ship_method(page, shipment_id):
     save_btn.click()
     page.wait_for_load_state("networkidle")
     print("保存完了")
-    return True, ""
+    return True, f"changed to {applied_target}"
 
 
-def post_chatwork(shipment_id, success, error_reason):
+def post_chatwork(shipment_id, success, detail):
     if success:
-        message = f"✅ Shipment {shipment_id}: Ship Method changed to {TARGET_SHIP_METHOD}"
+        message = f"✅ Shipment {shipment_id}: Ship Method {detail}"
     else:
-        message = f"⚠ Shipment {shipment_id}: Ship Method change failed ({error_reason})"
+        message = f"⚠ Shipment {shipment_id}: Ship Method change failed ({detail})"
     resp = requests.post(
         f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
         headers={"X-ChatWorkToken": CW_TOKEN},

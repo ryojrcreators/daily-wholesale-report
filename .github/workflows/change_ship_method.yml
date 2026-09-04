@@ -1,10 +1,10 @@
-name: Shipment Ship Method変更（Yamato Nekopos）
+name: Shipment Ship Method変更（Nekopos⇔Sagawa CDS切り替え）
 
 on:
   workflow_dispatch:
     inputs:
       shipment_id:
-        description: '対象のShipment ID（Package id）'
+        description: '対象のShipment ID（Package id）。Yamato Nekoposへ変更、既にNekoposならSagawa CDSへ切り替え'
         required: true
 
 jobs:

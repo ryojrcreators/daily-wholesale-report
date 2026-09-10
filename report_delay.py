@@ -149,6 +149,14 @@ def _find_dates(text, today):
         d = _mk_date(int(m.group(1)), int(m.group(2)), None, today)
         if d:
             out.append(d)
+    # 区切り文字なしのMMDDYYYY（8桁連続、例："Estimated Delivery by 09102026"）。
+    # 2026-09-10、この形式が読み取れずETA未確定→手動対応行きになっていたことを受けて追加。
+    # 月・日として無効な組み合わせは_mk_dateが弾くため、追跡番号等8桁の他の数字列を
+    # 誤って日付と解釈するリスクは低い。
+    for m in re.finditer(r'(?<!\d)(\d{2})(\d{2})(\d{4})(?!\d)', text):
+        d = _mk_date(int(m.group(1)), int(m.group(2)), int(m.group(3)), today)
+        if d:
+            out.append(d)
     return out
 
 

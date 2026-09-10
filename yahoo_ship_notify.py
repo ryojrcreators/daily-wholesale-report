@@ -149,6 +149,27 @@ YAHOO_CARRIER_CODES = {
     "ePacket": "1003",
 }
 
+# 2026-09-10、社内システムのship_method欄は出荷後に配送業者が変更されても更新が
+# 追いつかないことがあり（例: 佐川→ヤマトに後で修正されたが、その時点ではすでに
+# 佐川としてYahooへ登録済みだった。Yahooは「完了」後の配送業者変更を受け付けないため
+# 修正不能だった）、実データ12,046件を集計したところ追跡番号の先頭文字は配送業者ごとに
+# ほぼ完全に一意だった（Sagawa CDS=5が5933/5934件、Yamato Nekopos=2が371/371件、
+# ePacket=Lが627/627件）。ship_methodより実際に採番された追跡番号の方が確定後の
+# 実態を反映しているとみて、先頭文字による判定を優先する。
+TRACKING_PREFIX_TO_CARRIER = {
+    "5": "Sagawa CDS",
+    "2": "Yamato Nekopos",
+    "L": "ePacket",
+}
+
+
+def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str) -> str:
+    """追跡番号の先頭文字から配送業者を判定する。既知のパターンに合致しなければ
+    社内システムのship_method欄（fallback_ship_method）をそのまま使う。"""
+    prefix = tracking_num.strip()[:1] if tracking_num else ""
+    return TRACKING_PREFIX_TO_CARRIER.get(prefix, fallback_ship_method)
+
+
 SHIP_STATUS_SHIPPED = "3"     # 出荷済み
 ORDER_STATUS_COMPLETE = "5"   # 完了
 
@@ -444,10 +465,12 @@ def main():
             missing_info += 1
             continue
 
-        if not o["ship_method"] or o["ship_method"].strip().lower() == "none":
+        resolved_ship_method = resolve_ship_method_from_tracking(o["tracking_num"], o["ship_method"])
+
+        if not resolved_ship_method or resolved_ship_method.strip().lower() == "none":
             carrier_code = YAHOO_CARRIER_CODES.get("Sagawa CDS")
         else:
-            carrier_code = YAHOO_CARRIER_CODES.get(o["ship_method"])
+            carrier_code = YAHOO_CARRIER_CODES.get(resolved_ship_method)
             if carrier_code is None:
                 unmapped_carriers.append(o)
                 continue
@@ -476,7 +499,7 @@ def main():
 
         if DRY_RUN:
             print(f"  【DRY RUN】{o['order_number']}（{order_id}）: "
-                  f"{o['ship_method'] or 'Sagawa CDS(既定)'}({carrier_code}) / {o['tracking_num']}")
+                  f"{resolved_ship_method or 'Sagawa CDS(既定)'}({carrier_code}) / {o['tracking_num']}")
             registered += 1
             continue
 

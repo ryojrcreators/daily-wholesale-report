@@ -94,6 +94,25 @@ CARRIER_CODES = {
     "Yamato Over Size": "1001",  # 楽天のdeliveryCompanyは運送会社単位のコードのため、ヤマトはサービス種別によらず同じ1001
 }
 
+# 2026-09-10、社内システムのship_method欄は出荷後に配送業者が変更されても更新が
+# 追いつかないことがあり、実データ12,046件を集計したところ追跡番号の先頭文字は
+# 配送業者ごとにほぼ完全に一意だった（Sagawa CDS=5が5933/5934件、
+# Yamato Nekopos=2が371/371件、ePacket=Lが627/627件）。詳細はyahoo_ship_notify.pyの
+# 同日コメント参照。ship_methodより確定後の追跡番号の方が実態を反映しているとみて、
+# 先頭文字による判定を優先する。
+TRACKING_PREFIX_TO_CARRIER = {
+    "5": "Sagawa CDS",
+    "2": "Yamato Nekopos",
+    "L": "ePacket",
+}
+
+
+def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str) -> str:
+    """追跡番号の先頭文字から配送業者を判定する。既知のパターンに合致しなければ
+    社内システムのship_method欄（fallback_ship_method）をそのまま使う。"""
+    prefix = tracking_num.strip()[:1] if tracking_num else ""
+    return TRACKING_PREFIX_TO_CARRIER.get(prefix, fallback_ship_method)
+
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_ROOM_ID = os.environ.get("CW_ROOM_ID") or "60101971"
 CW_ASSIGNEE_ID = "2618849"  # Ryo Higuchiさん（[To:2618849]と同じアカウントID）
@@ -388,11 +407,12 @@ def main():
         if store is None:
             ignored_store += 1
             continue
-        if not o["ship_method"] or o["ship_method"].strip().lower() == "none":
+        resolved_ship_method = resolve_ship_method_from_tracking(o["tracking_num"], o["ship_method"])
+        if not resolved_ship_method or resolved_ship_method.strip().lower() == "none":
             # ship_methodが未設定（空文字、または文字列"None"）の場合はSagawa CDSとして扱う
             code = CARRIER_CODES["Sagawa CDS"]
         else:
-            code = CARRIER_CODES.get(o["ship_method"])
+            code = CARRIER_CODES.get(resolved_ship_method)
             if code is None:
                 unmapped_carriers.append(o)
                 continue

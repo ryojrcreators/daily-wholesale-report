@@ -421,8 +421,23 @@ def process_report_delays():
                     # Step 1: Case詳細でETA取得
                     page.goto(f"{BASE_URL}{edit_href}", wait_until="networkidle")
                     description = page.eval_on_selector('#description', 'el => el.value')
-                    eta = parse_eta(description)
-                    print(f"  ETA: {eta}  (description: {description!r})")
+
+                    # ケースが一度Repliesで返信された後、再度New状態に戻ることがある
+                    # （2026-09-10、Case 156239で確認：最初のDescriptionは9/4だったが、
+                    # Repliesに9/14の新しいETAが投稿された後もDescription側のETAで
+                    # メールを送ってしまい、2通目が古い日付のままになっていた）。
+                    # Repliesの最後（最新）の投稿に日付が読み取れれば、そちらを優先する。
+                    reply_texts = page.eval_on_selector_all(
+                        '.conversation-reply p', 'els => els.map(e => e.innerText)'
+                    )
+                    latest_reply_eta = parse_eta(reply_texts[-1]) if reply_texts else None
+
+                    if latest_reply_eta is not None:
+                        eta = latest_reply_eta
+                        print(f"  ETA: {eta}  (Repliesの最新投稿から取得: {reply_texts[-1]!r})")
+                    else:
+                        eta = parse_eta(description)
+                        print(f"  ETA: {eta}  (description: {description!r})")
 
                     # ETAの日付は取れないが「入荷予定はある」文面の場合、
                     # 誤って"未定"メールを送らず、自動送信せず手動対応に回す（ステータスはNEWのまま）

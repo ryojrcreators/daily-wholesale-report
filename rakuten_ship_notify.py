@@ -139,14 +139,22 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str):
         print(f"  Chatworkタスク作成に失敗しました: {e}")
 
 
-def build_report(unmapped_carriers: list, errors: list) -> str:
+def build_report(unmapped_carriers: list, errors: list, auth_error_stores: list = None) -> str:
     """
     2026-09-14、エラー件数が多い時（例：APIキー失効で全件エラー）に注文番号を
     1件ずつ列挙するとChatworkの本文が長すぎて投稿自体が失敗する事象を確認
     （status=400、1156件エラー時）。件数だけ分かれば実行ログで詳細を確認できるため、
     注文番号の一覧は出さず件数のみ報告する。
+    auth_error_storesが指定されていれば、APIキー失効（401 Un-Authorised）と
+    分かっているので、原因を明示して更新を促す文言を出す（同日、原因特定に
+    手間取ったため追加）。
     """
     lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", ""]
+    if auth_error_stores:
+        stores_label = "、".join(auth_error_stores)
+        lines.append(f"■ APIキー認証エラー: {stores_label}店舗")
+        lines.append("楽天RMSのService Secret / License Keyが失効している可能性があります。ライセンスキーを更新してください。")
+        lines.append("")
     if unmapped_carriers:
         lines.append(f"■ 未知の配送会社名（要マッピング追加）: {len(unmapped_carriers)}件")
         lines.append("")
@@ -299,6 +307,17 @@ def api_order_number(order_number: str) -> str:
     return re.sub(r"-[A-Z]\d*$", "", order_number)
 
 
+class RMSAuthError(RuntimeError):
+    """楽天RMS APIキー（Service Secret / License Key）が無効な場合に送出する。
+    2026-09-14、License Key失効時に全件が401 Un-Authorisedになり、1件ずつの
+    無駄な再試行（1000件超）とChatwork本文の肥大化（投稿失敗）を招いたため、
+    401検知時は即座にこの例外を送出して呼び出し側で店舗単位のエラーとして扱う。"""
+
+
+def _is_auth_error(res: requests.Response) -> bool:
+    return res.status_code == 401 or "Un-Authorised" in res.text or "ES01-01" in res.text
+
+
 # ══ 楽天RMS 受注管理API ═══════════════════════════
 def get_orders(headers: dict, order_numbers: list) -> dict:
     """getOrderをまとめて呼び、{orderNumber: OrderModel} を返す。
@@ -307,7 +326,8 @@ def get_orders(headers: dict, order_numbers: list) -> dict:
     バッチ全体をエラーにして返す（2026-09-03、分割発送の-B接尾辞が原因で同じ
     バッチの他の全注文まで巻き添えで「見つかりません」になる事象が発生）。
     バッチが失敗した場合は1件ずつ再試行し、本当に問題のある注文番号だけを
-    エラーとして扱う。
+    エラーとして扱う。ただし401（APIキー失効等）は全件同じ理由で失敗するのが
+    確実なので、1件ずつの無駄な再試行はせずRMSAuthErrorを即座に送出する。
     """
     result = {}
     for i in range(0, len(order_numbers), 100):
@@ -323,6 +343,9 @@ def get_orders(headers: dict, order_numbers: list) -> dict:
             for order in data.get("OrderModelList", []) or []:
                 result[order.get("orderNumber")] = order
             continue
+
+        if _is_auth_error(res):
+            raise RMSAuthError(f"status={res.status_code} {res.text[:300]}")
 
         print(f"  getOrder失敗: status={res.status_code} {res.text[:300]}")
         print(f"  バッチ内の{len(batch)}件を1件ずつ再試行します。")
@@ -427,6 +450,7 @@ def main():
           f"配送会社名未マッピング: {len(unmapped_carriers)}件")
 
     errors = []
+    auth_error_stores = []
     registered = 0
     skipped_already = 0
     not_found = 0
@@ -438,7 +462,12 @@ def main():
         print(f"\n--- {store}（{len(targets)}件） ---")
         headers = auth_headers(**rakuten_stores[store])
         order_numbers = [api_order_number(t["order_number"]) for t in targets]
-        order_map = get_orders(headers, order_numbers)
+        try:
+            order_map = get_orders(headers, order_numbers)
+        except RMSAuthError as e:
+            print(f"  APIキー認証エラー、{store}店舗はスキップします: {e}")
+            auth_error_stores.append(store)
+            continue
 
         for t in targets:
             if MAX_PER_RUN is not None and registered >= MAX_PER_RUN:
@@ -484,8 +513,8 @@ def main():
     print(f"\n=== 完了: 登録{registered}件 / 既登録スキップ{skipped_already}件 / "
           f"注文見つからず{not_found}件 / エラー{len(errors)}件 / 要確認{len(unmapped_carriers)}件 ===")
 
-    if unmapped_carriers or errors:
-        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors))
+    if unmapped_carriers or errors or auth_error_stores:
+        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors, auth_error_stores))
     else:
         print("エラー・要確認とも無かったため、Chatworkへは通知しません。")
 

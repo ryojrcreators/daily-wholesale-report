@@ -140,16 +140,19 @@ def post_chatwork_task(room_id: str, to_ids: str, body: str):
 
 
 def build_report(unmapped_carriers: list, errors: list) -> str:
+    """
+    2026-09-14、エラー件数が多い時（例：APIキー失効で全件エラー）に注文番号を
+    1件ずつ列挙するとChatworkの本文が長すぎて投稿自体が失敗する事象を確認
+    （status=400、1156件エラー時）。件数だけ分かれば実行ログで詳細を確認できるため、
+    注文番号の一覧は出さず件数のみ報告する。
+    """
     lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", ""]
     if unmapped_carriers:
-        lines.append("■ 未知の配送会社名（要マッピング追加）")
-        for r in unmapped_carriers:
-            lines.append(f"・注文番号 {r['order_number']}: {r['ship_method']!r}")
+        lines.append(f"■ 未知の配送会社名（要マッピング追加）: {len(unmapped_carriers)}件")
         lines.append("")
     if errors:
-        lines.append("■ エラー")
-        for r in errors:
-            lines.append(f"・注文番号 {r['order_number']}: {r['message']}")
+        lines.append(f"■ エラー: {len(errors)}件")
+        lines.append("詳細はGitHub Actionsの実行ログを確認してください。")
         lines.append("")
     lines.append("[/info]")
     return "\n".join(lines)

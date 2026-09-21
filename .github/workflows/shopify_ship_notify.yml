@@ -1,0 +1,99 @@
+name: Shopify 出荷通知 自動反映
+
+on:
+  schedule:
+    # LA時間（太平洋時間）9:00 / 17:00 に実行（UTC表記）。
+    # rakuten_ship_notify.ymlと同じ考え方（夏時間/冬時間を分けて設定）。
+    - cron: '0 16 * 3-11 *'    # PDT: LA 9:00
+    - cron: '0 0 * 3-11 *'     # PDT: LA 17:00（UTC翌日）
+    - cron: '0 17 * 12,1,2 *'  # PST: LA 9:00
+    - cron: '0 1 * 12,1,2 *'   # PST: LA 17:00（UTC翌日）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'DRY RUN（true = fulfillments.jsonを呼ばない）'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      lookback_days:
+        description: '当日を含め何日分（発送日基準）を対象にするか'
+        required: false
+        default: '3'
+      created_time_lookback_days:
+        description: '注文日（created_time）の検索範囲。発送日基準の範囲より広めに取る'
+        required: false
+        default: '21'
+      cw_room_id:
+        description: 'Chatwork報告先ルームid（テスト時は本番以外を指定）'
+        required: false
+        default: ''
+      only_order_numbers:
+        description: 'テスト用：この注文番号だけ対象にする（カンマ区切りで複数可）'
+        required: false
+        default: ''
+      max_per_run:
+        description: 'テスト用：処理する件数の上限（0=無制限）'
+        required: false
+        default: '0'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: ライブラリをインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libxshmfence1
+      - name: 出荷通知自動反映
+        env:
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          SHOPIFY_ACCESS_TOKEN_PUREJP: ${{ secrets.SHOPIFY_ACCESS_TOKEN_PUREJP }}
+          SHOPIFY_ACCESS_TOKEN_RAINBOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_RAINBOW }}
+          SHOPIFY_ACCESS_TOKEN_ACTIVEWOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_ACTIVEWOW }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          # スケジュール実行（定期実行）は本番稼働としてDRY_RUN=falseで動かす。
+          # 手動実行（workflow_dispatch）は引き続きinputs.dry_run（既定true）に従う。
+          DRY_RUN: ${{ inputs.dry_run || (github.event_name == 'schedule' && 'false') || 'true' }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days || '3' }}
+          CREATED_TIME_LOOKBACK_DAYS: ${{ inputs.created_time_lookback_days || '21' }}
+          CW_ROOM_ID: ${{ inputs.cw_room_id }}
+          ONLY_ORDER_NUMBERS: ${{ inputs.only_order_numbers }}
+          MAX_PER_RUN: ${{ inputs.max_per_run || '0' }}
+        run: python -u shopify_ship_notify.py
+
+      - name: 失敗時にChatworkへ通知
+        # スクリプト内のエラー通知は「一部の注文でエラー・要確認があった」場合のみ動く。
+        # ログイン失敗・想定外の例外・GitHub Actions側の障害などでジョブ自体が失敗した場合は
+        # スクリプトの通知処理まで到達しないため、ワークフロー側で別途検知して知らせる。
+        if: ${{ failure() }}
+        env:
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+        run: |
+          curl -s -X POST "https://api.chatwork.com/v2/rooms/60101971/tasks" \
+            -H "X-ChatWorkToken: $CW_TOKEN" \
+            --data-urlencode "body=[title]Shopify出荷通知の自動反映が失敗しました（ワークフロー自体がエラー終了）[/title]スクリプトのエラー、社内システムへのログイン失敗、GitHub Actions側の障害などが考えられます。実行ログを確認してください: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --data-urlencode "to_ids=2618849"

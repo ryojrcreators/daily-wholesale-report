@@ -17,6 +17,17 @@ DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 ASIN = os.environ.get("TEST_ASIN", "B0DT4ZZXD2")
 
 
+def print_deepl_usage() -> None:
+    url = "https://api-free.deepl.com/v2/usage"
+    headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        print(f"DeepL usage status: {res.status_code}")
+        print(f"DeepL usage body: {res.text}")
+    except Exception as e:
+        print(f"DeepL使用量取得失敗: {e}")
+
+
 def translate_to_japanese(text: str) -> str:
     """DeepL APIで英語→日本語に翻訳する。失敗時は元のテキストを返す。"""
     url = "https://api-free.deepl.com/v2/translate"
@@ -54,6 +65,8 @@ def main():
 
     title = p.get("title") or ""
     features = (p.get("features") or [])[:3]
+
+    print_deepl_usage()
 
     print("\n=== DeepL翻訳結果 ===")
     print(f"商品名(日本語): {translate_to_japanese(title)}")

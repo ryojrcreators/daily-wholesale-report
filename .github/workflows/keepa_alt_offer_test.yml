@@ -20,5 +20,6 @@ jobs:
       - name: 確認実行
         env:
           KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           TEST_ASIN: ${{ inputs.asin }}
         run: python -u keepa_alt_offer_test.py

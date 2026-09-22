@@ -13,7 +13,22 @@ import os
 import requests
 
 KEEPA_API_KEY = os.environ["KEEPA_API_KEY"]
+DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 ASIN = os.environ.get("TEST_ASIN", "B0DT4ZZXD2")
+
+
+def translate_to_japanese(text: str) -> str:
+    """DeepL APIで英語→日本語に翻訳する。失敗時は元のテキストを返す。"""
+    url = "https://api-free.deepl.com/v2/translate"
+    headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
+    data = {"text": [text], "target_lang": "JA"}
+    try:
+        res = requests.post(url, headers=headers, json=data, timeout=15)
+        res.raise_for_status()
+        return res.json()["translations"][0]["text"]
+    except Exception as e:
+        print(f"  DeepL翻訳エラー: {e}")
+        return text
 
 
 def main():
@@ -36,7 +51,15 @@ def main():
         first_image = p["imagesCSV"].split(",")[0]
         print(f"画像URL(推定・imagesCSVから): https://images-na.ssl-images-amazon.com/images/I/{first_image}")
     print(f"images: {p.get('images')}")
-    print(f"features: {p.get('features')}")
+
+    title = p.get("title") or ""
+    features = (p.get("features") or [])[:3]
+
+    print("\n=== DeepL翻訳結果 ===")
+    print(f"商品名(日本語): {translate_to_japanese(title)}")
+    print("特徴(日本語、上位3個):")
+    for i, f in enumerate(features, 1):
+        print(f"  {i}. {translate_to_japanese(f)}")
 
 
 if __name__ == "__main__":

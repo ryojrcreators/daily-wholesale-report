@@ -45,6 +45,10 @@ def translate_to_japanese(text: str) -> str:
 
 
 def main():
+    key = DEEPL_API_KEY
+    masked = f"{key[:6]}...{key[-6:]} (長さ{len(key)}文字)" if len(key) > 12 else "(短すぎて表示できません)"
+    print(f"使用中のDEEPL_API_KEY: {masked}\n")
+
     print(f"=== Keepa商品情報確認: {ASIN} ===\n")
     url = f"https://api.keepa.com/product?key={KEEPA_API_KEY}&domain=1&asin={ASIN}&stats=1&images=1"
     res = requests.get(url, timeout=60)

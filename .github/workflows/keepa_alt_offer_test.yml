@@ -1,0 +1,24 @@
+name: Keepa Alt Offer検証（商品名・画像・特徴の取得確認）
+
+on:
+  workflow_dispatch:
+    inputs:
+      asin:
+        description: '確認したいASIN'
+        required: true
+        default: 'B0DT4ZZXD2'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: 確認実行
+        env:
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          TEST_ASIN: ${{ inputs.asin }}
+        run: python -u keepa_alt_offer_test.py

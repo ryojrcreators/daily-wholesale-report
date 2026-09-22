@@ -70,6 +70,9 @@ def main():
 
     print_deepl_usage()
 
+    print("\n=== DeepL最小テスト（'hello'を翻訳） ===")
+    print(f"結果: {translate_to_japanese('hello')}")
+
     print("\n=== DeepL翻訳結果 ===")
     print(f"商品名(日本語): {translate_to_japanese(title)}")
     print("特徴(日本語、上位3個):")

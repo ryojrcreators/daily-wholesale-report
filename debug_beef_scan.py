@@ -37,13 +37,19 @@ def main():
     c_name = col("商品名")
 
     pattern = re.compile(r"ビーフ|\bbeef\b", re.IGNORECASE)
+    # 「ベビーフード」「ベビーフロート」「キャビーフィギュア」「○○ビーフレンドリー」など、
+    # 「ビーフ」を偶然含むだけの無関係な単語を除外する
+    NOISE_PATTERNS = [
+        r"ベビーフ", r"ビーフィ", r"ビーフレンドリー", r"ベビー\s*Fフロート",
+    ]
+    noise_re = re.compile("|".join(NOISE_PATTERNS))
 
     hits = []
     for row in rows:
         if len(row) <= c_name:
             continue
         name = row[c_name]
-        if pattern.search(name):
+        if pattern.search(name) and not noise_re.search(name):
             hits.append((row[c_shop], row[c_item], name))
 
     print(f"総行数: {len(rows)}")

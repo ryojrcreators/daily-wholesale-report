@@ -35,10 +35,12 @@ def translate_to_japanese(text: str) -> str:
     data = {"text": [text], "target_lang": "JA"}
     try:
         res = requests.post(url, headers=headers, json=data, timeout=15)
-        res.raise_for_status()
+        if res.status_code != 200:
+            print(f"  DeepL翻訳エラー: status={res.status_code} body={res.text[:500]}")
+            return text
         return res.json()["translations"][0]["text"]
     except Exception as e:
-        print(f"  DeepL翻訳エラー: {e}")
+        print(f"  DeepL翻訳エラー(例外): {e}")
         return text
 
 

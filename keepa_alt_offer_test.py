@@ -18,7 +18,7 @@ ASIN = os.environ.get("TEST_ASIN", "B0DT4ZZXD2")
 
 def main():
     print(f"=== Keepa商品情報確認: {ASIN} ===\n")
-    url = f"https://api.keepa.com/product?key={KEEPA_API_KEY}&domain=1&asin={ASIN}&stats=1"
+    url = f"https://api.keepa.com/product?key={KEEPA_API_KEY}&domain=1&asin={ASIN}&stats=1&images=1"
     res = requests.get(url, timeout=60)
     res.raise_for_status()
     data = res.json()
@@ -34,7 +34,8 @@ def main():
     print(f"imagesCSV: {p.get('imagesCSV')}")
     if p.get("imagesCSV"):
         first_image = p["imagesCSV"].split(",")[0]
-        print(f"画像URL(推定): https://images-na.ssl-images-amazon.com/images/I/{first_image}")
+        print(f"画像URL(推定・imagesCSVから): https://images-na.ssl-images-amazon.com/images/I/{first_image}")
+    print(f"images: {p.get('images')}")
     print(f"features: {p.get('features')}")
 
 

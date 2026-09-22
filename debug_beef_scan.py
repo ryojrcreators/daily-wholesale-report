@@ -36,7 +36,7 @@ def main():
     c_item = col("商品管理番号")
     c_name = col("商品名")
 
-    pattern = re.compile(r"ビーフ|(?i)\bbeef\b")
+    pattern = re.compile(r"ビーフ|\bbeef\b", re.IGNORECASE)
 
     hits = []
     for row in rows:

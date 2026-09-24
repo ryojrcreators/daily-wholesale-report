@@ -31,6 +31,7 @@ import time
 import requests
 from xml.etree import ElementTree
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from playwright.sync_api import sync_playwright
@@ -42,6 +43,7 @@ from rakuten_ship_notify import (
     MAX_PER_RUN,
     login,
     collect_shipped_orders,
+    parse_ship_datetime,
     post_chatwork_task,
     CW_ROOM_ID,
     CW_ASSIGNEE_ID,
@@ -170,6 +172,23 @@ def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: s
     return TRACKING_PREFIX_TO_CARRIER.get(prefix, fallback_ship_method)
 
 
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def to_yahoo_ship_date(ship_time: str):
+    """社内システムのship_time（米国太平洋時間）を、Yahoo向けの出荷日（日本時間の日付、
+    YYYYMMDD）に変換する。解釈できなければNone（その場合ShipDateは送らない）。
+
+    2026-09-24、Yahooの担当者から「配送会社・伝票番号・出荷日の3点を必ず同時に登録」と
+    依頼があった。それまでShipDateを送っておらず、Yahoo側が出荷済みへの変更時に自動で
+    入れる日付に任せていた（発送から登録までが遅れると実際の発送日とずれうる）ため、
+    社内システムの実際の出荷時刻から明示的に送るようにした。"""
+    dt = parse_ship_datetime(ship_time)
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=LA_TZ).astimezone(JST).strftime("%Y%m%d")
+
+
 SHIP_STATUS_SHIPPED = "3"     # 出荷済み
 ORDER_STATUS_COMPLETE = "5"   # 完了
 
@@ -286,8 +305,12 @@ def get_order_info(token: str, seller_id: str, order_id: str):
     return parse_xml_fields(res.content)
 
 
-def change_ship_status(token: str, seller_id: str, order_id: str, carrier_code: str, tracking_num: str):
-    """出荷ステータス変更API（ShipStatus=3固定）。戻り値は(成功したか, メッセージ)。"""
+def change_ship_status(token: str, seller_id: str, order_id: str, carrier_code: str, tracking_num: str,
+                       ship_date: str = None):
+    """出荷ステータス変更API（ShipStatus=3固定）。戻り値は(成功したか, メッセージ)。
+    ship_date（YYYYMMDD）があればShipDateとして送る。要素の並び順はYahoo公式サンプルどおり
+    （ShipStatus → ShipCompanyCode → ShipInvoiceNumber1 → … → ShipDate）。"""
+    ship_date_xml = f"<ShipDate>{ship_date}</ShipDate>" if ship_date else ""
     body = (
         "<Req>"
         "<Target>"
@@ -298,6 +321,7 @@ def change_ship_status(token: str, seller_id: str, order_id: str, carrier_code: 
         f"<ShipStatus>{SHIP_STATUS_SHIPPED}</ShipStatus>"
         f"<ShipCompanyCode>{carrier_code}</ShipCompanyCode>"
         f"<ShipInvoiceNumber1>{tracking_num}</ShipInvoiceNumber1>"
+        f"{ship_date_xml}"
         "</Ship></Order>"
         f"<SellerId>{seller_id}</SellerId>"
         "</Req>"
@@ -346,8 +370,13 @@ def change_order_status(token: str, seller_id: str, order_id: str):
     return True, ""
 
 
-def build_report(unmapped_carriers: list, errors: list) -> str:
+def build_report(unmapped_carriers: list, errors: list, date_fallbacks: list = None) -> str:
     lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", ""]
+    if date_fallbacks:
+        lines.append("■ 出荷日（ShipDate）付きの登録が拒否されたため、出荷日なしで登録した注文（要確認）")
+        for r in date_fallbacks:
+            lines.append(f"・注文番号 {r['order_number']}: {r['message']}")
+        lines.append("")
     if unmapped_carriers:
         lines.append("■ 未知の配送会社名（要マッピング追加）")
         for r in unmapped_carriers:
@@ -451,6 +480,7 @@ def main():
 
     missing_info = 0
     unmapped_carriers = []
+    date_fallbacks = []
     errors = []
     registered = 0
     skipped_already = 0
@@ -497,14 +527,25 @@ def main():
             print(f"  {o['order_number']}（{order_id}）: 既に出荷済み/着荷済みのためスキップ")
             continue
 
+        ship_date = to_yahoo_ship_date(o["ship_time"])
+
         if DRY_RUN:
             print(f"  【DRY RUN】{o['order_number']}（{order_id}）: "
-                  f"{resolved_ship_method or 'Sagawa CDS(既定)'}({carrier_code}) / {o['tracking_num']}")
+                  f"{resolved_ship_method or 'Sagawa CDS(既定)'}({carrier_code}) / {o['tracking_num']} / 出荷日={ship_date}")
             registered += 1
             continue
 
-        ok, message = call_with_session_conflict_retry(change_ship_status, o["seller_id"], order_id, carrier_code, o["tracking_num"])
+        ok, message = call_with_session_conflict_retry(change_ship_status, o["seller_id"], order_id, carrier_code, o["tracking_num"], ship_date)
         time.sleep(API_INTERVAL)
+        if not ok and ship_date:
+            # 出荷日付きの登録が拒否された場合に備え、日付なしで1回だけやり直す
+            # （出荷日が原因で全注文の登録が止まる事故を避けるため。成功したらChatworkに報告する）。
+            first_message = message
+            ok, message = call_with_session_conflict_retry(change_ship_status, o["seller_id"], order_id, carrier_code, o["tracking_num"], None)
+            time.sleep(API_INTERVAL)
+            if ok:
+                date_fallbacks.append({"order_number": o["order_number"], "message": first_message})
+                print(f"  {o['order_number']}（{order_id}）: 出荷日付きが拒否されたため、出荷日なしで登録しました: {first_message}")
         if not ok:
             errors.append({"order_number": o["order_number"], "message": f"出荷ステータス変更失敗: {message}"})
             print(f"  {o['order_number']}（{order_id}）: 出荷ステータス変更失敗 {message}")
@@ -527,8 +568,8 @@ def main():
           f"情報不足{missing_info}件 / 見つからず{not_found}件 / エラー{len(errors)}件 / "
           f"要確認{len(unmapped_carriers)}件 ===")
 
-    if unmapped_carriers or errors:
-        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors))
+    if unmapped_carriers or errors or date_fallbacks:
+        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors, date_fallbacks))
     else:
         print("エラー・要確認とも無かったため、Chatworkへは通知しません。")
 

@@ -73,6 +73,7 @@ CASE_LIST_URL = f"{BASE_URL}/case-orders?case_status_id=1&case_group_id%5B0%5D=4
 
 CASE_STATUS_IN_PROGRESS = "2"  # Case Status の In-Progress
 CASE_GROUP_RAKUTEN_YAHOO = "4"  # Case Group の Rakuten/Yahoo (Mkt)
+CASE_GROUP_PURCHASER = "14"  # Case Group の Purchaser
 TARGET_CASE_TYPES = ("Close (Temporary)", "Close (Permanent)")
 REPLY_MESSAGE = "Rakuten/Yahoo Closed"
 # 両モールとも該当出品が1件も見つからなかった場合のReply。
@@ -627,7 +628,47 @@ def fetch_case_skus(page, case_id: str) -> list:
     return rows
 
 
-def update_case(page, case_id: str, reply_message: str) -> str:
+def swap_group_to_purchaser(page) -> None:
+    """Case Groups の Rakuten/Yahoo を外して Purchaser を付ける。
+
+    2026-09-24、ユーザー依頼: 価格変更(Change Price)ケースで Case Groups が Rakuten/Yahoo
+    だけだった場合、Status を In-Progress にするのに加えて、Case Groups を Purchaser にする
+    （対応後にPurchaserへ戻すため）。select2のタグUIを人と同じ操作（チップの×で外す、
+    検索欄に入力して候補を選ぶ）で変更する。裏の<select>をJSで書き換える方法は、
+    select2の内部状態と食い違う恐れがあるため使わない。"""
+    container = page.locator("#case-groups-ids + .select2-container")
+
+    removed = page.evaluate(
+        """() => {
+            const box = document.querySelector('#case-groups-ids + .select2-container');
+            const chips = box ? [...box.querySelectorAll('.select2-selection__choice')] : [];
+            const target = chips.find(c => c.textContent.includes('Rakuten/Yahoo'));
+            if (!target) return false;
+            const x = target.querySelector('.select2-selection__choice__remove');
+            if (!x) return false;
+            x.click();
+            return true;
+        }"""
+    )
+    if not removed:
+        raise RuntimeError("Case Groups から Rakuten/Yahoo を外せませんでした（チップが見つかりません）")
+    page.wait_for_timeout(300)
+
+    container.locator(".select2-search__field").click()
+    page.keyboard.type("Purchaser")
+    page.wait_for_timeout(300)
+    page.locator(".select2-results__option", has_text="Purchaser").first.click()
+    page.wait_for_timeout(300)
+
+    selected = page.evaluate(
+        """() => [...document.querySelectorAll('#case-groups-ids option')]
+                 .filter(o => o.selected).map(o => o.value)"""
+    )
+    if selected != [CASE_GROUP_PURCHASER]:
+        raise RuntimeError(f"Case Groups を Purchaser だけにできませんでした（現在の選択: {selected}）")
+
+
+def update_case(page, case_id: str, reply_message: str, to_purchaser_when_sole: bool = False) -> str:
     """
     楽天・Yahooの対応が終わったことをケースに反映する。戻り値は行った内容の説明。
 
@@ -638,6 +679,8 @@ def update_case(page, case_id: str, reply_message: str) -> str:
         リストから消えてしまうため
       - Case Groups が Rakuten/Yahoo だけだった場合は、外す相手がいないので
         Status を In-Progress にする
+      - to_purchaser_when_sole=True（価格変更ケースで使用）の場合は、上記に加えて
+        Case Groups を Purchaser にする（Rakuten/Yahoo を外して Purchaser を付ける）
     """
     page.goto(f"{BASE_URL}/case-orders/edit/{case_id}", wait_until="networkidle")
     page.wait_for_timeout(300)
@@ -679,7 +722,11 @@ def update_case(page, case_id: str, reply_message: str) -> str:
         action = f"Assigned ToからRakuten/Yahooを外しました（残り: {[g['text'] for g in remaining]}／StatusはNewのまま）"
     else:
         page.select_option("#case-status-id", CASE_STATUS_IN_PROGRESS)
-        action = "Case GroupsがRakuten/Yahooのみのため、Statusを In-Progress にしました"
+        if to_purchaser_when_sole:
+            swap_group_to_purchaser(page)
+            action = "Case GroupsがRakuten/Yahooのみのため、Case GroupsをPurchaserに変更し、Statusを In-Progress にしました"
+        else:
+            action = "Case GroupsがRakuten/Yahooのみのため、Statusを In-Progress にしました"
 
     # Replyのtextareaは case-order-replies-{n}-message という形でnが可変
     page.fill('textarea[id^="case-order-replies-"][id$="-message"]', reply_message)
@@ -726,6 +773,8 @@ def update_case(page, case_id: str, reply_message: str) -> str:
         raise RuntimeError("保存されていません（Rakuten/Yahooが残ったままです）")
     if not remaining and saved["status"] != CASE_STATUS_IN_PROGRESS:
         raise RuntimeError("保存されていません（StatusがIn-Progressになっていません）")
+    if not remaining and to_purchaser_when_sole and saved["groups"] != [CASE_GROUP_PURCHASER]:
+        raise RuntimeError(f"保存されていません（Case GroupsがPurchaserになっていません: {saved['groups']}）")
 
     return action
 

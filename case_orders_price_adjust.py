@@ -8,7 +8,8 @@
   4. その行の Calc（社内の価格計算ツール /products/calculator）を開いて計算させ、
      Sell Price を新しい販売価格として読み取る
   5. 現在価格より高い場合だけ、楽天・Yahooの価格を更新する
-  6. ケースに Reply を入れ、Case Groups から Rakuten/Yahoo を外す（単独なら In-Progress にする）
+  6. ケースに Reply を入れ、Case Groups から Rakuten/Yahoo を外す（単独なら In-Progress にして、
+     Case Groups を Purchaser にする。2026-09-24追加）
   7. 結果をスプレッドシートの「自動Close_ログ」タブに追記する
 
 なぜ Min 列を使わず計算ツールを開くのか:
@@ -562,7 +563,7 @@ def main():
                                      "【DRY RUN】対象SKUなし（Rakuten/Yahoo除外予定）"])
                     continue
                 try:
-                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU)
+                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU, to_purchaser_when_sole=True)
                     print(f"  ✅ {action}／Reply「{REPLY_MESSAGE_NO_SKU}」を投稿しました。")
                     log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
                                      f"対象SKUなし: {action}"])
@@ -843,7 +844,7 @@ def main():
                 continue
 
             try:
-                action = update_case(page, case_id, REPLY_MESSAGE)
+                action = update_case(page, case_id, REPLY_MESSAGE, to_purchaser_when_sole=True)
                 print(f"  ✅ {action}／Reply「{REPLY_MESSAGE}」を投稿しました。")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])
             except Exception as e:

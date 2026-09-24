@@ -24,13 +24,14 @@
 """
 
 import base64
+import json
 import os
 import re
 import sys
 import time
 import requests
 from xml.etree import ElementTree
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
@@ -195,6 +196,48 @@ def to_yahoo_ship_date(ship_time: str):
     if dt is None:
         return None
     return dt.replace(tzinfo=LA_TZ).astimezone(JST).strftime("%Y%m%d")
+
+
+# 2026-09-24、登録漏れの拾い直しのため、探す期間を直近3日から21日（LOOKBACK_DAYS=21）に
+# 広げた。毎回すべての注文をYahooに問い合わせると重くなるため、「Yahooで出荷済みと確認
+# できた注文」をローカルのキャッシュファイルに記録し、次回以降は問い合わせを省く。
+# 出荷から RECENT_DAYS 日以内の注文は従来どおり（問題があれば毎回Chatwork報告）。それより
+# 古い注文は、同じ問題を1回だけ報告する（21日間ずっと同じ報告が来るのを避けるため）。
+REGISTERED_CACHE_PATH = os.environ.get("YAHOO_REGISTERED_CACHE_PATH") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "yahoo_registered_cache.json"
+)
+RECENT_DAYS = 3
+CACHE_KEEP_DAYS = 60
+
+
+def load_registered_cache() -> dict:
+    """{"registered": {Yahoo注文ID: 記録日}, "notified": {"注文番号|種類": 報告日}} を読む。
+    読めない場合は空から始める（キャッシュは高速化のためだけで、無くても正しく動く）。"""
+    data = {"registered": {}, "notified": {}}
+    try:
+        with open(REGISTERED_CACHE_PATH, encoding="utf-8") as f:
+            loaded = json.load(f)
+        for key in ("registered", "notified"):
+            if isinstance(loaded.get(key), dict):
+                data[key] = loaded[key]
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"キャッシュの読み込みに失敗したため、空から始めます: {e}")
+    keep_from = (datetime.now(JST) - timedelta(days=CACHE_KEEP_DAYS)).strftime("%Y-%m-%d")
+    for key in ("registered", "notified"):
+        data[key] = {k: v for k, v in data[key].items() if str(v) >= keep_from}
+    return data
+
+
+def save_registered_cache(cache: dict) -> None:
+    tmp_path = REGISTERED_CACHE_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+        os.replace(tmp_path, REGISTERED_CACHE_PATH)
+    except Exception as e:
+        print(f"キャッシュの保存に失敗しました（動作には影響しません）: {e}")
 
 
 SHIP_STATUS_SHIPPED = "3"     # 出荷済み
@@ -378,8 +421,14 @@ def change_order_status(token: str, seller_id: str, order_id: str):
     return True, ""
 
 
-def build_report(unmapped_carriers: list, errors: list, date_fallbacks: list = None) -> str:
+def build_report(unmapped_carriers: list, errors: list, date_fallbacks: list = None,
+                 late_registered: list = None) -> str:
     lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", ""]
+    if late_registered:
+        lines.append(f"■ 出荷から{RECENT_DAYS}日以上たってから登録した注文（登録漏れの拾い直し）")
+        for r in late_registered:
+            lines.append(f"・注文番号 {r['order_number']}: {r['message']}")
+        lines.append("")
     if date_fallbacks:
         lines.append("■ 出荷日（ShipDate）付きの登録が拒否されたため、出荷日なしで登録した注文（要確認）")
         for r in date_fallbacks:
@@ -489,15 +538,47 @@ def main():
     missing_info = 0
     unmapped_carriers = []
     date_fallbacks = []
+    late_registered = []
     errors = []
     registered = 0
     skipped_already = 0
+    skipped_cached = 0
     not_found = 0
+
+    cache = load_registered_cache()
+    print(f"登録済みキャッシュ: {len(cache['registered'])}件（探す期間: 出荷から{os.environ.get('LOOKBACK_DAYS', '?')}日以内）")
+    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    recent_cutoff = datetime.now(LA_TZ).replace(tzinfo=None) - timedelta(days=RECENT_DAYS)
+    unsaved = {"count": 0}
+
+    def is_older(o) -> bool:
+        dt = parse_ship_datetime(o["ship_time"])
+        return dt is not None and dt < recent_cutoff
+
+    def should_report(o, kind: str) -> bool:
+        """出荷から3日以内の注文は従来どおり毎回報告。それより古い注文は、同じ問題を1回だけ報告する。"""
+        key = f"{o['order_number']}|{kind}"
+        if is_older(o) and key in cache["notified"]:
+            return False
+        cache["notified"][key] = today_str
+        return True
+
+    def mark_registered(order_id: str) -> None:
+        cache["registered"][order_id] = today_str
+        unsaved["count"] += 1
+        if unsaved["count"] >= 25:
+            save_registered_cache(cache)
+            unsaved["count"] = 0
 
     for o in yahoo_orders:
         if MAX_PER_RUN is not None and registered >= MAX_PER_RUN:
             print(f"MAX_PER_RUN={MAX_PER_RUN}に達したため、残りは今回スキップします。")
             break
+
+        order_id = o["yahoo_order_id"]
+        if order_id in cache["registered"]:
+            skipped_cached += 1
+            continue
 
         if not o["tracking_num"]:
             missing_info += 1
@@ -510,15 +591,16 @@ def main():
         else:
             carrier_code = YAHOO_CARRIER_CODES.get(resolved_ship_method)
             if carrier_code is None:
-                unmapped_carriers.append(o)
+                if should_report(o, "unmapped"):
+                    unmapped_carriers.append(o)
                 continue
 
-        order_id = o["yahoo_order_id"]
         try:
             info = call_with_session_conflict_retry(get_order_info, o["seller_id"], order_id)
         except Exception as e:
             print(f"  {o['order_number']}（{order_id}）: orderInfo取得エラー: {e}")
-            errors.append({"order_number": o["order_number"], "message": f"orderInfo取得エラー: {e}"})
+            if should_report(o, "error"):
+                errors.append({"order_number": o["order_number"], "message": f"orderInfo取得エラー: {e}"})
             continue
         finally:
             time.sleep(API_INTERVAL)
@@ -526,12 +608,14 @@ def main():
         if info is None:
             not_found += 1
             print(f"  {o['order_number']}（{order_id}）: orderInfoで見つかりませんでした")
-            errors.append({"order_number": o["order_number"], "message": f"orderInfoで見つかりませんでした（OrderId={order_id}）"})
+            if should_report(o, "error"):
+                errors.append({"order_number": o["order_number"], "message": f"orderInfoで見つかりませんでした（OrderId={order_id}）"})
             continue
 
         current_ship_status = info.get("ShipStatus")
         if current_ship_status in (SHIP_STATUS_SHIPPED, "4"):  # 3=出荷済み, 4=着荷済み
             skipped_already += 1
+            mark_registered(order_id)
             print(f"  {o['order_number']}（{order_id}）: 既に出荷済み/着荷済みのためスキップ")
             continue
 
@@ -555,7 +639,8 @@ def main():
                 date_fallbacks.append({"order_number": o["order_number"], "message": first_message})
                 print(f"  {o['order_number']}（{order_id}）: 出荷日付きが拒否されたため、出荷日なしで登録しました: {first_message}")
         if not ok:
-            errors.append({"order_number": o["order_number"], "message": f"出荷ステータス変更失敗: {message}"})
+            if should_report(o, "error"):
+                errors.append({"order_number": o["order_number"], "message": f"出荷ステータス変更失敗: {message}"})
             print(f"  {o['order_number']}（{order_id}）: 出荷ステータス変更失敗 {message}")
             continue
 
@@ -567,17 +652,26 @@ def main():
         time.sleep(API_INTERVAL)
         if ok:
             registered += 1
+            mark_registered(order_id)
             print(f"  {o['order_number']}（{order_id}）: 完了にしました")
+            if is_older(o):
+                late_registered.append({
+                    "order_number": o["order_number"],
+                    "message": f"出荷時刻 {o['ship_time']}（米国時間）。Yahooに未登録だったため今回登録しました",
+                })
         else:
-            errors.append({"order_number": o["order_number"], "message": f"注文ステータス変更失敗: {message}"})
+            if should_report(o, "error"):
+                errors.append({"order_number": o["order_number"], "message": f"注文ステータス変更失敗: {message}"})
             print(f"  {o['order_number']}（{order_id}）: 注文ステータス変更失敗 {message}")
 
-    print(f"\n=== 完了: 登録{registered}件 / 既登録スキップ{skipped_already}件 / "
-          f"情報不足{missing_info}件 / 見つからず{not_found}件 / エラー{len(errors)}件 / "
-          f"要確認{len(unmapped_carriers)}件 ===")
+    save_registered_cache(cache)
 
-    if unmapped_carriers or errors or date_fallbacks:
-        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors, date_fallbacks))
+    print(f"\n=== 完了: 登録{registered}件 / 既登録スキップ{skipped_already}件 / キャッシュで問い合わせ省略{skipped_cached}件 / "
+          f"情報不足{missing_info}件 / 見つからず{not_found}件 / エラー{len(errors)}件 / "
+          f"要確認{len(unmapped_carriers)}件 / 拾い直し{len(late_registered)}件 ===")
+
+    if unmapped_carriers or errors or date_fallbacks or late_registered:
+        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(unmapped_carriers, errors, date_fallbacks, late_registered))
     else:
         print("エラー・要確認とも無かったため、Chatworkへは通知しません。")
 

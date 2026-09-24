@@ -3,3 +3,6 @@ __pycache__/
 .env
 run_*.ps1
 run_*.bat
+
+yahoo_registered_cache.json
+yahoo_registered_cache.json.tmp

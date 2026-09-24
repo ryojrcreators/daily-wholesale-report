@@ -162,14 +162,22 @@ TRACKING_PREFIX_TO_CARRIER = {
     "5": "Sagawa CDS",
     "2": "Yamato Nekopos",
     "L": "ePacket",
+    # 2026-09-24、直近45日でネコポスの伝票番号が「97…」（12桁）で始まる注文が6件あった
+    # （いずれも社内のship_method欄はYamato Nekopos）。欄が「None」でも佐川に誤登録されない
+    # よう、念のため先頭2文字の判定に加える。
+    "97": "Yamato Nekopos",
 }
 
 
 def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str) -> str:
-    """追跡番号の先頭文字から配送業者を判定する。既知のパターンに合致しなければ
-    社内システムのship_method欄（fallback_ship_method）をそのまま使う。"""
-    prefix = tracking_num.strip()[:1] if tracking_num else ""
-    return TRACKING_PREFIX_TO_CARRIER.get(prefix, fallback_ship_method)
+    """追跡番号の先頭から配送業者を判定する（長い接頭辞を優先: 先頭2文字→先頭1文字）。
+    既知のパターンに合致しなければ社内システムのship_method欄（fallback_ship_method）を
+    そのまま使う。"""
+    tracking = tracking_num.strip() if tracking_num else ""
+    for prefix in (tracking[:2], tracking[:1]):
+        if prefix in TRACKING_PREFIX_TO_CARRIER:
+            return TRACKING_PREFIX_TO_CARRIER[prefix]
+    return fallback_ship_method
 
 
 JST = ZoneInfo("Asia/Tokyo")

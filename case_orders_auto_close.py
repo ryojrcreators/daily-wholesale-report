@@ -11,7 +11,8 @@
   5. 楽天: RMS API で hideItem=true（＝倉庫。2店舗とも試し、存在する店舗で実行）
      Yahoo: setStock API で quantity=0（＝在庫切れ。同上）
   6. そのケースのSKUが全て成功した場合のみ、/case-orders/edit/{id} で
-     Case Status を In-Progress にし、Reply に「Rakuten/Yahoo Closed」を入れて保存する
+     Case Status を In-Progress にし（Case Groups が Rakuten/Yahoo だけなら Purchaser に変更。
+     2026-09-24追加）、Reply に「Rakuten/Yahoo Closed」を入れて保存する
      （1つでも失敗したら New のまま残し、次回の実行で再挑戦させる）
   7. 実行結果をスプレッドシートの「自動Close_ログ」タブに追記する
 
@@ -830,7 +831,7 @@ def main():
                                      "【DRY RUN】対象SKUなし（Rakuten/Yahoo除外予定）"])
                     continue
                 try:
-                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU)
+                    action = update_case(page, case_id, REPLY_MESSAGE_NO_SKU, to_purchaser_when_sole=True)
                     print(f"  ✅ {action}／Reply「{REPLY_MESSAGE_NO_SKU}」を投稿しました。")
                     log_rows.append([now, case_id, case["caseType"], "-", "-", "-",
                                      f"対象SKUなし: {action}"])
@@ -937,7 +938,7 @@ def main():
                 print("  ※ 両モールとも該当出品が見つかりませんでした（すでに削除済みか、SKUが古い可能性）")
 
             try:
-                action = update_case(page, case_id, reply_message)
+                action = update_case(page, case_id, reply_message, to_purchaser_when_sole=True)
                 print(f"  ✅ {action}／Reply「{reply_message}」を投稿しました。")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])
             except Exception as e:

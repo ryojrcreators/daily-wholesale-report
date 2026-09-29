@@ -16,11 +16,11 @@ YAHOO_SHEET_NAME = "Yahoo_出品データ"
 RICE_PATTERNS = [
     r"白米", r"玄米", r"もち米", r"精米", r"無洗米", r"ジャポニカ米", r"カルローズ",
     r"こしひかり", r"コシヒカリ",
-    r"(?i)\b(white|brown|jasmine|basmati|sushi|long\s*grain|short\s*grain|calrose)\s*rice\b",
+    r"\b(white|brown|jasmine|basmati|sushi|long\s*grain|short\s*grain|calrose)\s*rice\b",
     r"ライスクリスプ", r"Rice Crisps", r"ライスシロップ", r"Rice Syrup",
     r"ライスプロテイン", r"Rice Protein",
 ]
-pattern_re = re.compile("|".join(RICE_PATTERNS))
+pattern_re = re.compile("|".join(RICE_PATTERNS), re.IGNORECASE)
 
 
 def get_spreadsheet():

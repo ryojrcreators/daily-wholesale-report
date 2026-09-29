@@ -68,8 +68,11 @@ def fetch_product():
                     }
                     return null;
                 };
-                const h = document.querySelector('h1, h2, h3');
-                return { live: pick('Live Qty'), med: pick('MED'), title: h ? h.innerText.trim() : '' };
+                // Product Info 欄の「Code xxx ... Name yyy Description」から取る
+                const t = document.body.innerText.replace(/\s+/g, ' ');
+                const code = (t.match(/ Code (\S+)/) || [])[1] || '';
+                const name = (t.match(/ Name (.+?) Description/) || [])[1] || '';
+                return { live: pick('Live Qty'), med: pick('MED'), title: (name + (code ? ' [' + code + ']' : '')).trim() };
             }"""
         )
         browser.close()

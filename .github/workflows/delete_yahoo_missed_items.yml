@@ -42,4 +42,6 @@ jobs:
           RAKUTEN_RMS_SERVICE_SECRET_2: ${{ secrets.RAKUTEN_RMS_SERVICE_SECRET_2 }}
           RAKUTEN_RMS_LICENSE_KEY_2: ${{ secrets.RAKUTEN_RMS_LICENSE_KEY_2 }}
           RAKUTEN_SHOP_NAME_2: ${{ secrets.RAKUTEN_SHOP_NAME_2 }}
+          WOWMA_API_KEY: "x"
+          WOWMA_SHOP_ID: "x"
         run: python -u delete_yahoo_missed_items.py

@@ -21,7 +21,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           playwright install chromium
-          playwright install-deps chromium
+          playwright install-deps chromium || sudo apt-get install -y             libasound2t64             libatk1.0-0             libatk-bridge2.0-0             libcups2             libdrm2             libgbm1             libgtk-3-0             libxcomposite1             libxdamage1             libxfixes3             libxrandr2             libxshmfence1
 
       - name: 在庫日数チェック & Chatwork通知
         env:

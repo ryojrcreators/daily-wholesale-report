@@ -80,7 +80,10 @@ def yahoo_delete_item(token: str, store: dict, item_code: str) -> tuple:
         return False, f"削除エラー: {e}"
     if res.status_code < 400:
         return True, "削除しました"
-    if res.status_code == 404:
+    # Yahooは「商品が存在しない」場合も404ではなく400＋it-06003で返す仕様
+    # （2026-09-29、実機で確認。deleteItemInfos一括呼び出しではなく単発呼び出しのため
+    # 該当店舗に無いコードは頻繁に発生し、これを異常として扱うと大量の誤検知になる）。
+    if res.status_code == 404 or "it-06003" in res.text:
         return True, "すでに存在しません"
     return False, f"削除失敗({res.status_code}) {res.text[:150]}"
 

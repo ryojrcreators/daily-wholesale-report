@@ -25,6 +25,8 @@ PRODUCT_ID = "40650"
 PRODUCT_URL = f"https://{DOMAIN}/products/view/{PRODUCT_ID}"
 THRESHOLD_DAYS = 100
 
+TEST_MODE = os.environ.get("TEST_MODE") == "true"
+
 STATE_FILE = Path(__file__).with_name("stock_days_alert_state.json")
 
 
@@ -114,6 +116,19 @@ def main():
 
     days = live_qty / med
     print(f"在庫日数 = {days:.1f} 日 (閾値 {THRESHOLD_DAYS} 日)")
+
+    if TEST_MODE:
+        # テスト送信：判定に関係なく通知し、状態ファイルは変更しない
+        send_chatwork(
+            MENTIONS + "\n"
+            "[info][title]【テスト】Stock Alert テスト送信[/title]"
+            "これは動作確認のテスト通知です。対応は不要です。\n"
+            f"{title} (ID {PRODUCT_ID})\n"
+            f"Live Qty {live_qty:g} / Daily Med {med:g} = {days:.1f} days "
+            f"(threshold: {THRESHOLD_DAYS} days)\n"
+            f"{PRODUCT_URL}[/info]"
+        )
+        return
 
     state = load_state()
     if days <= THRESHOLD_DAYS:

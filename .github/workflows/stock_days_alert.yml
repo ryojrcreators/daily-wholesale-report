@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '0 0 */4 * *'   # 4日おき（月初から1,5,9…日）UTC 0:00 = 日本時間 9:00
   workflow_dispatch:
+    inputs:
+      test:
+        description: 'テスト送信（判定に関係なく【テスト】付きで通知）'
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # 通知済み状態ファイルをコミットするため
@@ -30,6 +35,7 @@ jobs:
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          TEST_MODE: ${{ inputs.test }}
         run: python stock_days_alert.py
 
       - name: 状態ファイルを保存

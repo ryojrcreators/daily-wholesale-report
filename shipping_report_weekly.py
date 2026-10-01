@@ -1,6 +1,6 @@
 """
 Yamato Nekopos / Sagawa CDS / Sagawa USPS(ePacket) の週次出荷件数レポートを
-Chatworkへ送る。毎週金曜 18:00 JST（倉庫の当日バッチが締まった後）に実行する想定。
+Chatworkへ送る。毎週金曜 LA時間(PDT/PST) 18:00（倉庫の当日バッチが締まった後）に実行する想定。
 
 処理の流れ:
 - /manifest-batches を開く（直近約2週間分=最大30行が残っている）。この中から

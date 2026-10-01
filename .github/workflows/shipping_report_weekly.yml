@@ -1,9 +1,14 @@
 name: 出荷件数レポート 週次送信（Chatwork）
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'DRY RUN（true = 集計してログ出力のみ、Chatwork送信なし）'
+        required: true
+        default: 'true'
   schedule:
-    - cron: '0 9 * * 5'   # 毎週金曜 JST 18:00（倉庫の当日バッチが締まった後）
+    - cron: '0 9 * * 5'   # 毎週金曜 JST 18:00（倉庫の当日バッチが締まった後）。本番実行（DRY_RUN=false）
 
 jobs:
   report:
@@ -42,6 +47,7 @@ jobs:
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
           LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: python -u shipping_report_weekly.py
 
       - name: デバッグ用スクリーンショット保存

@@ -35,6 +35,9 @@ BASE_URL = f"https://{DOMAIN}"
 CW_TOKEN = os.environ["CW_TOKEN"]
 CW_ROOM_ID = "105004197"
 
+# DRY_RUN=true の間は、集計してログに出すだけでChatwork送信は行わない
+DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
+
 EPACKET_METHOD_ID = 4
 YAMATO_NEKOPOS = "Yamato Nekopos"
 SAGAWA_CDS = "Sagawa CDS"
@@ -240,7 +243,10 @@ def main():
         missing_str = ", ".join(d.isoformat() for d in missing_dates)
         message += f"\n⚠ manifest-batchesに以下の日のNekopos/CDSデータが見つかりませんでした（0件として集計）: {missing_str}"
     print(message)
-    post_chatwork(message)
+    if DRY_RUN:
+        print("（DRY RUNのためChatworkへは送信していません）")
+    else:
+        post_chatwork(message)
 
     print("=== 完了 ===")
 

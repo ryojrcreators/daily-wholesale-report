@@ -461,7 +461,24 @@ def main():
     # （2026-08-27、2026-08-31）。そのため毎回のAPI呼び出し前に必ず取り直す
     # （キャッシュしない）。無駄な失敗呼び出しを減らすため、call_with_session_conflict_retry
     # 経由の呼び出しは常にforce=Trueで取得する。
-    yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet)}
+    #
+    # 2026-10-01、refresh_tokenがYahoo側で期限切れになり、このトークン取得が
+    # 失敗していたことに数週間気づけなかった事象が発生。原因は2つ：
+    # (1) ここで例外が発生すると後述のエラー集計（errors/Chatwork通知）を
+    #     一切通らずにプロセスが異常終了するため、従来はこの失敗だけ通知が飛ばない
+    #     経路だった。
+    # (2) run_yahoo_ship_notify.ps1が`exit $LASTEXITCODE`を呼んでいなかったため、
+    #     pythonが失敗終了してもタスクスケジューラには成功（0）として記録されていた。
+    # このtry/exceptで(1)を塞ぎ、(2)はrun_yahoo_ship_notify.ps1側で対応する。
+    try:
+        yahoo_token_state = {"token": get_yahoo_order_access_token(spreadsheet)}
+    except Exception as e:
+        post_chatwork_task(
+            CW_ROOM_ID, CW_ASSIGNEE_ID,
+            f"{CW_MENTION}\n[Yahoo出荷通知] 起動時のアクセストークン取得に失敗しました。"
+            f"refresh_tokenの再認証が必要な可能性があります。\n{e}",
+        )
+        raise
 
     def get_fresh_yahoo_token(force: bool = True):
         if force:

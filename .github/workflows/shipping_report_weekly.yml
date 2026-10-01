@@ -7,11 +7,9 @@ on:
         description: 'DRY RUN（true = 集計してログ出力のみ、Chatwork送信なし）'
         required: true
         default: 'true'
-  schedule:
-    # GitHub Actionsのcronはサマータイムを自動追従しないため、現在（PDT、UTC-7）基準で設定。
-    # 毎週金曜 LA時間(PDT) 18:00 = UTC翌日(土) 1:00（倉庫の当日バッチが締まった後）。本番実行（DRY_RUN=false）
-    # 冬時間（PST、UTC-8）に切り替わったら '0 2 * * 6' に要調整。
-    - cron: '0 1 * * 6'
+  # GitHub Actions標準のscheduleは遅延が大きいため使わない。
+  # 毎週金曜 LA時間 18:00（倉庫の当日バッチが締まった後）に、外部のcron.orgから
+  # workflow_dispatch APIを叩いて起動する運用（HP Qty通知等、他の毎日系ワークフローと同じ方式）。
 
 jobs:
   report:

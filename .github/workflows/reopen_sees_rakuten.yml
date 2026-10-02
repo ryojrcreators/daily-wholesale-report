@@ -3,6 +3,11 @@ name: See's Founder再開（一時）
 on:
   workflow_dispatch:
     inputs:
+      items_file:
+        description: '対象商品管理番号のリストファイル'
+        required: false
+        default: 'sees_rakuten_reopen_items.txt'
+        type: string
       dry_run:
         description: 'DRY RUN（true = 変更せず確認のみ）'
         required: true
@@ -24,6 +29,7 @@ jobs:
       - name: 実行
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          ITEMS_FILE: ${{ inputs.items_file }}
           LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}

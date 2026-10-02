@@ -4,13 +4,14 @@ Founderだけ再開（hideItem=false）する。Americana側は一切変更し�
 条件を満たさない商品（Americanaが非公開、Founderに無い、Founderが既に公開中）は触らない。
 DRY_RUN=true（既定）では何も変更しない。
 """
+import os
 import time
 
 import requests
 
 from case_orders_auto_close import DRY_RUN, RMS_BASE, get_rakuten_stores, rakuten_auth_headers
 
-with open("sees_rakuten_reopen_items.txt", encoding="utf-8") as f:
+with open(os.environ.get("ITEMS_FILE", "sees_rakuten_reopen_items.txt"), encoding="utf-8") as f:
     ITEMS = [line.strip() for line in f if line.strip()]
 
 
@@ -25,7 +26,7 @@ def get_hide(store, code):
 
 def main():
     americana, founder = get_rakuten_stores()
-    print(f"=== See's Founder再開（DRY_RUN={DRY_RUN}） 候補{len(ITEMS)}件 ===")
+    print(f"=== 商品群 Founder再開（DRY_RUN={DRY_RUN}） 候補{len(ITEMS)}件 ===")
     done = skipped = failed = 0
     for code in ITEMS:
         a, f = get_hide(americana, code), get_hide(founder, code)

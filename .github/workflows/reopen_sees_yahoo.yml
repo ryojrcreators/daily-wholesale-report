@@ -3,6 +3,11 @@ name: See's Yahoo公開（一時）
 on:
   workflow_dispatch:
     inputs:
+      baseline_json:
+        description: '消えた項目の元の値（JSON、通常は空）'
+        required: false
+        default: '{}'
+        type: string
       item_codes:
         description: '対象のYahoo商品コード（カンマ区切り）'
         required: true
@@ -29,6 +34,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           ITEM_CODES: ${{ inputs.item_codes }}
+          BASELINE_JSON: ${{ inputs.baseline_json }}
           LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
           LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}

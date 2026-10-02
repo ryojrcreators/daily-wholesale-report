@@ -5,6 +5,7 @@ Yahooの editItem は全置換型（送らなかった項目が消える）た�
 順で実行する。差異（消えた/変わった項目）があれば公開せず、変更前の全項目をログに出して止める。
 ITEM_CODES（カンマ区切り）で対象を指定する。DRY_RUN=true（既定）では何も変更しない。
 """
+import json
 import os
 import time
 from xml.etree import ElementTree
@@ -13,14 +14,19 @@ import requests
 
 from case_orders_auto_close import DRY_RUN, YAHOO_BASE, get_spreadsheet, get_yahoo_access_token, get_yahoo_stores
 
+# 前回の実行で項目が消えた商品の「元の値」（変更前ログから転記）。getItemでは既に消えているため、
+# ここから補って書き戻す。{商品コード: {タグ名: 値}}
+BASELINE_FIX = json.loads(os.environ.get("BASELINE_JSON", "{}"))
+
 ITEM_CODES = [s.strip() for s in os.environ.get("ITEM_CODES", "").split(",") if s.strip()]
 
 # editItemで使えることを実機で確認済みの項目（yahoo_api_test.py の復元データと同じ名前）
 ECHO_FIELDS = {
     "Path": "path", "Name": "name", "ProductCategory": "product_category", "Price": "price",
-    "Delivery": "delivery", "LeadTimeInStock": "lead_time_in_stock", "SpCode": "sp_code",
+    "Delivery": "delivery", "LeadTimeInStock": "lead_time_instock", "SpCode": "sp_code",
     "Headline": "headline", "Caption": "caption", "Explanation": "explanation",
     "SpAdditional": "sp_additional",
+    "BrandCode": "brand_code", "Jan": "jan", "PointImmediate": "point_immediate",
 }
 IGNORE_DIFF = {"UpdateTime", "EditingFlag"}
 
@@ -55,7 +61,8 @@ def main():
             before = get_item_raw(token, store, code)
             if before is None:
                 continue
-            if before.get("Display") == "1":
+            before = {**before, **BASELINE_FIX.get(code, {})}
+            if before.get("Display") == "1" and before.get("EditingFlag") == "0":
                 print(f"  [SKIP] {code}: すでに公開（Display=1）")
                 continue
             if DRY_RUN:
@@ -78,7 +85,7 @@ def main():
             if lost or changed or after.get("Display") != "1":
                 print(f"  [STOP] {code}: 差異あり。公開せず停止します。Display={after.get('Display')} / 消えた={lost} / 変化={changed}")
                 for t in lost + changed:
-                    print(f"     変更前[{t}]: {before.get(t, '')[:200]}")
+                    print(f"     変更前[{t}]: {before.get(t, '')[:200]} / 変更後: {after.get(t, '(なし)')[:200]}")
                 continue
 
             sub = requests.post(f"{YAHOO_BASE}/submitItem", headers={"Authorization": f"Bearer {token}"},

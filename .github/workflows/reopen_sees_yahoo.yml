@@ -3,6 +3,11 @@ name: See's Yahoo公開（一時）
 on:
   workflow_dispatch:
     inputs:
+      publish:
+        description: 'submitItemで個別反映まで行う（通常はfalse。反映は管理画面で手動）'
+        required: false
+        default: 'false'
+        type: string
       baseline_json:
         description: '消えた項目の元の値（JSON、通常は空）'
         required: false
@@ -24,6 +29,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +40,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           ITEM_CODES: ${{ inputs.item_codes }}
+          PUBLISH: ${{ inputs.publish }}
           BASELINE_JSON: ${{ inputs.baseline_json }}
           LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
           LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}

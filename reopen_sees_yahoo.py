@@ -30,6 +30,19 @@ ECHO_FIELDS = {
 }
 IGNORE_DIFF = {"UpdateTime", "EditingFlag"}
 
+PUBLISH = os.environ.get("PUBLISH", "false").lower() == "true"
+
+# 実機で確認済みの項目（echoするもの＋省略しても保持されると確認できたもの）。
+# これ以外の項目を持つ商品は、editItemで消える/変わる恐れがあるため編集せず保留にする。
+KNOWN_TAGS = set(ECHO_FIELDS) | {
+    "ItemCode", "Quantity", "StockClose", "Taxable", "TaxrateType", "HiddenFlag", "Display",
+    "TemplateId", "TemplateName", "KeepStock", "PostageSet", "Condition", "IsDrug", "ShowStock",
+    "UpdateTime", "EditingFlag", "SubscriptionType", "SubscriptionRecommendedCycle",
+    "ItemSocialGiftType", "CrossBorderAgencyFlag", "PersonSaleLimit",
+    "Image", "LibImage1", "LibImage2", "LibImage3", "LibImage4", "LibImage5", "LibImage6",
+    "LibImage7", "LibImage8", "LibImage9", "LibImage10",
+}
+
 
 def get_item_raw(token, store, code):
     res = requests.get(
@@ -53,8 +66,12 @@ def main():
     ss = get_spreadsheet()
     token = get_yahoo_access_token(ss)
     t0 = time.time()
-    print(f"=== See's Yahoo公開（DRY_RUN={DRY_RUN}） 対象{len(ITEM_CODES)}コード ===")
+    print(f"=== See's Yahoo公開（DRY_RUN={DRY_RUN} / 反映={PUBLISH}） 対象{len(ITEM_CODES)}コード ===")
+    staged = held = 0
+    halted = False
     for code in ITEM_CODES:
+        if halted:
+            break
         for store in get_yahoo_stores():
             if time.time() - t0 > 300:
                 token, t0 = get_yahoo_access_token(ss), time.time()
@@ -64,6 +81,11 @@ def main():
             before = {**before, **BASELINE_FIX.get(code, {})}
             if before.get("Display") == "1" and before.get("EditingFlag") == "0":
                 print(f"  [SKIP] {code}: すでに公開（Display=1）")
+                continue
+            unknown = [t for t in before if t not in KNOWN_TAGS]
+            if unknown:
+                print(f"  [HOLD] {code}: 未検証の項目があるため編集せず保留: {unknown}")
+                held += 1
                 continue
             if DRY_RUN:
                 print(f"  [OK] {code}: 【DRY RUN】Display {before.get('Display')}→1 の対象（在庫{before.get('Quantity')}）")
@@ -86,6 +108,13 @@ def main():
                 print(f"  [STOP] {code}: 差異あり。公開せず停止します。Display={after.get('Display')} / 消えた={lost} / 変化={changed}")
                 for t in lost + changed:
                     print(f"     変更前[{t}]: {before.get(t, '')[:200]} / 変更後: {after.get(t, '(なし)')[:200]}")
+                print("  !! 異常を検出したため、以降の商品は処理せず全体を停止します。")
+                halted = True
+                break
+
+            if not PUBLISH:
+                print(f"  [STAGED] {code}: 編集済み（Display=1・項目の差異なし）。反映待ち")
+                staged += 1
                 continue
 
             sub = requests.post(f"{YAHOO_BASE}/submitItem", headers={"Authorization": f"Bearer {token}"},
@@ -94,7 +123,7 @@ def main():
             final = get_item_raw(token, store, code)
             ok = sub.status_code < 400 and final.get("Display") == "1" and final.get("EditingFlag") == "0"
             print(f"  [{'OK' if ok else 'NG'}] {code}: 反映 status={sub.status_code} Display={final.get('Display')} EditingFlag={final.get('EditingFlag')}")
-    print("=== 完了 ===")
+    print(f"=== 完了: 編集済み{staged}件 / 保留{held}件 / 停止={halted} ===")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ Yahooの editItem は全置換型（送らなかった項目が消える）た�
 順で実行する。差異（消えた/変わった項目）があれば公開せず、変更前の全項目をログに出して止める。
 ITEM_CODES（カンマ区切り）で対象を指定する。DRY_RUN=true（既定）では何も変更しない。
 """
+import html
 import json
 import os
 import time
@@ -17,6 +18,8 @@ from case_orders_auto_close import DRY_RUN, YAHOO_BASE, get_spreadsheet, get_yah
 # 前回の実行で項目が消えた商品の「元の値」（変更前ログから転記）。getItemでは既に消えているため、
 # ここから補って書き戻す。{商品コード: {タグ名: 値}}
 BASELINE_FIX = json.loads(os.environ.get("BASELINE_JSON", "{}"))
+if os.path.exists("sees_yahoo_baseline.json"):
+    BASELINE_FIX.update(json.load(open("sees_yahoo_baseline.json", encoding="utf-8")))
 
 ITEM_CODES = [s.strip() for s in os.environ.get("ITEM_CODES", "").split(",") if s.strip()]
 
@@ -29,6 +32,10 @@ ECHO_FIELDS = {
     "BrandCode": "brand_code", "Jan": "jan", "PointImmediate": "point_immediate",
 }
 IGNORE_DIFF = {"UpdateTime", "EditingFlag"}
+
+# getItemで返る値は1回エスケープ済み（「&」→「&amp;」）。そのまま送るとYahoo側でもう一度エスケープされ
+# 「&amp;amp;」になる（2026-10-03、9101130akcで確認）ため、プレーンテキストの項目は戻してから送る。
+UNESCAPE_FIELDS = {"Name", "Explanation", "Headline"}
 
 PUBLISH = os.environ.get("PUBLISH", "false").lower() == "true"
 
@@ -94,11 +101,11 @@ def main():
             payload = {"seller_id": store["seller_id"], "item_code": code, "display": "1"}
             for tag, param in ECHO_FIELDS.items():
                 if tag in before:
-                    payload[param] = before[tag]
+                    payload[param] = html.unescape(before[tag]) if tag in UNESCAPE_FIELDS else before[tag]
             res = requests.post(f"{YAHOO_BASE}/editItem", headers={"Authorization": f"Bearer {token}"}, data=payload, timeout=60)
             time.sleep(2)
             if res.status_code >= 400:
-                print(f"  [NG] {code}: editItem失敗({res.status_code}) {res.text[:300]}")
+                print(f"  [NG] {code}: editItem失敗({res.status_code}) {res.text[:800]!r}")
                 continue
 
             after = get_item_raw(token, store, code)

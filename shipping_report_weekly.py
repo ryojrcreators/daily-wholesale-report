@@ -206,8 +206,7 @@ def post_chatwork(message):
 
 def main():
     print("=== 出荷件数 週次レポート 開始 ===")
-    # TEMP: 10/2分のcron実行漏れの救済用。先週(9/28〜10/2)に固定。送信後に date.today() へ戻すこと
-    monday, friday = get_week_mon_fri(date(2026, 10, 2))
+    monday, friday = get_week_mon_fri(date.today())
     print(f"対象期間: {monday} 〜 {friday}")
 
     with sync_playwright() as p:

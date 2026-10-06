@@ -277,31 +277,56 @@ def apply_changes(page, po_number, to_close, to_setqty):
         print("   数量変更を保存しました（SUBMIT）")
 
     # 2) Close（View画面で各行のCloseリンク→ネイティブconfirmをOK）
+    def accept_dialog(d):
+        try:
+            d.accept()
+        except Exception:
+            pass  # 既に処理済みのダイアログ
+
     for code, ln in to_close:
-        page.goto(f"{BASE_URL}/po-heads/view/{po_number}", wait_until="networkidle")
-        page.once("dialog", lambda d: d.accept())
-        clicked = page.evaluate(
-            """(code) => {
-                const rows = [...document.querySelectorAll('table tr')];
-                for (const tr of rows) {
-                    const cl = tr.querySelector('a[href*="/products/view/"]');
-                    if (cl && cl.textContent.trim().toLowerCase() === code.toLowerCase()) {
-                        const close = [...tr.querySelectorAll('a')].find(a => a.textContent.trim() === 'Close');
-                        if (close) { close.click(); return true; }
-                        return false;  // 既にCloseできない（Complete等）
-                    }
-                }
-                return false;
-            }""",
-            code,
-        )
-        if clicked:
-            page.wait_for_load_state("networkidle")
+        # 一時的な遷移エラー（net::ERR_ABORTED等）で全体が止まらないよう、最大3回まで再試行する
+        state = None
+        last_err = None
+        for attempt in range(1, 4):
+            page.on("dialog", accept_dialog)
+            try:
+                page.goto(f"{BASE_URL}/po-heads/view/{po_number}", wait_until="networkidle")
+                state = page.evaluate(
+                    """(code) => {
+                        const rows = [...document.querySelectorAll('table tr')];
+                        for (const tr of rows) {
+                            const cl = tr.querySelector('a[href*="/products/view/"]');
+                            if (cl && cl.textContent.trim().toLowerCase() === code.toLowerCase()) {
+                                const close = [...tr.querySelectorAll('a')].find(a => a.textContent.trim() === 'Close');
+                                if (close) { close.click(); return 'clicked'; }
+                                return 'no-close-link';  // 既にClose済み/Complete等でCloseできない
+                            }
+                        }
+                        return 'no-row';
+                    }""",
+                    code,
+                )
+                if state == "clicked":
+                    page.wait_for_load_state("networkidle")
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                print(f"   ! {code}: 遷移エラー（{attempt}/3回目）: {str(e).splitlines()[0]}")
+                page.wait_for_timeout(2000)
+            finally:
+                page.remove_listener("dialog", accept_dialog)
+
+        if last_err is not None:
+            issues.append(f"Close failed after retries: {code}")
+        elif state == "clicked":
             print(f"   Close 実行: {code}")
             closed_ok += 1
+        elif state == "no-close-link":
+            print(f"   - {code}: 既にClose済み（またはCloseできない状態）のためスキップ")
         else:
-            print(f"   ! Close対象の行/リンクが見つからず: {code}")
-            issues.append(f"Close link not found: {code}")
+            print(f"   ! POに該当行が見つからず: {code}")
+            issues.append(f"Close row not found: {code}")
 
     reduced_list = [(c, b, a) for c, b, a, r in set_done if r.startswith("部分購入")]
     extra_list = [(c, b, a) for c, b, a, r in set_done if r.startswith("エクストラ")]

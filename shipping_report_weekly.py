@@ -10,7 +10,7 @@ Chatworkへ送る。毎週金曜 LA時間(PDT/PST) 18:00（倉庫の当日バッ
   （4=ePacket）をCSVで取得し、email列のドメインが .jp 系（marketplace.amazon.co.jp /
   *.rakuten.ne.jp 等）かどうかで日本向け/他を集計する
   （参考: 2026-09-24、Shipping Country欄と同じ精度で判定できることを実機で確認済み）
-- 5日分を合計してレポート文を組み立て、Chatworkルーム(105004197)へ送信
+- 5日分を合計してレポート文を組み立て、Chatworkルーム(183071776)へ送信
 """
 
 import csv
@@ -33,7 +33,7 @@ LOGIN_URL = f"https://{LOGIN_ID_1_ENC}:{LOGIN_PASS_1_ENC}@{DOMAIN}/"
 BASE_URL = f"https://{DOMAIN}"
 
 CW_TOKEN = os.environ["CW_TOKEN"]
-CW_ROOM_ID = "105004197"
+CW_ROOM_ID = "183071776"
 
 # DRY_RUN=true の間は、集計してログに出すだけでChatwork送信は行わない
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"

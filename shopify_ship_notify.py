@@ -141,8 +141,8 @@ def find_order(domain: str, headers: dict, order_number: str):
             params={"name": name, "status": "any"},
             timeout=30,
         )
-        if res.status_code == 401:
-            raise ShopifyAuthError(f"status=401 {res.text[:300]}")
+        if res.status_code in (401, 403):
+            raise ShopifyAuthError(f"status={res.status_code} {res.text[:300]}")
         if res.status_code != 200:
             continue
         orders = res.json().get("orders", []) or []
@@ -156,10 +156,12 @@ def get_open_fulfillment_orders(domain: str, headers: dict, order_id) -> list:
         f"https://{domain}/admin/api/{SHOPIFY_API_VERSION}/orders/{order_id}/fulfillment_orders.json",
         headers=headers, timeout=30,
     )
-    if res.status_code == 401:
-        raise ShopifyAuthError(f"status=401 {res.text[:300]}")
+    if res.status_code in (401, 403):
+        raise ShopifyAuthError(f"status={res.status_code} {res.text[:300]}")
     if res.status_code != 200:
-        return []
+        # 2026-10-13: 以前は200以外を空リスト（＝登録済み扱い）にしていたため、権限不足(403)で
+        # 全注文が「登録済み」としてスキップされ、出荷通知が一度も送られていなかった。
+        raise RuntimeError(f"fulfillment_orders取得失敗 status={res.status_code} {res.text[:300]}")
     all_fo = res.json().get("fulfillment_orders", []) or []
     return [fo for fo in all_fo if fo.get("status") == "open"]
 
@@ -181,8 +183,8 @@ def create_fulfillment(domain: str, headers: dict, fulfillment_order_id, carrier
         f"https://{domain}/admin/api/{SHOPIFY_API_VERSION}/fulfillments.json",
         headers=headers, json=body, timeout=30,
     )
-    if res.status_code == 401:
-        raise ShopifyAuthError(f"status=401 {res.text[:300]}")
+    if res.status_code in (401, 403):
+        raise ShopifyAuthError(f"status={res.status_code} {res.text[:300]}")
     if res.status_code not in (200, 201):
         return False, f"status={res.status_code} {res.text[:300]}"
     return True, ""
@@ -192,8 +194,10 @@ def build_report(errors: list, auth_error_stores: list) -> str:
     lines = [CW_MENTION, f"[info][title]{CW_TITLE}[/title]", ""]
     if auth_error_stores:
         stores_label = "、".join(auth_error_stores)
-        lines.append(f"■ APIキー認証エラー: {stores_label}店舗")
-        lines.append("Shopify Admin API access tokenが失効（アプリのアンインストール等）している可能性があります。再取得してください。")
+        lines.append(f"■ APIキー認証・権限エラー: {stores_label}店舗")
+        lines.append("Shopify Admin API access tokenが失効（アプリのアンインストール等）しているか、必要な権限")
+        lines.append("（read/write_merchant_managed_fulfillment_orders等）が不足している可能性があります。")
+        lines.append("この店舗の出荷通知は送られていません。Shopify管理画面から手動で発送登録してください。")
         lines.append("")
     if errors:
         lines.append(f"■ エラー: {len(errors)}件")
@@ -275,7 +279,12 @@ def main():
                     errors.append({"order_number": t["order_number"], "message": "Shopify側で注文が見つかりませんでした"})
                     continue
 
-                open_fos = get_open_fulfillment_orders(domain, headers, order["id"])
+                try:
+                    open_fos = get_open_fulfillment_orders(domain, headers, order["id"])
+                except RuntimeError as e:
+                    errors.append({"order_number": t["order_number"], "message": str(e)})
+                    print(f"  {t['order_number']}: {e}")
+                    continue
                 if not open_fos:
                     skipped_already += 1
                     print(f"  {t['order_number']}: 登録済み（未発送のfulfillment orderなし）のためスキップ")

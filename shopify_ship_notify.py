@@ -78,6 +78,35 @@ STORES = {
 }
 
 
+# 追跡番号の先頭（長い接頭辞を優先）→Shopifyが追跡リンクを自動生成できる配送会社名。
+# 2026-10-13、社内システムのship_method欄が「None」の注文が実際にあり（U0036CU000461258）、
+# そのまま渡すとお客様のメールに配送会社「None」と出てしまうため、追跡番号から判定する。
+TRACKING_PREFIX_TO_SHOPIFY_CARRIER = {
+    "97": "Yamato (JA)",
+    "5": "Sagawa (JA)",
+    "2": "Yamato (JA)",
+    "L": "Japan Post (JA)",
+}
+SHIP_METHOD_TO_SHOPIFY_CARRIER = {
+    "Sagawa CDS": "Sagawa (JA)",
+    "Yamato Nekopos": "Yamato (JA)",
+    "ePacket": "Japan Post (JA)",
+}
+
+
+def resolve_carrier(tracking_num: str, ship_method: str) -> str:
+    tracking = (tracking_num or "").strip().upper()
+    for prefix in (tracking[:2], tracking[:1]):
+        if prefix in TRACKING_PREFIX_TO_SHOPIFY_CARRIER:
+            return TRACKING_PREFIX_TO_SHOPIFY_CARRIER[prefix]
+    method = (ship_method or "").strip()
+    if method in SHIP_METHOD_TO_SHOPIFY_CARRIER:
+        return SHIP_METHOD_TO_SHOPIFY_CARRIER[method]
+    if not method or method.lower() == "none":
+        return "Other"
+    return method
+
+
 def collect_shopify_orders(page, context) -> list:
     """created_time範囲でCSVを取得し、shop_nameが空欄（＝Shopify系を含む
     非マーケットプレイス扱いの注文）かつsku_shopがSTORESに該当し、ship_timeが
@@ -290,15 +319,17 @@ def main():
                     print(f"  {t['order_number']}: 登録済み（未発送のfulfillment orderなし）のためスキップ")
                     continue
 
+                carrier = resolve_carrier(t["tracking_num"], t["ship_method"])
+
                 if DRY_RUN:
-                    print(f"  【DRY RUN】{t['order_number']}: {t['ship_method']} / {t['tracking_num']} "
+                    print(f"  【DRY RUN】{t['order_number']}: {carrier}（社内表記: {t['ship_method']}） / {t['tracking_num']} "
                           f"/ fulfillment_order_id={[fo['id'] for fo in open_fos]}")
                     registered += 1
                     continue
 
                 ok_all = True
                 for fo in open_fos:
-                    ok, message = create_fulfillment(domain, headers, fo["id"], t["ship_method"], t["tracking_num"])
+                    ok, message = create_fulfillment(domain, headers, fo["id"], carrier, t["tracking_num"])
                     if not ok:
                         ok_all = False
                         errors.append({"order_number": t["order_number"], "message": message})

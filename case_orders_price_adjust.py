@@ -627,6 +627,16 @@ def main():
                         changed = True
                     else:
                         ok_all = False
+                        if "IE0418" in message or "invalidAllMandatoryAttributes" in message:
+                            # 販売中の商品で、商品属性（ジャンルごとの必須項目）が未入力のため
+                            # 価格を更新できない。人がRMSで入力するまで直らないので知らせる。
+                            # （倉庫の商品は更新前に対象外としているため、ここには来ない）
+                            # add_anomalyは (ケース, キー) 単位で通知済みを記録するため、
+                            # 同じ商品については毎時の再実行でも通知は1回だけになる。
+                            add_anomaly(anomalies, case_id, f"missing_attrs:{sku}:{store_name}",
+                                f"[楽天] {sku}（{store_name}）: 商品属性（必須項目）が未入力のため価格を更新できません。"
+                                f"販売中の商品です。RMSで商品属性を入力してください（ケース{case_id}）"
+                            )
                 time.sleep(1)
                 return ok_all, changed
 
@@ -889,7 +899,7 @@ def main():
                 f"{CW_MENTION_RYO}\n"
                 f"[info][title]価格調整の検証で異常を検出（{len(new_anomalies)}件）[/title]"
                 + "\n".join(a["message"] for a in new_anomalies)
-                + "\n\n価格は自動では戻していません。内容の確認をお願いします。[/info]"
+                + "\n\n内容の確認をお願いします（書き込んだ価格のずれの場合、価格は自動では戻していません）。[/info]"
             )
             post_chatwork(body)
             try:

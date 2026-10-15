@@ -255,6 +255,11 @@ def rakuten_get_current_prices(manage_number: str) -> dict:
             time.sleep(API_INTERVAL)
         if res.status_code != 200:
             continue
+        if res.json().get("hideItem") is True:
+            # 倉庫に入っている商品は価格を変えない方針のため、検証の対象にしない
+            # （Noneは呼び出し側で「確認対象なし」として読み飛ばされる）。
+            prices[store["name"]] = None
+            continue
         variants = (res.json().get("variants") or {})
         for variant in variants.values():
             price = variant.get("standardPrice")

@@ -161,6 +161,13 @@ def rakuten_update_price(manage_number: str, new_price: int) -> list:
             continue
 
         item = res.json()
+        if item.get("hideItem") is True:
+            # 2026-10-15: 倉庫に入っている（非公開の）商品は価格を変える必要が無い。
+            # 商品属性の必須項目が未入力のまま倉庫に入っている商品は、価格だけの更新でも
+            # IE0418（invalidAllMandatoryAttributes）で拒否され、ケースがNewのまま毎時
+            # やり直され続けていた（ケース159407・159264）。失敗ではなく対象外として扱う。
+            results.append((store["name"], "倉庫に入っているため価格変更の対象外", True))
+            continue
         variants = item.get("variants") or {}
         if not variants:
             results.append((store["name"], "variantsが空のため更新できません", False))

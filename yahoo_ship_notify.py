@@ -150,6 +150,7 @@ YAHOO_CARRIER_CODES = {
     "Yamato Nekopos": "1001",
     "Yamato Over Size": "1001",
     "ePacket": "1003",
+    "Japan Post": "1003",  # 2026-10-15、追跡番号の後ろの[日本郵便]表記に対応（国際・国内ともYahooは1003）
 }
 
 # 2026-09-10、社内システムのship_method欄は出荷後に配送業者が変更されても更新が
@@ -170,10 +171,12 @@ TRACKING_PREFIX_TO_CARRIER = {
 }
 
 
-def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str) -> str:
+def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str, explicit: bool = False) -> str:
     """追跡番号の先頭から配送業者を判定する（長い接頭辞を優先: 先頭2文字→先頭1文字）。
     既知のパターンに合致しなければ社内システムのship_method欄（fallback_ship_method）を
-    そのまま使う。"""
+    そのまま使う。explicit=True（追跡番号の後ろに配送方法が明記されている）場合は推測しない。"""
+    if explicit:
+        return fallback_ship_method
     tracking = tracking_num.strip() if tracking_num else ""
     for prefix in (tracking[:2], tracking[:1]):
         if prefix in TRACKING_PREFIX_TO_CARRIER:
@@ -601,7 +604,8 @@ def main():
             missing_info += 1
             continue
 
-        resolved_ship_method = resolve_ship_method_from_tracking(o["tracking_num"], o["ship_method"])
+        resolved_ship_method = resolve_ship_method_from_tracking(
+            o["tracking_num"], o["ship_method"], explicit=bool(o.get("carrier_label")))
 
         if not resolved_ship_method or resolved_ship_method.strip().lower() == "none":
             carrier_code = YAHOO_CARRIER_CODES.get("Sagawa CDS")

@@ -107,9 +107,34 @@ TRACKING_PREFIX_TO_CARRIER = {
 }
 
 
-def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str) -> str:
+CARRIER_CODES["Japan Post"] = "1003"  # 国内の日本郵便（楽天のdeliveryCompanyは運送会社単位のコード）
+
+# 2026-10-15、社内システムは、Service Levelが「None」の注文の追跡番号の後ろに実際の配送方法を
+# 「266023194791 [日本郵便]」の形で付けるようになった（CSVのtracking_num列にも同じ形で入る）。
+# 追跡番号の先頭文字による推測（上記）は、この明示された配送方法より優先度が低い
+# （実例: 先頭が2の日本郵便。推測ではヤマト扱いになり誤っていた）。
+CARRIER_LABEL_TO_SHIP_METHOD = {
+    "日本郵便": "Japan Post",
+    "佐川急便": "Sagawa CDS",
+    "ヤマト運輸": "Yamato Nekopos",
+}
+
+
+def split_tracking_label(raw: str):
+    """"266023194791 [日本郵便]" → ("266023194791", "日本郵便")。[ ]が無ければ (元の値, "")。"""
+    raw = (raw or "").strip()
+    m = re.match(r"^(.*?)\s*\[([^\]]+)\]\s*$", raw)
+    if not m:
+        return raw, ""
+    return m.group(1).strip(), m.group(2).strip()
+
+
+def resolve_ship_method_from_tracking(tracking_num: str, fallback_ship_method: str, explicit: bool = False) -> str:
     """追跡番号の先頭文字から配送業者を判定する。既知のパターンに合致しなければ
-    社内システムのship_method欄（fallback_ship_method）をそのまま使う。"""
+    社内システムのship_method欄（fallback_ship_method）をそのまま使う。
+    explicit=True（追跡番号の後ろに配送方法が明記されている）場合は、推測せずそのまま使う。"""
+    if explicit:
+        return fallback_ship_method
     prefix = tracking_num.strip()[:1] if tracking_num else ""
     return TRACKING_PREFIX_TO_CARRIER.get(prefix, fallback_ship_method)
 
@@ -260,11 +285,16 @@ def collect_shipped_orders(page, context) -> list:
         ship_dt = parse_ship_datetime(ship_time)
         if ship_dt is None or ship_dt < cutoff:
             continue
+        tracking_num, carrier_label = split_tracking_label(record.get("tracking_num", ""))
+        ship_method = record.get("ship_method", "").strip()
+        if carrier_label:
+            ship_method = CARRIER_LABEL_TO_SHIP_METHOD.get(carrier_label, carrier_label)
         seen[order_number] = {
             "order_number": order_number,
             "shop_name": record.get("shop_name", "").strip(),
-            "ship_method": record.get("ship_method", "").strip(),
-            "tracking_num": record.get("tracking_num", "").strip(),
+            "ship_method": ship_method,
+            "tracking_num": tracking_num,
+            "carrier_label": carrier_label,
             "ship_time": ship_time,
         }
     return list(seen.values())
@@ -433,7 +463,8 @@ def main():
         if store is None:
             ignored_store += 1
             continue
-        resolved_ship_method = resolve_ship_method_from_tracking(o["tracking_num"], o["ship_method"])
+        resolved_ship_method = resolve_ship_method_from_tracking(
+            o["tracking_num"], o["ship_method"], explicit=bool(o.get("carrier_label")))
         if not resolved_ship_method or resolved_ship_method.strip().lower() == "none":
             # ship_methodが未設定（空文字、または文字列"None"）の場合はSagawa CDSとして扱う
             code = CARRIER_CODES["Sagawa CDS"]

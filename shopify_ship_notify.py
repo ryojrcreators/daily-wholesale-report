@@ -40,6 +40,7 @@ from rakuten_ship_notify import (
     fetch_recent_orders,
     parse_ship_datetime,
     parse_ship_date,
+    split_tracking_label,
     post_chatwork_task,
     CW_ROOM_ID,
     CW_ASSIGNEE_ID,
@@ -94,7 +95,17 @@ SHIP_METHOD_TO_SHOPIFY_CARRIER = {
 }
 
 
-def resolve_carrier(tracking_num: str, ship_method: str) -> str:
+CARRIER_LABEL_TO_SHOPIFY_CARRIER = {
+    "日本郵便": "Japan Post (JA)",
+    "佐川急便": "Sagawa (JA)",
+    "ヤマト運輸": "Yamato (JA)",
+}
+
+
+def resolve_carrier(tracking_num: str, ship_method: str, carrier_label: str = "") -> str:
+    # 社内システムが追跡番号の後ろに明記した配送方法（例: 266023194791 [日本郵便]）を最優先する。
+    if carrier_label:
+        return CARRIER_LABEL_TO_SHOPIFY_CARRIER.get(carrier_label, carrier_label)
     tracking = (tracking_num or "").strip().upper()
     for prefix in (tracking[:2], tracking[:1]):
         if prefix in TRACKING_PREFIX_TO_SHOPIFY_CARRIER:
@@ -141,11 +152,13 @@ def collect_shopify_orders(page, context) -> list:
         ship_dt = parse_ship_datetime(ship_time)
         if ship_dt is None or ship_dt < cutoff:
             continue
+        tracking_num, carrier_label = split_tracking_label(record.get("tracking_num", ""))
         seen[order_number] = {
             "order_number": order_number,
             "sku_shop": sku_shop,
             "ship_method": record.get("ship_method", "").strip(),
-            "tracking_num": record.get("tracking_num", "").strip(),
+            "tracking_num": tracking_num,
+            "carrier_label": carrier_label,
             "ship_time": ship_time,
         }
     return list(seen.values())
@@ -319,7 +332,7 @@ def main():
                     print(f"  {t['order_number']}: 登録済み（未発送のfulfillment orderなし）のためスキップ")
                     continue
 
-                carrier = resolve_carrier(t["tracking_num"], t["ship_method"])
+                carrier = resolve_carrier(t["tracking_num"], t["ship_method"], t.get("carrier_label", ""))
 
                 if DRY_RUN:
                     print(f"  【DRY RUN】{t['order_number']}: {carrier}（社内表記: {t['ship_method']}） / {t['tracking_num']} "

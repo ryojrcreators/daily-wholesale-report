@@ -325,6 +325,7 @@ WOWMA_CARRIER_CODES = {
     "Yamato Over Size": "1",
     "Sagawa CDS": "2",       # 佐川急便
     "ePacket": "6",          # 日本郵便
+    "Japan Post": "6",       # 日本郵便（追跡番号の後ろの[日本郵便]表記に対応、2026-10-15）
 }
 
 

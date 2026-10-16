@@ -72,6 +72,7 @@ jobs:
           YAHOO_SELLER_ID_2: ${{ secrets.YAHOO_SELLER_ID_2 }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           MAX_PER_RUN: ${{ inputs.max_per_run || '20' }}
         run: python -u case_orders_auto_close.py

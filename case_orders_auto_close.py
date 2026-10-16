@@ -46,6 +46,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 
+from case_orders_auto_mode_check import check_case, notify_skipped_cases
+
 JST = timezone(timedelta(hours=9))
 
 # Wowmaは固定IPからしか呼べない（Wow!manager側のIP許可リスト制限）ため、
@@ -813,7 +815,13 @@ def main():
             browser.close()
             return
 
-        for case in cases[:MAX_PER_RUN]:
+        skipped_cases = []   # 概要欄に除外用の2行が無く、自動処理しなかったケース
+        processed = 0
+        for case in cases:
+            # 除外したケースは処理件数に数えない（Newのまま毎時残るため、数えると後ろのケースが
+            # いつまでも処理されなくなる）
+            if processed >= MAX_PER_RUN:
+                break
             case_id = case["id"]
             print(f"\n--- ケース {case_id}（{case['caseType']} / {case['product']}） ---")
 
@@ -822,7 +830,19 @@ def main():
             except Exception as e:
                 print(f"  Related Skus の取得に失敗: {e}")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", f"SKU取得失敗: {e}"])
+                processed += 1
                 continue
+
+            # 概要欄に「AI自動更新の対象」を示す2行が無いケースは、一切処理しない
+            # （fetch_case_skusでview画面を開いた直後のため、そのまま概要欄を読める）
+            skip_reason = check_case(page, case_id)
+            if skip_reason:
+                print(f"  ⏭ 自動処理の対象外のためスキップします（{skip_reason}）")
+                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", f"自動処理対象外: {skip_reason}"])
+                skipped_cases.append({"case_id": case_id, "case_type": case["caseType"],
+                                      "product": case["product"], "reason": skip_reason})
+                continue
+            processed += 1
 
             targets = [s for s in skus if s["mall"] in (SHOP_RAKUTEN, SHOP_YAHOO)]
             if not targets:
@@ -957,6 +977,10 @@ def main():
         print(f"\nログを「{LOG_SHEET_NAME}」タブに{len(log_rows)}行追記しました。")
     except Exception as e:
         print(f"ログ書き込みに失敗しました: {e}")
+
+    if skipped_cases:
+        print(f"\n自動処理の対象外としてスキップしたケース: {len(skipped_cases)}件")
+        notify_skipped_cases(spreadsheet, skipped_cases, now, "自動Close", BASE_URL, DRY_RUN)
 
     print("=== Case Orders 自動Close 完了 ===")
 

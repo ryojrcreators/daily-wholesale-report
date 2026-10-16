@@ -87,6 +87,7 @@ from case_orders_auto_close import (
     get_yahoo_access_token,
     append_log,
 )
+from case_orders_auto_mode_check import check_case, notify_skipped_cases
 from rakuten_price_adjust import (
     rakuten_update_price,
     yahoo_update_price,
@@ -546,11 +547,29 @@ def main():
             browser.close()
             return
 
-        for case in cases[:MAX_PER_RUN]:
+        skipped_cases = []   # 概要欄に除外用の2行が無く、自動処理しなかったケース
+        processed = 0
+        for case in cases:
+            # 除外したケースは処理件数に数えない（Newのまま毎時残るため、数えると後ろのケースが
+            # いつまでも処理されなくなる）
+            if processed >= MAX_PER_RUN:
+                break
             case_id = case["id"]
             print(f"\n--- ケース {case_id}（{case['caseType']} / {case['product']}） ---")
 
             rows = fetch_price_rows(page, case_id)
+
+            # 概要欄に「AI自動更新の対象」を示す2行が無いケースは、一切処理しない
+            # （fetch_price_rowsでview画面を開いた直後のため、そのまま概要欄を読める）
+            skip_reason = check_case(page, case_id)
+            if skip_reason:
+                print(f"  ⏭ 自動処理の対象外のためスキップします（{skip_reason}）")
+                log_rows.append([now, case_id, case["caseType"], "-", "-", "-", f"自動処理対象外: {skip_reason}"])
+                skipped_cases.append({"case_id": case_id, "case_type": case["caseType"],
+                                      "product": case["product"], "reason": skip_reason})
+                continue
+            processed += 1
+
             if not rows:
                 # Related Skus に楽天・YahooのSKUが1件も無い＝担当者がCase Groupsに
                 # Rakuten/Yahooを誤って含めてしまったケース。case_orders_auto_close.py の
@@ -875,6 +894,10 @@ def main():
         print(f"\nログを{len(log_rows)}行追記しました。")
     except Exception as e:
         print(f"ログ書き込みに失敗しました: {e}")
+
+    if skipped_cases:
+        print(f"\n自動処理の対象外としてスキップしたケース: {len(skipped_cases)}件")
+        notify_skipped_cases(spreadsheet, skipped_cases, now, "価格調整", BASE_URL, DRY_RUN)
 
     # 時間差での再確認ジョブ（case_orders_price_verify_delayed.py）に、
     # 今回書き込んだ内容を渡す

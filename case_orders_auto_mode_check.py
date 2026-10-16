@@ -29,7 +29,7 @@ SKIP_LOG_HEADER = ["初回通知日時(JST)", "ケースID", "スクリプト", 
 
 # 2行が無いままでも例外的に処理するケースID（ユーザー指示があった都度だけ入れ、処理後に空へ戻す。
 # 2026-10-16に159704/159701/159264/150260を一度処理済み）
-ONE_TIME_OVERRIDE_CASE_IDS = set()
+ONE_TIME_OVERRIDE_CASE_IDS = {"159264"}
 
 REASON_NO_MARKER = "概要欄に除外用の2行が無い"
 REASON_UNREADABLE = "概要欄を読み取れなかった"

@@ -27,6 +27,9 @@ CW_MENTION_RYO = "[To:2618849]Ryo Higuchiさん"
 SKIP_LOG_SHEET_NAME = "自動処理_除外ケース通知済み"
 SKIP_LOG_HEADER = ["初回通知日時(JST)", "ケースID", "スクリプト", "ケース種別", "商品", "理由"]
 
+# 2026-10-16、ユーザー指示により、2行が無いままでも今回だけ処理するケース（処理後に外す）
+ONE_TIME_OVERRIDE_CASE_IDS = {"159704", "159701", "159264", "150260"}
+
 REASON_NO_MARKER = "概要欄に除外用の2行が無い"
 REASON_UNREADABLE = "概要欄を読み取れなかった"
 
@@ -64,6 +67,9 @@ def has_auto_mode_marker(description) -> bool:
 
 def check_case(page, case_id: str):
     """戻り値は None（自動処理してよい）か、スキップ理由の文字列。"""
+    if case_id in ONE_TIME_OVERRIDE_CASE_IDS:
+        print("  ※ 今回だけ例外として処理します（概要欄の2行の確認を省略）")
+        return None
     description = get_case_description(page)
     if description is None:
         return REASON_UNREADABLE

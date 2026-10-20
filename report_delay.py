@@ -356,7 +356,7 @@ def hand_off_to_cs(case_id: str, shop_name: str, order_number: str) -> str:
         f"[info][title]再送注文のReport Delayケース（AI自動処理の対象外）[/title]"
         f"ケース{case_id}（{shop_name} / 注文番号 {order_number}）\n"
         f"{BASE_URL}/case-orders/cs-view/{case_id}\n\n"
-        f"再送注文（注文番号の末尾が -R など）のため、AIでは自動処理していません（メール送信・Status変更なし）。"
+        f"再送注文（注文番号の末尾が -R など）のため、AIでは自動処理していません（メール送信・Status変更なし）。\n"
         f"状況に応じて手動対応をお願いします。[/info]"
     )
     res = requests.post(

@@ -1,5 +1,6 @@
 import os
 import re
+import requests
 from datetime import date, timedelta
 from playwright.sync_api import sync_playwright
 from urllib.parse import quote
@@ -29,6 +30,16 @@ SUBJECT_PREFIX = os.environ.get("SUBJECT_PREFIX", "")
 # 環境変数 BODY_PREFIX があれば本文の先頭に付ける（訂正のお詫び文など）。
 # プレフィックスの後に空行を1つ入れて既存本文につなげる。通常運用では設定しない。
 BODY_PREFIX = os.environ.get("BODY_PREFIX", "")
+
+# 2026-10-20、ユーザー依頼：再送注文（注文番号の末尾が -R, -R1, -R2 …）はAIで自動処理せず、
+# CS担当（Saori Otaniさん）にChatworkのタスクで渡す。とりあえず Shop LA! と
+# US International Service（メールテンプレートの表記は「UK」）だけが対象。
+CS_HANDOFF_SHOPS = ("Shop LA!", "US International Service")
+REPLACEMENT_ORDER_RE = re.compile(r"-R\d*$")
+CW_TOKEN = os.environ.get("CW_TOKEN", "")
+CW_ROOM_ID = "83994351"
+CW_CS_ASSIGNEE_ID = "7610335"
+CW_CS_MENTION = "[To:7610335]Saori Otaniさん"
 
 TEMPLATE_170 = "170"
 TEMPLATE_108 = "108"
@@ -301,6 +312,64 @@ def replace_date_simple(body: str, eta: date, config: dict) -> str:
     return re.sub(config["date_placeholder"], date_str, body)
 
 
+def needs_cs_handoff(shop_name: str, order_number: str) -> bool:
+    """再送注文（末尾が -R / -R1 …）で、CS担当に渡す対象店舗か。"""
+    if not REPLACEMENT_ORDER_RE.search((order_number or "").strip()):
+        return False
+    return any(shop in shop_name for shop in CS_HANDOFF_SHOPS)
+
+
+def cs_task_exists(case_id: str) -> bool:
+    """このケースのタスクが、ルームに（未完了・完了のどちらでも）すでにあるか。
+    ケースはNewのまま残り、このスクリプトは1日2回動くため、毎回タスクを作らないための確認。"""
+    for status in ("open", "done"):
+        res = requests.get(
+            f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/tasks",
+            headers={"X-ChatWorkToken": CW_TOKEN},
+            params={"status": status, "account_id": CW_CS_ASSIGNEE_ID},
+            timeout=30,
+        )
+        if res.status_code == 204:
+            continue
+        if res.status_code != 200:
+            raise RuntimeError(f"Chatworkのタスク一覧取得に失敗（status={res.status_code}）")
+        for task in res.json():
+            if f"ケース{case_id}（" in (task.get("body") or ""):
+                return True
+    return False
+
+
+def hand_off_to_cs(case_id: str, shop_name: str, order_number: str) -> str:
+    """CS担当にChatworkのタスクを作る。戻り値は「作成」「作成済み」「失敗: 理由」のいずれか。
+    自動処理（メール送信・Status変更）は呼び出し元で行わない。"""
+    if not CW_TOKEN:
+        return "失敗: CW_TOKENが未設定のためタスクを作れません"
+    try:
+        if cs_task_exists(case_id):
+            return "作成済み"
+    except Exception as e:
+        # 確認できない場合は、取りこぼすよりは重複しても作る
+        print(f"  ⚠️ 既存タスクの確認に失敗しました（重複しても作成します）: {e}")
+
+    body = (
+        f"{CW_CS_MENTION}\n"
+        f"[info][title]再送注文のReport Delayケース（AI自動処理の対象外）[/title]"
+        f"ケース{case_id}（{shop_name} / 注文番号 {order_number}）\n"
+        f"{BASE_URL}/case-orders/cs-view/{case_id}\n\n"
+        f"再送注文（注文番号の末尾が -R など）のため、AIでは自動処理していません（メール送信・Status変更なし）。"
+        f"CS担当の対応をお願いします。[/info]"
+    )
+    res = requests.post(
+        f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/tasks",
+        headers={"X-ChatWorkToken": CW_TOKEN},
+        data={"body": body, "to_ids": CW_CS_ASSIGNEE_ID},
+        timeout=30,
+    )
+    if res.status_code >= 400:
+        return f"失敗: Chatworkタスク作成 status={res.status_code} {res.text[:200]}"
+    return "作成"
+
+
 def should_skip_email(order_number: str) -> bool:
     order_number = order_number.strip()
     if order_number.endswith('-R'):
@@ -331,6 +400,7 @@ def process_report_delays():
     skipped   = 0
     errors    = []
     manual_review = []   # ETA日付を確定できない → 自動送信せず手動対応に回したケース
+    cs_handoff    = []   # 再送注文 → AI処理せずCS担当へタスクで渡したケース
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -415,6 +485,19 @@ def process_report_delays():
                 if shop_config is None:
                     print(f"  → 対象外店舗: {shop_name} → スキップ")
                     skipped += 1
+                    continue
+
+                # 再送注文（-R等）は、AIでは一切処理せず（ケースは変更しない）、CS担当へタスクで渡す
+                if needs_cs_handoff(shop_name, order_number):
+                    try:
+                        result = hand_off_to_cs(case_id, shop_name, order_number)
+                    except Exception as e:
+                        result = f"失敗: {e}"
+                    print(f"  → 再送注文のためAI自動処理せず、CS担当へ引き継ぎ: {result}")
+                    if result.startswith("失敗"):
+                        errors.append(f"Case {case_id}: CS担当へのタスク作成に失敗（{result}）")
+                    else:
+                        cs_handoff.append(f"Case {case_id}（{shop_name}）: {result}")
                     continue
 
                 try:
@@ -604,6 +687,10 @@ def process_report_delays():
     print(f"\n{'='*40}")
     print(f"処理完了: {processed}件")
     print(f"スキップ（対象外店舗）: {skipped}件")
+    if cs_handoff:
+        print(f"再送注文をCS担当へ引き継ぎ: {len(cs_handoff)}件")
+        for c in cs_handoff:
+            print(f"  - {c}")
     if manual_review:
         print(f"★要手動確認（入荷予定ありだがETA日付なし）: {len(manual_review)}件")
         for m in manual_review:

@@ -25,6 +25,7 @@ from xml.etree import ElementTree
 import requests
 
 from rakuten_coupon_api import auth_headers, search_all, get_coupon, build_issue_xml, issue_coupon
+from review_coupon_doc import update_review_coupon_doc
 
 JST = timezone(timedelta(hours=9))
 
@@ -136,13 +137,22 @@ def format_period_label(start: str, end: str) -> str:
     return f"{fmt(start)} 〜 {fmt(end)}"
 
 
-def build_report(results: list) -> str:
-    """発行結果からChatwork報告メッセージを組み立てる。"""
+def build_report(results: list, doc_result: dict = None) -> str:
+    """発行結果からChatwork報告メッセージを組み立てる。
+    doc_result は、テンプレート集ドキュメントの書き換え結果（無ければ None）。"""
     issued = [r for r in results if r["status"] == "issued"]
     periods = {format_period_label(r["start"], r["end"]) for r in issued}
     title = f"{CW_TITLE_PREFIX}（{'・'.join(sorted(periods))}）" if periods else CW_TITLE_PREFIX
 
     lines = [CW_MENTION, f"[info][title]{title}[/title]", CW_INTRO, ""]
+    if doc_result is not None:
+        if doc_result.get("error"):
+            lines.append(f"※ レビュークーポン送付テンプレート集の自動更新に失敗しました。手動で更新してください: {doc_result['error']}")
+        else:
+            lines.append(f"※ レビュークーポン送付テンプレート集（Googleドキュメント）のコード・URL・有効期間を{doc_result['updated']}件分、自動で更新しました。")
+            for problem in doc_result.get("problems", []):
+                lines.append(f"  ⚠️ 更新できなかったため手動で更新してください: {problem}")
+        lines.append("")
     for r in issued:
         lines.append(f"■ {r['name']}")
         lines.append(f"クーポンコード: {r['code']}")
@@ -207,7 +217,8 @@ def is_event_day(today: datetime, coupons: list) -> tuple:
 # ══ 1クーポン分の処理 ═════════════════════════════
 def process_one(name: str, coupons: list, today: datetime, headers: dict,
                  event_today: bool, event_reason: str) -> dict:
-    result = {"name": name, "status": "skipped", "message": "", "start": "", "end": "", "code": None, "url": None}
+    result = {"name": name, "status": "skipped", "message": "", "start": "", "end": "", "code": None, "url": None,
+              "old_code": None}
 
     matches = [c for c in coupons if c.get("couponName") == name]
     if not matches:
@@ -216,6 +227,7 @@ def process_one(name: str, coupons: list, today: datetime, headers: dict,
         return result
 
     source = max(matches, key=lambda c: c.get("couponStartDate", ""))
+    result["old_code"] = source.get("couponCode")  # テンプレート集ドキュメントの書き換えで、古いコードを探すのに使う
     current_end = parse_rms_datetime(source.get("couponEndDate", ""))
     if current_end is None:
         result["status"] = "error"
@@ -333,8 +345,27 @@ def main():
     print(f"\n=== 完了: 発行{len(issued)}件 / エラー{len(errored)}件 / "
           f"対象外{len(results) - len(issued) - len(errored)}件 ===")
 
+    # 発行したクーポンの新しいコード・URL・有効期間を、テンプレート集ドキュメントに反映する
+    doc_result = None
+    if issued and not DRY_RUN:
+        try:
+            updates = [
+                {"name": r["name"], "old_code": r["old_code"], "new_code": r["code"],
+                 "new_url": r["url"], "start": r["start"], "end": r["end"]}
+                for r in issued
+            ]
+            doc_result = update_review_coupon_doc(updates)
+            print(f"テンプレート集ドキュメントを更新: {doc_result['updated']}件 / 更新できず{len(doc_result['problems'])}件")
+            for problem in doc_result["problems"]:
+                print(f"  ⚠️ {problem}")
+        except Exception as e:
+            print(f"テンプレート集ドキュメントの更新に失敗しました: {e}")
+            doc_result = {"error": str(e)[:200]}
+    elif issued:
+        print("※ DRY RUN のため、テンプレート集ドキュメントは更新しません。")
+
     if issued or errored:
-        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(results), due_days=CW_TASK_DUE_DAYS)
+        post_chatwork_task(CW_ROOM_ID, CW_ASSIGNEE_ID, build_report(results, doc_result), due_days=CW_TASK_DUE_DAYS)
     else:
         print("発行対象・エラーとも無かったため、Chatworkへは通知しません。")
 

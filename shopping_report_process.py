@@ -470,7 +470,7 @@ def track_not_bought(ss, today, msg_id, entries):
     hits.sort(key=lambda h: h[0].lower())
     lines = [
         f"These items could not be bought (fully or partially) for {NB_STREAK_DAYS} shopping days in a row.",
-        "Please order them online.",
+        "Please check whether they are unavailable (cannot be restocked), and order them online.",
         "",
     ]
     for code, store, days in hits:

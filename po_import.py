@@ -227,6 +227,12 @@ def main():
     sheet_title = write_to_sheet(po_number, rows)
     if sheet_title == TG_WM_SHEET_NAME:
         notify_tgwm_ready()
+        # ショッピングリストの Aisle / Code を Aisle 一覧シートへ追記（失敗しても取り込みは成功扱い）
+        try:
+            from aisle_sync import sync_aisles
+            sync_aisles(po_number)
+        except Exception as e:
+            print(f"[Aisle同期] 失敗しました（取り込み自体は完了しています）: {type(e).__name__}: {e}")
     print("=== 完了 ===")
 
 

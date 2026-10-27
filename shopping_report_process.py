@@ -17,6 +17,8 @@ import re
 import json
 import requests
 import gspread
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from urllib.parse import quote
@@ -82,16 +84,16 @@ def fetch_report():
     )
     if r.status_code == 204:
         print("Chatwork: 新着メッセージなし（204）")
-        return None
+        return None, None, None
     if r.status_code != 200:
         raise Exception(f"Chatwork取得失敗: status={r.status_code} {r.text[:200]}")
     messages = r.json()
     # 「[End Shopping Report]」を含む最新メッセージ（末尾側が新しい）
     for m in reversed(messages):
         if "[End Shopping Report]" in m.get("body", ""):
-            return m["body"], str(m.get("message_id", ""))
+            return m["body"], str(m.get("message_id", "")), m.get("send_time")
     print("Chatwork: [End Shopping Report] が見つかりません")
-    return None, None
+    return None, None, None
 
 
 # ---------- レポート解析 ----------
@@ -372,9 +374,121 @@ def post_chatwork_summary(results):
     print(f"Chatwork通知送信: status={resp.status_code}")
 
 
+# ---------- 連続未購入の検知（オンライン注文の依頼）----------
+# 同じ商品コードが、レポートが出た日で連続 NB_STREAK_DAYS 日「買えなかった（一部だけ買えた場合を含む）」
+# になったら、その最初の1回だけ Chatwork のタスクで通知する。
+# レポートが出ない日（土日など）は記録されないので、自然に飛ばして数える。
+# 記録は同じスプレッドシートの NB_Reports（レポート日の一覧）と NB_Log（日ごとの未購入商品）に残す。
+NB_REPORTS_SHEET = "NB_Reports"
+NB_LOG_SHEET = "NB_Log"
+NB_STREAK_DAYS = 3
+NB_TASK_ROOM_ID = "136865637"
+NB_TASK_ASSIGNEE_ID = "2129162"  # Ayano Cindi Ikeda
+
+
+def get_or_create_ws(ss, title, headers):
+    try:
+        return ss.worksheet(title)
+    except gspread.WorksheetNotFound:
+        print(f"「{title}」タブが無いため新規作成します")
+        ws = ss.add_worksheet(title=title, rows=1000, cols=len(headers))
+        ws.append_row(headers, value_input_option="RAW")
+        return ws
+
+
+def report_date_la(send_time):
+    """レポート投稿日をLA時間の日付(YYYY-MM-DD)で返す。取れなければ現在のLA日付。"""
+    tz = ZoneInfo("America/Los_Angeles")
+    if send_time:
+        return datetime.fromtimestamp(int(send_time), tz).date().isoformat()
+    return datetime.now(tz).date().isoformat()
+
+
+def post_chatwork_task(body):
+    resp = requests.post(
+        f"https://api.chatwork.com/v2/rooms/{NB_TASK_ROOM_ID}/tasks",
+        headers={"X-ChatWorkToken": CW_TOKEN},
+        data={"body": body, "to_ids": NB_TASK_ASSIGNEE_ID},
+        timeout=30,
+    )
+    print(f"Chatworkタスク作成: status={resp.status_code}")
+    if resp.status_code >= 400:
+        print(f"  {resp.text[:300]}")
+
+
+def track_not_bought(ss, today, msg_id, entries):
+    """entries: [(店舗名, コード, 買えた数, 必要数)]（買えなかった分のみ）。"""
+    rep_ws = get_or_create_ws(ss, NB_REPORTS_SHEET, ["date", "message_id"])
+    log_ws = get_or_create_ws(ss, NB_LOG_SHEET, ["date", "code", "store", "bought", "needed"])
+
+    rep_rows = rep_ws.get_all_values()[1:]
+    if any(len(r) > 1 and r[1] == str(msg_id) for r in rep_rows):
+        print(f"連続未購入チェック: このレポート(message_id={msg_id})は記録済みのためスキップ")
+        return
+
+    # hist[codeの小文字][日付] = (買えた数, 必要数, 店舗名, 元のコード表記)
+    hist = {}
+    for r in log_ws.get_all_values()[1:]:
+        if len(r) < 5:
+            continue
+        d, code, store, b, n = r[:5]
+        hist.setdefault(code.lower(), {})[d] = (b, n, store, code)
+    for store, code, b, n in entries:
+        hist.setdefault(code.lower(), {})[today] = (str(b), str(n), store, code)
+
+    dates = sorted({r[0] for r in rep_rows if r and r[0]} | {today}, reverse=True)
+    hits = []
+    if dates[0] != today:
+        print("連続未購入チェック: 今回のレポート日が最新ではないため通知はしません")
+    elif len(dates) >= NB_STREAK_DAYS:
+        recent = dates[:NB_STREAK_DAYS]
+        prev = dates[NB_STREAK_DAYS] if len(dates) > NB_STREAK_DAYS else None
+        for by_date in hist.values():
+            if today not in by_date or not all(d in by_date for d in recent):
+                continue
+            if prev is not None and prev in by_date:
+                continue  # すでに連続が続いている（初回通知済み）
+            hits.append((by_date[today][3], by_date[today][2], [(d, by_date[d][0], by_date[d][1]) for d in reversed(recent)]))
+    else:
+        print(f"連続未購入チェック: 記録は{len(dates)}日分のため、まだ{NB_STREAK_DAYS}日連続の判定はできません")
+
+    if DRY_RUN:
+        print(f"（DRY RUN）NB記録は書き込みません。今日の未購入: {len(entries)}件")
+    else:
+        rep_ws.append_row([today, str(msg_id)], value_input_option="RAW")
+        if entries:
+            log_ws.append_rows(
+                [[today, code, store, str(b), str(n)] for store, code, b, n in entries],
+                value_input_option="RAW",
+            )
+        print(f"NB記録を書き込みました（{today} / {len(entries)}件）")
+
+    if not hits:
+        print("連続未購入: 通知対象なし")
+        return
+
+    hits.sort(key=lambda h: h[0].lower())
+    lines = [
+        f"These items could not be bought (fully or partially) for {NB_STREAK_DAYS} shopping days in a row.",
+        "Please order them online.",
+        "",
+    ]
+    for code, store, days in hits:
+        history = ", ".join(f"{d[5:]} {b}/{n}" for d, b, n in days)
+        lines.append(f"- {code} ({store}): {history}")
+    body = "\n".join(lines)
+    print("----- 連続未購入タスク -----")
+    print(body)
+    print("---------------------------")
+    if DRY_RUN:
+        print("（DRY RUNのためタスクは作成しません）")
+    else:
+        post_chatwork_task(body)
+
+
 def main():
     print(f"=== Shopping Report Process (DRY_RUN={DRY_RUN}) ===")
-    report, msg_id = fetch_report()
+    report, msg_id, send_time = fetch_report()
     if not report:
         raise SystemExit("処理対象のレポートがありません。")
     print(f"レポート message_id = {msg_id}")
@@ -462,6 +576,18 @@ def main():
             post_chatwork_summary(results)
         except Exception as e:
             print(f"Chatwork通知の送信に失敗しました（処理自体は完了しています）: {e}")
+
+    # 連続未購入の記録と通知（失敗しても本処理は完了扱い）
+    try:
+        nb_entries = [
+            (label, code, bought, needed)
+            for label, _po, nb, _ex in targets
+            for code, bought, needed in nb
+            if bought < needed
+        ]
+        track_not_bought(ss, report_date_la(send_time), msg_id, nb_entries)
+    except Exception as e:
+        print(f"連続未購入チェックに失敗しました（処理自体は完了しています）: {e}")
 
     print("=== 完了 ===")
 

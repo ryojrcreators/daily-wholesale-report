@@ -1,0 +1,91 @@
+name: 卸PO自動作成（Purchase Qty入力 → PO作成 → 取り込み）
+
+# 「Server is Ready」の通知（既存の repository_dispatch: server-is-ready）で起動する。
+# 動作モードは、リポジトリの変数 PO_AUTO_MODE で切り替える（未設定なら試走）。
+#   dry-run … 入力とCopy Priceまで。PO・ケースは作らない（Chatworkに試走結果を通知）
+#   live    … PO作成・ケース作成・取り込みまで自動で行う
+# 手動で起動するときは、モードを選べる。
+
+on:
+  repository_dispatch:
+    types: [server-is-ready]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dry-run=試走（PO・ケースは作らない） / live=本番'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - live
+
+# 取り込み（po_import）を起動するために、このリポジトリの Actions を呼ぶ権限が要る
+permissions:
+  contents: read
+  actions: write
+
+# 同時に2つ動かさない（二重のPO作成を防ぐ）
+concurrency:
+  group: po-auto
+  cancel-in-progress: false
+
+jobs:
+  po-auto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Pythonセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ライブラリをインストール
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium || sudo apt-get install -y \
+            libasound2t64 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libxshmfence1
+
+      - name: PO自動作成
+        env:
+          APP_DOMAIN: app.jrcreators.com
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ github.event.inputs.mode || vars.PO_AUTO_MODE || 'dry-run' }}
+        run: |
+          echo "モード: $MODE"
+          if [ "$MODE" = "live" ]; then
+            FLAGS="--auto-submit"
+          else
+            FLAGS="--dry-run"
+          fi
+          # このリポジトリは Public で、ログが誰にでも見える。
+          # 商品コード・単価・PO番号などが載るため、詳細は画面に出さず、結果は Chatwork で受け取る。
+          set +e
+          python -u po_auto/fill_po_qty.py --headless --no-off-check $FLAGS > po_auto/run.log 2>&1
+          RC=$?
+          echo "終了コード: $RC"
+          if [ "$RC" -ne 0 ]; then
+            echo "エラーの種類（詳細は Chatwork の通知で確認）:"
+            grep -E '^[A-Za-z_.]*(Error|Exception|Exit)' po_auto/run.log | tail -n 3
+          fi
+          exit $RC

@@ -88,6 +88,7 @@ from case_orders_auto_close import (
     append_log,
 )
 from case_orders_auto_mode_check import check_case, notify_skipped_cases
+from yahoo_token_expiry import check_and_warn as check_yahoo_token_expiry
 from rakuten_price_adjust import (
     rakuten_update_price,
     yahoo_update_price,
@@ -523,6 +524,10 @@ def main():
         print("※ DRY RUN モード：モール側もケース側も一切変更しません")
 
     spreadsheet = get_spreadsheet()
+    # Yahooのトークンは認証から約28日で期限切れになるため、21日たったら先にChatworkで知らせる。
+    # （毎時動くこのジョブで確認する。通知は同じ日に1回だけ。失敗しても処理は止めない）
+    if not DRY_RUN:
+        check_yahoo_token_expiry(spreadsheet)
     yahoo_token = get_yahoo_access_token(spreadsheet)
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
     log_rows = []

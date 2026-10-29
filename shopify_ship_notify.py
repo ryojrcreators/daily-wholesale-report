@@ -76,6 +76,11 @@ STORES = {
         "domain": "active-wow-japan.myshopify.com",
         "token_env": "SHOPIFY_ACCESS_TOKEN_ACTIVEWOW",
     },
+    # sku_shopの表記は実データで確認済み（2026-10-29、例: AMC1001JP）
+    "Shopify Americana": {
+        "domain": "swdcrb-5j.myshopify.com",
+        "token_env": "SHOPIFY_ACCESS_TOKEN_AMERICANA",
+    },
 }
 
 

@@ -2,12 +2,10 @@ name: Shopify 出荷通知 自動反映
 
 on:
   schedule:
-    # LA時間（太平洋時間）9:00 / 17:00 に実行（UTC表記）。
+    # LA時間（太平洋時間）16:00 に1日1回実行（UTC表記）。
     # rakuten_ship_notify.ymlと同じ考え方（夏時間/冬時間を分けて設定）。
-    - cron: '0 16 * 3-11 *'    # PDT: LA 9:00
-    - cron: '0 0 * 3-11 *'     # PDT: LA 17:00（UTC翌日）
-    - cron: '0 17 * 12,1,2 *'  # PST: LA 9:00
-    - cron: '0 1 * 12,1,2 *'   # PST: LA 17:00（UTC翌日）
+    - cron: '0 23 * 3-11 *'    # PDT: LA 16:00
+    - cron: '0 0 * 12,1,2 *'   # PST: LA 16:00（UTC翌日）
   workflow_dispatch:
     inputs:
       dry_run:
@@ -74,6 +72,7 @@ jobs:
           SHOPIFY_ACCESS_TOKEN_PUREJP: ${{ secrets.SHOPIFY_ACCESS_TOKEN_PUREJP }}
           SHOPIFY_ACCESS_TOKEN_RAINBOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_RAINBOW }}
           SHOPIFY_ACCESS_TOKEN_ACTIVEWOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_ACTIVEWOW }}
+          SHOPIFY_ACCESS_TOKEN_AMERICANA: ${{ secrets.SHOPIFY_ACCESS_TOKEN_AMERICANA }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           # スケジュール実行（定期実行）は本番稼働としてDRY_RUN=falseで動かす。
           # 手動実行（workflow_dispatch）は引き続きinputs.dry_run（既定true）に従う。

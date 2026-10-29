@@ -86,13 +86,18 @@ def sync_aisles(po_number):
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    ws = gspread.authorize(creds).open_by_key(AISLE_SPREADSHEET_ID).worksheet(AISLE_SHEET_NAME)
-
-    # 既存の Code → Aisle（大文字小文字は区別せずに照合）
-    existing = {}
-    for row in ws.get_all_values()[1:]:
-        if row and row[0].strip():
-            existing.setdefault(row[0].strip().upper(), row[1].strip() if len(row) > 1 else "")
+    sa_email = creds.service_account_email  # 共有先の確認用（メールアドレスは秘密情報ではない）
+    try:
+        ws = gspread.authorize(creds).open_by_key(AISLE_SPREADSHEET_ID).worksheet(AISLE_SHEET_NAME)
+        # 既存の Code → Aisle（大文字小文字は区別せずに照合）
+        existing = {}
+        for row in ws.get_all_values()[1:]:
+            if row and row[0].strip():
+                existing.setdefault(row[0].strip().upper(), row[1].strip() if len(row) > 1 else "")
+    except Exception as e:
+        raise RuntimeError(
+            f"スプレッドシートを開けません。次のアカウントが『編集者』で共有されているか確認してください: "
+            f"{sa_email} / 詳細: {type(e).__name__} {str(e)[:200]}") from e
 
     to_add, skipped_blank, skipped_dup, mismatch = [], [], 0, []
     seen = set()

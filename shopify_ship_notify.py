@@ -81,6 +81,10 @@ STORES = {
         "domain": "swdcrb-5j.myshopify.com",
         "token_env": "SHOPIFY_ACCESS_TOKEN_AMERICANA",
     },
+    "DrPlusJapan": {
+        "domain": "dr-plus-japan.myshopify.com",
+        "token_env": "SHOPIFY_ACCESS_TOKEN_DRPLUS",
+    },
 }
 
 

@@ -73,6 +73,7 @@ jobs:
           SHOPIFY_ACCESS_TOKEN_RAINBOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_RAINBOW }}
           SHOPIFY_ACCESS_TOKEN_ACTIVEWOW: ${{ secrets.SHOPIFY_ACCESS_TOKEN_ACTIVEWOW }}
           SHOPIFY_ACCESS_TOKEN_AMERICANA: ${{ secrets.SHOPIFY_ACCESS_TOKEN_AMERICANA }}
+          SHOPIFY_ACCESS_TOKEN_DRPLUS: ${{ secrets.SHOPIFY_ACCESS_TOKEN_DRPLUS }}
           CW_TOKEN: ${{ secrets.CW_TOKEN }}
           # スケジュール実行（定期実行）は本番稼働としてDRY_RUN=falseで動かす。
           # 手動実行（workflow_dispatch）は引き続きinputs.dry_run（既定true）に従う。

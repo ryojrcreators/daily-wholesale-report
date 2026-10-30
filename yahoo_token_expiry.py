@@ -23,7 +23,7 @@ LIFETIME_DAYS = 28
 WARN_DAYS = 21
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
-CW_ROOM_ID = "83994351"
+CW_ROOM_ID = "212267044"  # 2026-10-30、ユーザー指定（再認証のタスク・完了/失敗の通知の送り先）
 CW_ASSIGNEE_ID = "2618849"  # Ryo Higuchiさん
 CW_MENTION = "[To:2618849]Ryo Higuchiさん"
 

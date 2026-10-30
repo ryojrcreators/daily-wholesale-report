@@ -143,6 +143,7 @@ def check_and_warn(spreadsheet) -> list:
             body = (
                 f"{CW_MENTION}\n"
                 f"[info][title]Yahooのトークンの再認証が必要です[/title]"
+                f"以前計画した休暇中のトークン認証の件です。\n"
                 f"対象: {label}\n"
                 f"最後に認証してから{age_days}日たちました。{state}{steps}[/info]"
             )

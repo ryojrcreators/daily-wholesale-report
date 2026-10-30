@@ -1,0 +1,50 @@
+name: Yahoo 再認証
+
+# Yahooのリフレッシュトークンは、認証から約28日で期限切れになる。
+# 認証用URLで許可したあとに開いたページのアドレス（URL全体）を貼って実行すると、
+# 新しいトークンをスプレッドシートに保存し、認証日を記録して、Chatworkに結果を知らせる。
+# スマホのブラウザからでも実行できる。
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: '再認証するアプリ（shared＝共有アプリ：Close・価格調整・出品データ同期／order＝出荷通知専用アプリ）'
+        required: true
+        type: choice
+        options:
+          - shared
+          - order
+      redirected_url:
+        description: '許可したあとに開いたページのアドレス（URL全体。code=… を含むもの）'
+        required: true
+
+jobs:
+  reauth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: ライブラリをインストール
+        run: pip install -r requirements.txt
+      - name: Yahoo 再認証
+        env:
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          LOGIN_ID_1: ${{ secrets.LOGIN_ID_1 }}
+          LOGIN_PASS_1: ${{ secrets.LOGIN_PASS_1 }}
+          LOGIN_ID_2: ${{ secrets.LOGIN_ID_2 }}
+          LOGIN_PASS_2: ${{ secrets.LOGIN_PASS_2 }}
+          YAHOO_CLIENT_ID: ${{ secrets.YAHOO_CLIENT_ID }}
+          YAHOO_CLIENT_SECRET: ${{ secrets.YAHOO_CLIENT_SECRET }}
+          YAHOO_ORDER_CLIENT_ID: ${{ secrets.YAHOO_ORDER_CLIENT_ID }}
+          YAHOO_ORDER_CLIENT_SECRET: ${{ secrets.YAHOO_ORDER_CLIENT_SECRET }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          RAKUTEN_LISTING_SPREADSHEET_ID: ${{ secrets.RAKUTEN_LISTING_SPREADSHEET_ID }}
+          CW_TOKEN: ${{ secrets.CW_TOKEN }}
+          # 入力値は、シェルに直接埋め込まず、環境変数経由で渡す（意図しないコマンド実行を防ぐ）
+          APP: ${{ inputs.app }}
+          REDIRECTED_URL: ${{ inputs.redirected_url }}
+        run: python yahoo_reauth.py "$APP" "$REDIRECTED_URL"

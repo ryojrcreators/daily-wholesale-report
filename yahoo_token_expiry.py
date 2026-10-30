@@ -36,6 +36,27 @@ TOKEN_SHEETS = {
 KEY_AUTHORIZED = "authorized_at"
 KEY_WARNED = "last_warned_on"
 
+# 再認証の手順（Chatworkの通知に入れる）。スマホからでもできるよう、認証用URLとワークフローのリンクを載せる。
+REAUTH_WORKFLOW_URL = "https://github.com/ryojrcreators/daily-wholesale-report/actions/workflows/yahoo_reauth.yml"
+REDIRECT_URI = "https://app.jrcreators.com/"
+# タブ名 → (クライアントIDの環境変数, 再認証ワークフローで選ぶ「アプリ」の値)
+APP_INFO = {
+    "Yahoo_Config": ("YAHOO_CLIENT_ID", "shared"),
+    "Yahoo_Config_Order": ("YAHOO_ORDER_CLIENT_ID", "order"),
+}
+
+
+def build_auth_url(sheet_name: str):
+    """そのアプリの認証用URL。クライアントIDは秘密情報ではない。環境変数が無ければ None。"""
+    from urllib.parse import quote
+    client_id = os.environ.get(APP_INFO[sheet_name][0], "")
+    if not client_id:
+        return None
+    return (
+        "https://auth.login.yahoo.co.jp/yconnect/v2/authorization?response_type=code"
+        f"&client_id={client_id}&redirect_uri={quote(REDIRECT_URI, safe='')}&scope=openid&bail=1&state=reauth"
+    )
+
 
 def _today() -> str:
     return datetime.now(JST).strftime("%Y-%m-%d")
@@ -108,11 +129,21 @@ def check_and_warn(spreadsheet) -> list:
                 state = f"期限切れの見込みは {expire_dt.strftime('%Y-%m-%d')}（あと{remaining}日）です。"
             else:
                 state = f"期限（{expire_dt.strftime('%Y-%m-%d')}）を過ぎています。すでに止まっている可能性があります。"
+            auth_url = build_auth_url(sheet_name)
+            app_value = APP_INFO[sheet_name][1]
+            steps = (
+                "\n\n【再認証の手順（スマホでもできます）】\n"
+                + (f"1. 次のURLを開いて、Yahooにログインして許可する\n{auth_url}\n" if auth_url
+                   else "1. Yahooの認証用URLを開いて、ログインして許可する（URLは、Claudeに「Yahooの再認証をお願い」と伝えると出せます）\n")
+                + "2. 許可したあとに開いたページの、アドレス（URL全体）をコピーする\n"
+                + f"3. 次のページで「Run workflow」を開き、アプリは「{app_value}」を選び、コピーしたURLを貼って実行する\n"
+                + f"{REAUTH_WORKFLOW_URL}\n"
+                + "4. 完了すると、このルームに「Yahooの再認証が完了しました」と届きます"
+            )
             body = (
                 f"{CW_MENTION}\n"
                 f"[info][title]Yahooのトークンの再認証が必要です（{label}）[/title]"
-                f"最後に認証してから{age_days}日たちました。{state}\n"
-                f"再認証のしかたは、Claudeに「Yahooの再認証をお願い」と伝えてください。[/info]"
+                f"最後に認証してから{age_days}日たちました。{state}{steps}[/info]"
             )
             if _post_task(body, expire_dt):
                 _set_row(ws, KEY_WARNED, _today())

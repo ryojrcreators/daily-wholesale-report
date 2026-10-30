@@ -139,6 +139,11 @@ def check_and_warn(spreadsheet) -> list:
                 + f"3. 次のページで「Run workflow」を開き、アプリは「{app_value}」を選び、コピーしたURLを貼って実行する\n"
                 + f"{REAUTH_WORKFLOW_URL}\n"
                 + "4. 完了すると、このルームに「Yahooの再認証が完了しました」と届きます"
+                + (
+                    "\n\n※ N100のYahoo出荷通知の実行中（タスクスケジューラの時刻 7:45・11:45・15:30 から30分ほど）に"
+                    "再認証すると、新しいトークンが古いもので上書きされる恐れがあります。その前後30分は避けてください。"
+                    if app_value == "order" else ""
+                )
             )
             body = (
                 f"{CW_MENTION}\n"

@@ -361,7 +361,12 @@ def main():
                 print("ページ内の表の見出し:", info.get("heads"))
                 page.screenshot(path=str(OUT_DIR / f"{stamp}_notfound_p{page_no}.png"), full_page=True)
                 if page_no == 1:
-                    notify_chatwork("⚠ 停止: Purchase Qty の表が見つかりません。PO作成はしていません。")
+                    # 一覧が空のときは、画面に「No Records」と出る。異常ではなく、対象が0件の日
+                    if re.search(r"No Records", page.inner_text("body"), re.I):
+                        notify_chatwork("ℹ 今日の対象商品は0件でした（Purchase Qty の一覧が空）。"
+                                        "PO は作っていません。")
+                    else:
+                        notify_chatwork("⚠ 停止: Purchase Qty の表が見つかりません。PO作成はしていません。")
                     browser.close()
                     return
                 report.append([page_no, "", "", "", "", "", "", "", "TABLE_NOT_FOUND"])

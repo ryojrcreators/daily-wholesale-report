@@ -131,20 +131,28 @@ def check_and_warn(spreadsheet) -> list:
                 state = f"期限（{expire_dt.strftime('%Y-%m-%d')}）を過ぎています。すでに止まっている可能性があります。"
             auth_url = build_auth_url(sheet_name)
             app_value = APP_INFO[sheet_name][1]
-            steps = (
-                "\n\n【再認証の手順（スマホでもできます）】\n"
-                + (f"1. 次のURLを開いて、Yahooにログインして許可する\n{auth_url}\n" if auth_url
-                   else "1. Yahooの認証用URLを開いて、ログインして許可する（URLは、Claudeに「Yahooの再認証をお願い」と伝えると出せます）\n")
-                + "2. 許可したあとに開いたページの、アドレス（URL全体）をコピーする\n"
-                + f"3. 次のページで「Run workflow」を開き、アプリは「{app_value}」を選び、コピーしたURLを貼って実行する\n"
-                + f"{REAUTH_WORKFLOW_URL}\n"
-                + "4. 完了すると、このルームに「Yahooの再認証が完了しました」と届きます"
-                + (
-                    "\n\n※ N100のYahoo出荷通知の実行中（タスクスケジューラの時刻 7:45・11:45・15:30 から30分ほど）に"
+            if app_value == "order":
+                # 出荷通知専用アプリは、N100のデスクトップにある更新用スクリプトを、
+                # Chromeリモートデスクトップで操作して再認証する（GitHubの再認証ワークフローは使わない）。
+                steps = (
+                    "\n\n【再認証の手順（N100をChromeリモートデスクトップで操作します）】\n"
+                    "1. Chromeリモートデスクトップで、N100に接続する\n"
+                    "2. N100のデスクトップにある、Yahoo再認証用の更新用スクリプトを実行する\n"
+                    "3. 画面の案内に従って、Yahooにログインして許可する\n"
+                    "4. 完了したら、認証日が自動で記録され、このお知らせは止まります\n\n"
+                    "※ N100のYahoo出荷通知の実行中（タスクスケジューラの時刻 7:45・11:45・15:30 から30分ほど）に"
                     "再認証すると、新しいトークンが古いもので上書きされる恐れがあります。その前後30分は避けてください。"
-                    if app_value == "order" else ""
                 )
-            )
+            else:
+                steps = (
+                    "\n\n【再認証の手順（スマホでもできます）】\n"
+                    + (f"1. 次のURLを開いて、Yahooにログインして許可する\n{auth_url}\n" if auth_url
+                       else "1. Yahooの認証用URLを開いて、ログインして許可する（URLは、Claudeに「Yahooの再認証をお願い」と伝えると出せます）\n")
+                    + "2. 許可したあとに開いたページの、アドレス（URL全体）をコピーする\n"
+                    + f"3. 次のページで「Run workflow」を開き、アプリは「{app_value}」を選び、コピーしたURLを貼って実行する\n"
+                    + f"{REAUTH_WORKFLOW_URL}\n"
+                    + "4. 完了すると、このルームに「Yahooの再認証が完了しました」と届きます"
+                )
             body = (
                 f"{CW_MENTION}\n"
                 f"[info][title]Yahooのトークンの再認証が必要です[/title]"

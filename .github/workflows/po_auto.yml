@@ -1,14 +1,16 @@
 name: 卸PO自動作成（Purchase Qty入力 → PO作成 → 取り込み）
 
-# 「Server is Ready」の通知（既存の repository_dispatch: server-is-ready）で起動する。
+# 毎日のSOデータ取り込み（「Server is Ready」をきっかけに動く既存のワークフロー）が
+# 成功したあとに、続けて起動する。既存のワークフローは変更しない。
 # 動作モードは、リポジトリの変数 PO_AUTO_MODE で切り替える（未設定なら試走）。
 #   dry-run … 入力とCopy Priceまで。PO・ケースは作らない（Chatworkに試走結果を通知）
 #   live    … PO作成・ケース作成・取り込みまで自動で行う
 # 手動で起動するときは、モードを選べる。
 
 on:
-  repository_dispatch:
-    types: [server-is-ready]
+  workflow_run:
+    workflows: ["毎日SOデータ → Googleスプレッドシート（Sales Orderタブ）"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       mode:
@@ -32,6 +34,8 @@ concurrency:
 
 jobs:
   po-auto:
+    # 手動起動か、SOデータ取り込みが成功したときだけ動かす
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

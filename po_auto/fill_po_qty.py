@@ -90,7 +90,7 @@ def notify_chatwork(text):
         return
     to = os.environ.get("CW_NOTIFY_TO", NOTIFY_TO_ID).strip()
     to_name = NOTIFY_TO_NAME if to == NOTIFY_TO_ID else ""
-    body = (f"[To:{to}]{to_name}\n" if to else "") + f"[PO自動化 {now_la().strftime('%m/%d')}]\n{text}"
+    body = (f"[To:{to}]{to_name}\n" if to else "") + f"[Auto PO {now_la().strftime('%m/%d')}]\n{text}"
     data = urllib.parse.urlencode({"body": body}).encode()
     req = urllib.request.Request(f"https://api.chatwork.com/v2/rooms/{room}/messages",
                                  data=data, method="POST", headers={"X-ChatWorkToken": token})
@@ -267,15 +267,15 @@ def filter_problems(page):
     problems = []
     for k in ("flag", "flag_filter", "purchaser"):
         if got.get(k) != exp[k]:
-            problems.append(f"{k}: 期待 {exp[k]!r} / 実際 {got.get(k)!r}")
+            problems.append(f"{k}: expected {exp[k]!r} / actual {got.get(k)!r}")
     if set(got.get("suppliers") or []) != exp["suppliers"]:
-        problems.append(f"suppliers: 期待 {sorted(exp['suppliers'])} / 実際 {sorted(got.get('suppliers') or [])}")
+        problems.append(f"suppliers: expected {sorted(exp['suppliers'])} / actual {sorted(got.get('suppliers') or [])}")
     for k in ("neg_live", "has_suggested", "has_rush"):
         if bool(got.get(k)) != exp[k]:
-            problems.append(f"{k}: 期待 {exp[k]} / 実際 {got.get(k)}")
+            problems.append(f"{k}: expected {exp[k]} / actual {got.get(k)}")
     pos = page_position(page)
     if pos and pos[1] > MAX_EXPECTED_PAGES:
-        problems.append(f"ページ数が多すぎる: 全{pos[1]}ページ（想定は最大{MAX_EXPECTED_PAGES}ページ）")
+        problems.append(f"Too many pages: {pos[1]} in total (expected at most {MAX_EXPECTED_PAGES})")
     return problems
 
 
@@ -366,8 +366,8 @@ def main():
                 print(f"! {page_no}ページ目: フィルタが想定と違うため、入力せずに止まります（PO作成もしません）")
                 for pr in problems:
                     print("   -", pr)
-                notify_chatwork("⚠ 停止: フィルタが想定と違うため、入力もPO作成もしていません。\n"
-                                + "\n".join(f"・{pr}" for pr in problems))
+                notify_chatwork("⚠ Stopped: the filter on the screen is not what was expected, so nothing was entered and no PO was created.\n"
+                                + "\n".join(f"- {pr}" for pr in problems))
                 page.screenshot(path=str(OUT_DIR / f"{stamp}_filter_error_p{page_no}.png"), full_page=True)
                 if not headless:
                     input("Enterで終了...")
@@ -381,10 +381,10 @@ def main():
                 if page_no == 1:
                     # 一覧が空のときは、画面に「No Records」と出る。異常ではなく、対象が0件の日
                     if re.search(r"No Records", page.inner_text("body"), re.I):
-                        notify_chatwork("ℹ 今日の対象商品は0件でした（Purchase Qty の一覧が空）。"
-                                        "PO は作っていません。")
+                        notify_chatwork("ℹ There are no items today (the Purchase Qty list is empty). "
+                                        "No PO was created.")
                     else:
-                        notify_chatwork("⚠ 停止: Purchase Qty の表が見つかりません。PO作成はしていません。")
+                        notify_chatwork("⚠ Stopped: the Purchase Qty table was not found. No PO was created.")
                     browser.close()
                     return
                 report.append([page_no, "", "", "", "", "", "", "", "TABLE_NOT_FOUND"])
@@ -438,8 +438,8 @@ def main():
         if ok == 0 or ok != len(report):
             print("入力できなかった行があるため、PO作成画面へは進みません。レポートを確認してください。")
             bad = sum(1 for x in report if x[-1] != "ok")
-            notify_chatwork(f"⚠ 停止: Purchase Qty を入力できない行が{bad}件あったため、PO作成をしていません"
-                            f"（入力OK {ok}件）。")
+            notify_chatwork(f"⚠ Stopped: {bad} row(s) could not be filled in Purchase Qty, so no PO was created "
+                            f"({ok} row(s) filled OK).")
             if not headless:
                 input("Enterで終了...")
             browser.close()
@@ -452,16 +452,16 @@ def main():
 
         # 試走: ここまでで終了。ケース作成も PO の SUBMIT も、取り込みの起動もしない
         if "--dry-run" in sys.argv:
-            lines = [f"🧪 試走（PO もケースも作っていません）: 商品 {ok}行 / {page_no}ページ。"
-                     "PO作成画面の入力と Copy Price まで正常に進みました。"]
+            lines = [f"🧪 Dry run (no PO and no cases were created): {ok} row(s) / {page_no} page(s). "
+                     "The PO form and Copy Price went through normally."]
             if over:
-                lines.append(f"Max Price超過 {len(over)}件（本番ならケースを作成します）:")
+                lines.append(f"Over Max Price: {len(over)} item(s) (cases would be created in live mode):")
                 for x in over[:15]:
-                    lines.append(f"  ・{x['code']}  単価 {x['price']} / Max {x['max']}")
+                    lines.append(f"  - {x['code']}  price {x['price']} / Max {x['max']}")
                 if len(over) > 15:
-                    lines.append(f"  …ほか {len(over) - 15}件")
+                    lines.append(f"  ...and {len(over) - 15} more")
             else:
-                lines.append("Max Price超過: なし")
+                lines.append("Over Max Price: none")
             notify_chatwork("\n".join(lines))
             browser.close()
             return
@@ -492,22 +492,22 @@ def main():
         po_number = submit_po(po_page, "--auto-submit" in sys.argv, stamp)
         if po_number:
             imported = dispatch_import(po_number)
-            lines = [f"✅ PO#{po_number} を作成しました（商品 {ok}行 / {page_no}ページ）。"]
+            lines = [f"✅ PO#{po_number} was created ({ok} row(s) / {page_no} page(s))."]
             if over:
                 cnt = {}
                 for r in results:
                     cnt[r[3]] = cnt.get(r[3], 0) + 1
-                lines.append(f"Max Price超過 {len(over)}件 → ケース作成 {cnt.get('created', 0)}件 / "
-                             f"7日以内に作成済みで見送り {cnt.get('skip_duplicate', 0)}件 / "
-                             f"担当不明などで未作成 {cnt.get('skip_no_assignee', 0) + cnt.get('skip_no_link', 0)}件")
+                lines.append(f"Over Max Price: {len(over)} item(s) -> {cnt.get('created', 0)} case(s) created / "
+                             f"{cnt.get('skip_duplicate', 0)} skipped (case already created within 7 days) / "
+                             f"{cnt.get('skip_no_assignee', 0) + cnt.get('skip_no_link', 0)} not created (assignee unknown, etc.)")
                 for r in results:
                     if r[3] in ("skip_no_assignee", "skip_no_link"):
-                        lines.append(f"  ! {r[0]}: ケース未作成（手動で対応してください）")
-            lines.append("TG&WMタブへの取り込みを起動しました。" if imported
-                         else "! TG&WMタブへの取り込みを起動できませんでした。「Import PO」で取り込んでください。")
+                        lines.append(f"  ! {r[0]}: case not created (please handle manually)")
+            lines.append("The import into the TG&WM tab has been started." if imported
+                         else "! Could not start the import into the TG&WM tab. Please import it with \"Import PO\".")
             notify_chatwork("\n".join(lines))
         else:
-            notify_chatwork("⚠ PO の作成を確認できませんでした。画面で、PO が作られたか確認してください。")
+            notify_chatwork("⚠ Could not confirm that the PO was created. Please check on the screen whether it was created.")
         browser.close()
 
 
@@ -587,8 +587,8 @@ def stop_if_po_exists(context):
         return False  # 試走は PO もケースも作らないので、今日の PO があっても続ける
     existing = find_existing_po(context)
     if existing:
-        notify_chatwork(f"⚠ 停止: 今日のPO（{order_number_today()} / {SUPPLIER_LABEL}）がすでにあります"
-                        f"（PO#{existing}）。二重作成を防ぐため、何もしていません。")
+        notify_chatwork(f"⚠ Stopped: today's PO ({order_number_today()} / {SUPPLIER_LABEL}) already exists "
+                        f"(PO#{existing}). Nothing was done, to avoid creating a duplicate.")
         return True
     return False
 
@@ -880,6 +880,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        notify_chatwork(f"⚠ 想定外のエラーで止まりました（{type(e).__name__}）。"
-                        f"PO が作られているか画面で確認してください。")
+        notify_chatwork(f"⚠ Stopped by an unexpected error ({type(e).__name__}). "
+                        f"Please check on the screen whether a PO was created.")
         raise

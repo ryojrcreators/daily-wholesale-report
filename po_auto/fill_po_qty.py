@@ -56,8 +56,8 @@ IMPORT_SHEET = "TG&WM"
 QTY_MULTIPLES = {"WO-84": 12, "W-114": 12, "W-108": 12, "BAL111": 6}
 # 買い物担当（Jill）が Chatwork グループに「I'm off today」と書いた日は、PO を作らない
 CW_ROOM_ID = "88583488"
-CW_SHOPPER_ID = 10892606        # Jill S Vinales（po_import の通知あて先と同じアカウントID）
-OFF_PATTERN = re.compile(r"i[’'`]?m\s+off\s+today", re.I)
+CW_SHOPPER_ID = int(os.environ.get("CW_TEST_SHOPPER_ID") or 10892606)  # Jill S Vinales（テスト時だけ環境変数 CW_TEST_SHOPPER_ID で別アカウントに切替）
+OFF_PATTERN = re.compile(r"\bi[’'`]?m\s+off\s+today\b", re.I)
 # 結果通知の送り先（ルーム 296236026 = 「TG/WM list is ready」と同じルーム）
 NOTIFY_ROOM_ID = "296236026"
 NOTIFY_TO_ID = "2618849"
@@ -98,6 +98,24 @@ def notify_chatwork(text):
         urllib.request.urlopen(req, timeout=30).close()
     except Exception as e:
         print(f"! Chatwork 通知に失敗しました（{type(e).__name__}）")
+
+
+def announce_shopper_off():
+    """買い物担当の休みを検出したとき、連絡のあったグループ（CW_ROOM_ID）に英語で知らせる。
+    試走（--dry-run）のときはグループには送らず、画面に出すだけ。失敗しても処理は止めない。"""
+    text = "The shopper is off today, so today's Shopping PO will not be created."
+    token = os.environ.get("CW_TOKEN", "")
+    if "--dry-run" in sys.argv or not token:
+        print(f"[グループ通知（送信せず）] {text}")
+        return
+    data = urllib.parse.urlencode({"body": text}).encode()
+    req = urllib.request.Request(f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
+                                 data=data, method="POST", headers={"X-ChatWorkToken": token})
+    try:
+        urllib.request.urlopen(req, timeout=30).close()
+        print(f"[グループ通知] {text}")
+    except Exception as e:
+        print(f"! グループへの通知に失敗しました（{type(e).__name__}）")
 
 
 def shopper_is_off_today():
@@ -308,6 +326,7 @@ def main():
         if off:
             print("買い物担当（Jill）から休みの連絡があったため、今日は実行しません"
                   "（動かす場合は --force を付けてください）")
+            announce_shopper_off()
             return
         if off is None and ("--auto-submit" in sys.argv or "--headless" in sys.argv):
             print("! 休みの連絡を確認できませんでしたが、休みの連絡はないものとして続行します")

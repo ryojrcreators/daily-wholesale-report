@@ -85,7 +85,7 @@ jobs:
           # このリポジトリは Public で、ログが誰にでも見える。
           # 商品コード・単価・PO番号などが載るため、詳細は画面に出さず、結果は Chatwork で受け取る。
           set +e
-          python -u po_auto/fill_po_qty.py --headless --no-off-check $FLAGS > po_auto/run.log 2>&1
+          python -u po_auto/fill_po_qty.py --headless $FLAGS > po_auto/run.log 2>&1
           RC=$?
           echo "終了コード: $RC"
           if [ "$RC" -ne 0 ]; then

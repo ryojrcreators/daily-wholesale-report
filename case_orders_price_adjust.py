@@ -184,11 +184,26 @@ def get_case_purchase_price_usd(page):
     )
     if not text:
         return None
-    m = re.search(r"Purchase\s+price:?\s*\$?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    return parse_purchase_price_usd(text)
+
+
+def parse_purchase_price_usd(text: str):
+    """
+    「Purchase price: $34.95」から金額を読み取る。直後に「+ $4.99 shipping」のように
+    送料が続いていれば、足した合計を仕入価格とする（2026-11-02、ユーザー指示）。
+    「+ tax」など、送料以外の追記は足さない。
+    """
+    m = re.search(
+        r"Purchase\s+price:?\s*\$?\s*([\d,]+\.?\d*)"
+        r"(?:\s*\+\s*\$?\s*([\d,]+\.?\d*)\s*(?:shipping|ship\b|s/h))?",
+        text, re.IGNORECASE)
     if not m:
         return None
     try:
-        return float(m.group(1).replace(",", ""))
+        total = float(m.group(1).replace(",", ""))
+        if m.group(2):
+            total += float(m.group(2).replace(",", ""))
+        return round(total, 2)
     except ValueError:
         return None
 

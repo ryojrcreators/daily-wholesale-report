@@ -309,10 +309,9 @@ def main():
             print("買い物担当（Jill）から休みの連絡があったため、今日は実行しません"
                   "（動かす場合は --force を付けてください）")
             return
-        if off is None and "--auto-submit" in sys.argv:
-            print("休みの連絡を確認できないため、自動実行は安全のため中止します")
-            return
-        if off is None:
+        if off is None and ("--auto-submit" in sys.argv or "--headless" in sys.argv):
+            print("! 休みの連絡を確認できませんでしたが、休みの連絡はないものとして続行します")
+        elif off is None:
             if input("休みの連絡を確認できていません。続けますか？ (y/n): ").strip().lower() != "y":
                 return
     if ("--headless" in sys.argv and "--auto-submit" not in sys.argv

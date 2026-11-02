@@ -193,15 +193,13 @@ def write_to_sheet(po_number, rows):
     return ws.title
 
 
-def notify_tgwm_ready():
-    """TG&WMタブへのImport完了をChatworkへ通知する（日付は当日のLA日付）。水曜日は送信しない。"""
+def notify_tgwm_ready(po_number):
+    """TG&WMタブへのImport完了をChatworkへ通知する（日付は当日のLA日付）。毎日送る。
+    2行目に、そのPOのページへのリンクを付ける。"""
     now_la = datetime.now(ZoneInfo("America/Los_Angeles"))
-    if now_la.weekday() == 2:  # 0=月,...,2=水
-        print("水曜日（LA時間）のため、TG&WM Chatwork通知をスキップします")
-        return
-
     date_str = f"{now_la.month}/{now_la.day}"
-    message = f"[To:{NOTIFY_TO_ID}]{NOTIFY_TO_NAME}\n{date_str} TG/WM list is ready"
+    message = (f"[To:{NOTIFY_TO_ID}]{NOTIFY_TO_NAME}\n{date_str} TG/WM list is ready\n"
+               f"https://{DOMAIN}/po-heads/view/{po_number}")
 
     if not CW_TOKEN:
         print("CW_TOKENが未設定のため、TG&WM Chatwork通知をスキップします")
@@ -226,7 +224,7 @@ def main():
     rows = build_urgent_column(rows, urgent_set)
     sheet_title = write_to_sheet(po_number, rows)
     if sheet_title == TG_WM_SHEET_NAME:
-        notify_tgwm_ready()
+        notify_tgwm_ready(po_number)
         # ショッピングリストの Aisle / Code を Aisle 一覧シートへ追記（失敗しても取り込みは成功扱い）
         try:
             from aisle_sync import sync_aisles

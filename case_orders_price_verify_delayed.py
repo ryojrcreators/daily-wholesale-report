@@ -15,6 +15,7 @@ case_orders_price_adjust.py が書き出した price_adjust_applied_changes.json
 
 import os
 import json
+from datetime import datetime, timedelta, timezone
 
 from case_orders_auto_close import (
     get_spreadsheet,
@@ -30,6 +31,8 @@ from case_orders_price_adjust import (
     CW_MENTION_RYO,
     post_chatwork,
     APPLIED_CHANGES_FILE,
+    load_reported_anomalies,
+    mark_anomalies_reported,
 )
 
 
@@ -93,27 +96,44 @@ def main():
     spreadsheet = get_spreadsheet()
     yahoo_token = get_yahoo_access_token(spreadsheet)
 
-    anomalies = []
+    # 各異常を (ケースID, 種別) とセットで集める。本体の価格調整と同じ「通知済み」タブで管理し、
+    # 同じ異常は1回しか通知しない（2026-11-02、同じ通知が毎回届くとの指摘を受けて追加）。
+    found = []
     for c in changes:
         print(f"  [{c['mall']}] {c['sku']} → ¥{c['price']:,} のはず")
         if c["mall"] == SHOP_RAKUTEN:
-            anomalies += check_rakuten(c["sku"], c["price"])
+            msgs = check_rakuten(c["sku"], c["price"])
         else:
-            anomalies += check_yahoo(yahoo_token, c["sku"], c["price"])
+            msgs = check_yahoo(yahoo_token, c["sku"], c["price"])
+        for m in msgs:
+            found.append({"case_id": str(c.get("case_id", "")),
+                          "key": f"delayed:{c['mall']}:{c['sku']}:{c['price']}", "message": m})
 
-    if anomalies:
-        print(f"\n⚠️ 異常を検出しました（{len(anomalies)}件）:")
-        for a in anomalies:
-            print(f"  {a}")
-        body = (
-            f"{CW_MENTION_RYO}\n"
-            f"[info][title]価格調整の時間差検証で異常を検出（{len(anomalies)}件）[/title]"
-            + "\n".join(anomalies)
-            + "\n\n書き込み直後の検証は正常でしたが、時間を置いて確認したところ値が"
-              "ズレていました。反映の遅延・失敗や、他の処理による上書きが考えられます。"
-              "内容の確認をお願いします。[/info]"
-        )
-        post_chatwork(body)
+    if found:
+        print(f"\n⚠️ 異常を検出しました（{len(found)}件）:")
+        for a in found:
+            print(f"  {a['message']}")
+        reported = load_reported_anomalies(spreadsheet)
+        new = [a for a in found if (a["case_id"], a["key"]) not in reported]
+        if len(found) - len(new):
+            print(f"  （うち{len(found) - len(new)}件は通知済みのため再送しません）")
+        if new:
+            body = (
+                f"{CW_MENTION_RYO}\n"
+                f"[info][title]価格調整の時間差検証で異常を検出（{len(new)}件）[/title]"
+                + "\n".join(a["message"] for a in new)
+                + "\n\n書き込み直後の検証は正常でしたが、時間を置いて確認したところ値が"
+                  "ズレていました。反映の遅延・失敗や、他の処理による上書きが考えられます。"
+                  "内容の確認をお願いします。[/info]"
+            )
+            post_chatwork(body)
+            try:
+                now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y/%m/%d %H:%M")
+                mark_anomalies_reported(spreadsheet, new, now)
+            except Exception as e:  # noqa: BLE001
+                print(f"  通知済み記録の保存に失敗しました: {e}")
+        else:
+            print("  新規の異常は無いため、Chatworkへは送信しません。")
     else:
         print("\n異常は見つかりませんでした。")
 

@@ -16,6 +16,10 @@ on:
         description: 'すでに値が入っているセルも上書きする'
         type: boolean
         default: false
+      fix_formulas:
+        description: '検算で壊れていたパーセント列の数式を直す（書き込みもオンの時だけ実際に直す）'
+        type: boolean
+        default: false
 
 jobs:
   report:
@@ -44,4 +48,5 @@ jobs:
           TARGET_MONTH: ${{ inputs.target_month }}
           WRITE: ${{ inputs.write && '1' || '0' }}
           OVERWRITE: ${{ inputs.overwrite && '1' || '0' }}
+          FIX_FORMULAS: ${{ inputs.fix_formulas && '1' || '0' }}
         run: python -u cancel_report.py

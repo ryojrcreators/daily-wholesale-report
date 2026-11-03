@@ -33,6 +33,7 @@
   SHEET_NAME                  タブ名（既定「店舗別パフォーマンス」）
   WRITE=1                     実際に書き込む
   OVERWRITE=1                 既存の値も上書きする
+  FIX_FORMULAS=1              検算で壊れていたパーセント列の数式を直す（WRITE=1も必要）
 """
 import csv
 import io
@@ -66,6 +67,8 @@ SHEET_NAME = os.environ.get("SHEET_NAME", "店舗別パフォーマンス").stri
 
 WRITE = os.environ.get("WRITE") == "1"
 OVERWRITE = os.environ.get("OVERWRITE") == "1"
+# 検算で壊れていたパーセント列の数式を、同じ行を参照する数式に直す（書き込みは WRITE=1 も必要）
+FIX_FORMULAS = os.environ.get("FIX_FORMULAS") == "1"
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -392,14 +395,18 @@ def to_number(value):
         return None
 
 
-def check_percent_formulas(ws, header_index, headers, rows_by_store):
+def check_percent_formulas(ws, header_index, headers, rows_by_store, fixes=None):
     """パーセント2列がシートの数式で正しく計算されているか確認する。
 
-    ここは書き込まない列だが、数式の分母が別の行を指しているといった壊れ方をすると
+    ここは通常は書き込まない列だが、数式の分母が別の行を指しているといった壊れ方をすると
     間違った数字が資料に載ってしまうため、実行のたびに検算して警告する。
 
     シートに入っている 売上高・返金額・弊社都合キャンセル金額 から期待値を出し、
     実際のパーセント列の値と突き合わせる（％列は 0.55 形式でも 55 形式でも通す）。
+
+    fixes にリストを渡すと、「計算結果の数値が合っていない」セルに限り、同じ行を参照する
+    正しい数式（例 =I50/F50）を {"range", "values", "label"} の形で追加する。
+    #DIV/0! や数値でない値（手入力の文字など）は、意図が分からないので直さない。
     """
     pct_cols = {
         COL_REFUND_PCT: (col_of(headers, COL_REFUND_PCT), COL_REFUND_AMOUNT, COL_SALES),
@@ -463,6 +470,14 @@ def check_percent_formulas(ws, header_index, headers, rows_by_store):
                     f"{numer_name} ÷ {denom_name} = {expected:.1f}% になっていません"
                     f"（セルの値: {actual_raw}）"
                 )
+                if fixes is not None:
+                    formula = (f"={a1(amount_cols[numer_name], row_number)}"
+                               f"/{a1(amount_cols[denom_name], row_number)}")
+                    fixes.append({
+                        "range": a1(pct_col, row_number),
+                        "values": [[formula]],
+                        "label": f"{store} {pct_name}（{a1(pct_col, row_number)}）→ {formula}",
+                    })
 
     return problems
 
@@ -588,7 +603,8 @@ def main():
 
     # 5) パーセント列の数式が正しく計算されているか検算する
     print("\n--- パーセント列の検算 ---")
-    problems = check_percent_formulas(ws, header_index, headers, rows_by_store)
+    fixes = []
+    problems = check_percent_formulas(ws, header_index, headers, rows_by_store, fixes)
     if not problems:
         print("  問題ありません")
         return
@@ -599,6 +615,35 @@ def main():
         # GitHub Actionsの実行結果に警告として表示する
         print(f"::warning title=パーセント列の数式::{p}")
     print("  → 分母が別の行を指していないか、該当セルの数式を確認してください")
+
+    # 6) 数式の修正（FIX_FORMULAS=1 のときだけ。書き込みは WRITE=1 も必要）
+    if not FIX_FORMULAS:
+        if fixes:
+            print("  ※ 自動で直す場合は FIX_FORMULAS=1 を付けて実行してください")
+        return
+    if not fixes:
+        print("\n--- 数式の修正 ---\n  自動で直せる項目（計算結果の数値が合っていないセル）はありませんでした")
+        return
+
+    print("\n--- 数式の修正 ---")
+    for f in fixes:
+        print("  " + f["label"])
+    if not WRITE:
+        print(f"  ドライランのため修正しません（{len(fixes)}セル）。"
+              "実際に直すには WRITE=1 も付けて実行してください")
+        return
+
+    ws.batch_update([{"range": f["range"], "values": f["values"]} for f in fixes],
+                    value_input_option="USER_ENTERED")
+    print(f"  {len(fixes)}セルの数式を修正しました。検算をやり直します")
+
+    remaining = check_percent_formulas(ws, header_index, headers, rows_by_store)
+    if remaining:
+        for p in remaining:
+            print("  ⚠️ " + p)
+            print(f"::warning title=修正後もパーセント列の数式が不正::{p}")
+    else:
+        print("  修正後の検算: 問題ありません")
 
 
 if __name__ == "__main__":

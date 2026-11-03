@@ -77,12 +77,18 @@ LIVE_HEADER = "live qty"
 PURCHASE_HEADER = "purchase qty"
 
 
+EXTRA_NOTES = []  # 次に送る結果通知の末尾に付け足す一行メモ（Force Close の結果など）
+
+
 def notify_chatwork(text):
     """実行結果を Chatwork に送る。送り先は環境変数で指定する（未設定なら画面に出すだけ）。
       CW_TOKEN          : Chatwork API トークン
       CW_NOTIFY_ROOM_ID : 送り先ルームID
       CW_NOTIFY_TO      : （任意）あて先のアカウントID。指定すると [To:ID] が付く
     通知に失敗しても、本体の処理は止めない。"""
+    if EXTRA_NOTES:
+        text = text + "\n" + "\n".join(EXTRA_NOTES)
+        EXTRA_NOTES.clear()
     print(f"[通知] {text}")
     token = os.environ.get("CW_TOKEN", "")
     room = os.environ.get("CW_NOTIFY_ROOM_ID", NOTIFY_ROOM_ID)
@@ -350,10 +356,20 @@ def main():
         page = context.new_page()
         login(page)
 
+        # Force Close だけを試す（PO の作成・Qty の入力はしない）
+        if "--only-force-close" in sys.argv:
+            close_old_pos(context, stamp)
+            notify_chatwork("ℹ Force close check finished (no PO was created).")
+            browser.close()
+            return
+
         # 今日の PO がすでにあるなら、何もせずに止まる（二重作成・ケースの二重作成を防ぐ）
         if stop_if_po_exists(context):
             browser.close()
             return
+
+        # 前日以前の PO が残っていたら、先に Force Close する（Live Qty に影響するため、Qty を読む前に行う）
+        close_old_pos(context, stamp)
 
         page.goto(f"https://{DOMAIN}{TARGET_PATH}", wait_until="networkidle")
 
@@ -591,6 +607,139 @@ def stop_if_po_exists(context):
                         f"(PO#{existing}). Nothing was done, to avoid creating a duplicate.")
         return True
     return False
+
+
+# 前日以前の PO を Force Close する（今日の PO を作る前に実行）
+OPEN_PO_STATUS = "Awaiting Receipt"   # この状態のまま残っている PO だけを閉じる
+AUTO_CREATOR = "Jura (AI Assistant)"  # この自動化が作った PO だけを閉じる（手動で作った PO には触れない）
+MAX_FORCE_CLOSE = 5                   # これより多く見つかったら、異常とみなして1件も閉じない
+
+PO_STATUS_LIST_JS = """
+() => {
+  const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+  for (const t of document.querySelectorAll('table')) {
+    const heads = [...t.querySelectorAll('th')].map(th => norm(th.textContent).toLowerCase());
+    const o = heads.indexOf('order number'), s = heads.indexOf('suppliers');
+    const i = heads.indexOf('id'), st = heads.indexOf('status'), cb = heads.indexOf('created_by');
+    if (o < 0 || s < 0 || i < 0 || st < 0 || cb < 0) continue;
+    return [...t.querySelectorAll('tbody tr')].map(tr => {
+      const td = [...tr.children];
+      return { id: norm(td[i]?.textContent), order: norm(td[o]?.textContent),
+               supplier: norm(td[s]?.textContent), status: norm(td[st]?.textContent),
+               created_by: norm(td[cb]?.textContent) };
+    });
+  }
+  return null;
+}
+"""
+
+PO_VIEW_STATUS_JS = """
+() => {
+  for (const tr of document.querySelectorAll('tr')) {
+    const c = [...tr.children];
+    if (c.length >= 2 && c[0].textContent.trim().toLowerCase() === 'status') return c[1].textContent.trim();
+  }
+  return null;
+}
+"""
+
+
+def find_old_open_pos(context):
+    """今日より前の「MMDD Shopping List」（同じ Supplier）で、まだ Awaiting Receipt のまま残っている PO を返す。
+    PO一覧を調べられなかったときは例外を出す。"""
+    today = now_la()
+    page = context.new_page()
+    try:
+        url = f"https://{DOMAIN}/po-heads?" + urllib.parse.urlencode({"PoHeads[order_number]": "Shopping List"})
+        page.goto(url, wait_until="networkidle")
+        has_form = page.locator("#poheads-order-number").count() > 0
+        rows = page.evaluate(PO_STATUS_LIST_JS)
+        if rows is None and not has_form:
+            raise RuntimeError(f"PO一覧のページを開けませんでした（title={page.title()!r}）")
+        rows = rows or []
+    finally:
+        page.close()
+    old = []
+    for r in rows:
+        m = re.fullmatch(r"(\d{2})(\d{2}) Shopping List", r["order"], re.I)
+        if (not m or r["supplier"] != SUPPLIER_LABEL or r["status"] != OPEN_PO_STATUS
+                or r["created_by"] != AUTO_CREATOR):
+            continue
+        try:
+            d = datetime(today.year, int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            continue
+        if d > today:            # 年をまたいだ場合（例: 1月に前年12月の PO）
+            d = d.replace(year=today.year - 1)
+        if 0 < (today.date() - d.date()).days <= 45:   # 今日より前で、極端に古くないものだけ
+            old.append({"id": r["id"].replace(",", ""), "order": r["order"]})
+    return old
+
+
+def force_close_po(context, po_id, stamp):
+    """PO の詳細ページで Force Close を押し（確認ダイアログは OK）、状態が変わったか確認する。
+    成功なら (True, 新しい状態)、失敗なら (False, 理由)。"""
+    page = context.new_page()
+    try:
+        page.on("dialog", lambda d: d.accept())
+        view = f"https://{DOMAIN}/po-heads/view/{po_id}"
+        page.goto(view, wait_until="networkidle")
+        link = page.locator("a", has_text=re.compile(r"^\s*Force Close\s*$", re.I)).first
+        if link.count() == 0:
+            return False, "Force Close のリンクが見つかりません"
+        link.click()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1500)
+        page.goto(view, wait_until="networkidle")
+        status = page.evaluate(PO_VIEW_STATUS_JS)
+        page.screenshot(path=str(OUT_DIR / f"{stamp}_force_close_{po_id}.png"), full_page=True)
+        if status and status != OPEN_PO_STATUS:
+            return True, status
+        return False, f"状態が変わりませんでした（{status!r}）"
+    finally:
+        page.close()
+
+
+def close_old_pos(context, stamp):
+    """前日以前の PO が残っていたら Force Close する。結果は EXTRA_NOTES に入れ、次の通知に付ける。
+    失敗しても、今日の PO 作成は止めない。--no-force-close で飛ばす。試走では閉じずに一覧だけ出す。"""
+    if "--no-force-close" in sys.argv:
+        return
+    try:
+        old = find_old_open_pos(context)
+    except Exception as e:
+        print(f"! 前日以前の PO を調べられませんでした（{type(e).__name__}: {e}）")
+        EXTRA_NOTES.append("! Could not check for old POs to force close. Please check them manually.")
+        return
+    if not old:
+        print("Force Close の対象（前日以前に残っている PO）はありません")
+        return
+    desc = ", ".join(f"PO#{x['id']} ({x['order']})" for x in old)
+    print(f"Force Close の対象: {desc}")
+    if len(old) > MAX_FORCE_CLOSE:
+        EXTRA_NOTES.append(f"! Found {len(old)} old POs still open ({desc}). "
+                           f"That is more than expected, so none were force closed. Please check them manually.")
+        return
+    if "--dry-run" in sys.argv:
+        EXTRA_NOTES.append(f"(Dry run) Would force close: {desc}")
+        return
+    if "--auto-submit" not in sys.argv:
+        if input(f"★ 上の PO を Force Close します。よければ Enter（やめるときは n）...").strip().lower() == "n":
+            print("Force Close をスキップします")
+            return
+    closed, failed = [], []
+    for x in old:
+        label = f"PO#{x['id']} ({x['order']})"
+        try:
+            ok, detail = force_close_po(context, x["id"], stamp)
+        except Exception as e:
+            ok, detail = False, f"{type(e).__name__}"
+        print(f"  {label}: {'OK' if ok else 'NG'} {detail}")
+        (closed if ok else failed).append(label)
+    if closed:
+        EXTRA_NOTES.append("Force closed: " + ", ".join(closed))
+    if failed:
+        EXTRA_NOTES.append("! Could not force close: " + ", ".join(failed) + ". Please close them manually.")
 
 
 def fill_po_header(po_page):

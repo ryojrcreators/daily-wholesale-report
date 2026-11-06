@@ -54,10 +54,10 @@ IMPORT_WORKFLOW = "po_import.yml"
 IMPORT_SHEET = "TG&WM"
 # 決まった個数単位でしか買えない商品（商品コード → 単位）。数量は単位の倍数に切り上げる
 QTY_MULTIPLES = {"WO-84": 12, "W-114": 12, "W-108": 12, "BAL111": 6}
-# 買い物担当（Jill）が Chatwork グループに「I'm off today」と書いた日は、PO を作らない
+# 買い物担当（Jill）が Chatwork グループに「I'm off today」「I am off today」と書いた日は、PO を作らない
 CW_ROOM_ID = "88583488"
 CW_SHOPPER_ID = int(os.environ.get("CW_TEST_SHOPPER_ID") or 10892606)  # Jill S Vinales（テスト時だけ環境変数 CW_TEST_SHOPPER_ID で別アカウントに切替）
-OFF_PATTERN = re.compile(r"\bi[’'`]?m\s+off\s+today\b", re.I)
+OFF_PATTERN = re.compile(r"\bi(?:[’'`]?m|\s+am)\s+off\s+today\b", re.I)
 # 結果通知の送り先（ルーム 296236026 = 「TG/WM list is ready」と同じルーム）
 NOTIFY_ROOM_ID = "296236026"
 NOTIFY_TO_ID = "2618849"

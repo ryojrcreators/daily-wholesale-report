@@ -34,6 +34,7 @@ from rakuten_coupon_api import auth_headers
 # 倉庫・ship_timeの記録はLA（現地）時間のため、対象期間の判定はすべてLA時間基準で行う
 # （固定オフセットのJSTと違いLAは夏時間があるため、オフセット固定ではなくZoneInfoを使う）
 LA_TZ = ZoneInfo("America/Los_Angeles")
+JST = ZoneInfo("Asia/Tokyo")
 
 DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "3"))  # 当日を含め何日分（ship_time基準）を対象にするか
@@ -309,11 +310,24 @@ def parse_ship_datetime(ship_time: str):
 
 
 def parse_ship_date(ship_time: str) -> str:
-    """CSVの ship_time から YYYY-MM-DD を返す（updateOrderShippingのshippingDate用）。"""
+    """CSVの ship_time からLA時間の YYYY-MM-DD を返す（他モールでも使用）。"""
     dt = parse_ship_datetime(ship_time)
     if dt is not None:
         return dt.strftime("%Y-%m-%d")
     return datetime.now(LA_TZ).strftime("%Y-%m-%d")
+
+
+def to_rakuten_ship_date(ship_time: str) -> str:
+    """LA時間の出荷時刻を、楽天へ送る日本時間の発送日（YYYY-MM-DD）に変換する。
+
+    LAの日付をそのまま送ると、日本の注文日より前の日付になり、
+    updateOrderShipping が ERROR_107 を返すことがある。日付の上書きや
+    今日への置き換えはせず、実際の出荷時刻を日本時間に変換する。
+    """
+    dt = parse_ship_datetime(ship_time)
+    if dt is None:
+        raise ValueError("ship_timeを解釈できないため、発送日を決められません")
+    return dt.replace(tzinfo=LA_TZ).astimezone(JST).strftime("%Y-%m-%d")
 
 
 def resolve_store(order_number: str):
@@ -454,6 +468,7 @@ def main():
     ignored_store = 0
     missing_info = 0
     unmapped_carriers = []
+    errors = []
 
     for o in orders:
         if not o["tracking_num"]:
@@ -474,13 +489,16 @@ def main():
                 unmapped_carriers.append(o)
                 continue
         o["delivery_company"] = code
-        o["shipping_date"] = parse_ship_date(o["ship_time"])
+        try:
+            o["shipping_date"] = to_rakuten_ship_date(o["ship_time"])
+        except ValueError as e:
+            errors.append({"order_number": o["order_number"], "message": str(e)})
+            continue
         by_store[store].append(o)
 
     print(f"対象外（店舗判定不能）: {ignored_store}件 / 情報不足: {missing_info}件 / "
           f"配送会社名未マッピング: {len(unmapped_carriers)}件")
 
-    errors = []
     auth_error_stores = []
     registered = 0
     skipped_already = 0

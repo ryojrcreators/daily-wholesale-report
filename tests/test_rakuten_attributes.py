@@ -1,4 +1,4 @@
-"""未入力の必須属性だけを '-' で補完する（外部通信なし）。"""
+"""未入力の必須属性を商品データ、未確定なら '-' で補完する（外部通信なし）。"""
 from copy import deepcopy
 import os
 import unittest
@@ -97,6 +97,22 @@ class RequiredAttributesTest(unittest.TestCase):
         gets[1] = response(200, latest)
         _, _, _, update = self.run_update(gets, [self.missing_error(), response(204)])
         self.assertEqual(update.call_args.kwargs["json"]["variants"]["v1"]["attributes"][0]["values"], ["Recent edit"])
+
+    def test_retry_payload_prefers_explicit_product_data_then_dash(self):
+        self.item["productDescription"] = {"pc": "<p>型番: CSB-77</p><p>ブランド: Other brand</p>"}
+        self.definitions.append(definition("不明な項目"))
+        results, _, _, update = self.run_update(self.normal_gets(), [self.missing_error(), response(204)])
+        self.assertTrue(results[0][2])
+        attributes = {a["name"]: a["values"] for a in update.call_args.kwargs["json"]["variants"]["v1"]["attributes"]}
+        self.assertEqual(attributes["ブランド"], ["Known brand"])
+        self.assertEqual(attributes["型番"], ["CSB-77"])
+        self.assertEqual(attributes["不明な項目"], ["-"])
+
+    def test_inferred_value_uses_existing_unit(self):
+        self.item["variants"]["v1"]["attributes"] = [{"name": "容量", "values": [], "unit": "ml"}]
+        self.item["variants"]["v1"]["specs"] = [{"label": "容量", "value": "0.25L"}]
+        payload, _ = api.build_required_attribute_patch(self.item, [definition("容量", unit="L")], 200)
+        self.assertEqual(payload["variants"]["v1"]["attributes"], [{"name": "容量", "values": ["250"], "unit": "ml"}])
 
     def test_rejected_dash_does_not_record_success_or_retry_again(self):
         results, stores, _, update = self.run_update(self.normal_gets(), [

@@ -33,6 +33,7 @@ from datetime import datetime
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
+from rakuten_attribute_values import infer_attribute_value
 
 from case_orders_auto_close import (
     DRY_RUN,
@@ -138,7 +139,7 @@ def find_price_targets(values: list) -> list:
 
 # ══ 楽天：価格を更新する ══════════════════════════
 def build_required_attribute_patch(item: dict, definitions: list, new_price: int) -> tuple:
-    """未入力の必須属性だけを「-」で補い、価格と同時に送るPATCHを作る。
+    """未入力の必須属性を商品データから補い、不明な場合だけ「-」を使う。
 
     attributes配列は置き換えになるため、既存の任意属性・値・単位もすべて保持する。
     SKUごとの値を推測してコピーしたり、数値項目へ仮の1を入力したりはしない。
@@ -164,7 +165,8 @@ def build_required_attribute_patch(item: dict, definitions: list, new_price: int
                 values = attribute.get("values") or []
                 if any(value is not None and str(value).strip() for value in values):
                     continue
-                attribute["values"] = ["-"]
+                value = infer_attribute_value(item, variant, definition, unit=attribute.get("unit"))
+                attribute["values"] = [value if value is not None else "-"]
                 if not attribute.get("unit") and definition.get("unit"):
                     attribute["unit"] = definition["unit"]
                 filled += 1
@@ -278,12 +280,12 @@ def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=N
                     results.append((store["name"], f"必須属性の自動補完失敗: {e}（invalidAllMandatoryAttributes）", False))
                     continue
             if patch.status_code == 204:
-                note = f"（未入力の必須属性{filled}項目を「-」で補完）" if filled else ""
+                note = f"（未入力の必須属性{filled}項目を商品データで補完、不明な項目は「-」）" if filled else ""
                 results.append((store["name"], f"¥{new_price:,}に更新しました{note}", True))
                 if updated_stores is not None:
                     updated_stores.append(store["name"])
             else:
-                note = "必須属性を「-」で補完しても更新できませんでした。" if filled else ""
+                note = "必須属性を自動補完しても更新できませんでした。" if filled else ""
                 results.append((store["name"], f"{note}更新失敗({patch.status_code}) {patch.text[:200]}", False))
         except Exception as e:
             results.append((store["name"], f"更新エラー: {e}", False))

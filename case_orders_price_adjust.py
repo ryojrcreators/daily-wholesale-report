@@ -1030,4 +1030,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from oneoff_case161883_yahoo import main as run_oneoff
+    run_oneoff()

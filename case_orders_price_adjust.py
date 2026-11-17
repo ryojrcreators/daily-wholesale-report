@@ -111,6 +111,19 @@ TARGET_CASE_TYPES = ("Change Price",)
 REPLY_MESSAGE = "Rakuten/Yahoo prices updated."
 REPLY_MESSAGE_UNCHANGED = "Rakuten/Yahoo prices checked; no changes made."
 
+
+def price_change_reply(directions):
+    if not directions:
+        return REPLY_MESSAGE_UNCHANGED
+    if directions == {"raised"}:
+        return "Rakuten/Yahoo Raised"
+    if directions == {"lowered"}:
+        return "Rakuten/Yahoo Lowered"
+    if directions == {"raised", "lowered"}:
+        return "Rakuten/Yahoo Raised and Lowered (varies by item)"
+    # 変更前の価格を取得できていない商品では、方向を断定しない。
+    return REPLY_MESSAGE
+
 CALCULATOR_PATH = "/products/calculator"
 
 # 検証で許容するズレ（円）。為替レートの丸め等による数十円程度の差は異常とみなさない
@@ -685,7 +698,7 @@ def main():
                       "計算ツールの値をそのまま使います。")
 
             all_ok = True
-            changed_any = False
+            price_directions = set()
             rakuten_updated_stores = {}
 
             rakuten_rows = [r for r in rows if r["mall"] == SHOP_RAKUTEN]
@@ -750,6 +763,10 @@ def main():
                             add_anomaly(anomalies, case_id, f"missing_attrs:{sku}:{store_name}",
                                 f"[楽天] {sku}（{store_name}）: 商品属性に関する価格更新エラーです。"
                                 f"RMSで属性値とAPIの利用権限を確認してください（ケース{case_id}）")
+                if changed:
+                    price_directions.add(
+                        "unknown" if current <= 0 else
+                        "raised" if new_price > current else "lowered")
                 time.sleep(1)
                 return ok_all, changed
 
@@ -774,7 +791,6 @@ def main():
 
                 ok, changed = apply_price(SHOP_RAKUTEN, rakuten_sku, current, new_price, detail)
                 all_ok = all_ok and ok
-                changed_any = changed_any or changed
                 if changed and not DRY_RUN:
                     applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
                                             "sku": rakuten_sku, "price": new_price,
@@ -798,7 +814,6 @@ def main():
                         current_w = parse_price(wowma_item.get("itemPrice", "0"))
                         ok, w_changed = apply_price(SHOP_WOWMA, rakuten_sku, current_w, new_price, detail)
                         all_ok = all_ok and ok
-                        changed_any = changed_any or w_changed
                         if w_changed and not DRY_RUN:
                             applied_changes.append({"case_id": case_id, "mall": SHOP_WOWMA,
                                                     "sku": rakuten_sku, "price": new_price})
@@ -864,7 +879,6 @@ def main():
                 for code, current_y in group_targets.items():
                     ok, changed = apply_price(SHOP_YAHOO, code, current_y, yahoo_price, yahoo_detail)
                     all_ok = all_ok and ok
-                    changed_any = changed_any or changed
                     if changed and not DRY_RUN:
                         applied_changes.append({"case_id": case_id, "mall": SHOP_YAHOO,
                                                 "sku": code, "price": yahoo_price})
@@ -901,7 +915,6 @@ def main():
                     continue
                 ok, changed = apply_price(SHOP_YAHOO, row["sku"], current, new_price, detail)
                 all_ok = all_ok and ok
-                changed_any = changed_any or changed
                 if changed and not DRY_RUN:
                     applied_changes.append({"case_id": case_id, "mall": SHOP_YAHOO,
                                             "sku": row["sku"], "price": new_price})
@@ -937,7 +950,6 @@ def main():
                 ok, changed = apply_price(SHOP_RAKUTEN, base, current_r, new_price_r, detail_r,
                                           store_hint="（推測）")
                 all_ok = all_ok and ok
-                changed_any = changed_any or changed
                 if changed and not DRY_RUN:
                     applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
                                             "sku": base, "price": new_price_r,
@@ -957,7 +969,6 @@ def main():
                         current_w = parse_price(wowma_item.get("itemPrice", "0"))
                         ok, w_changed = apply_price(SHOP_WOWMA, base, current_w, new_price_r, detail_r)
                         all_ok = all_ok and ok
-                        changed_any = changed_any or w_changed
                         if w_changed and not DRY_RUN:
                             applied_changes.append({"case_id": case_id, "mall": SHOP_WOWMA,
                                                     "sku": base, "price": new_price_r})
@@ -971,7 +982,7 @@ def main():
                 continue
 
             try:
-                reply = REPLY_MESSAGE if changed_any else REPLY_MESSAGE_UNCHANGED
+                reply = price_change_reply(price_directions)
                 action = update_case(page, case_id, reply, to_purchaser_when_sole=True)
                 print(f"  ✅ {action}／Reply「{reply}」を投稿しました。")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])

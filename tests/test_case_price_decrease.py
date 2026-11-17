@@ -18,7 +18,7 @@ with patch.dict(os.environ, {name: "test" for name in (
 
 class CasePriceDecreaseTest(unittest.TestCase):
     def run_case(self, mall, current=15690, target=9818, *, dry_run=False,
-                 failed=False, sale=False):
+                 failed=False, sale=False, currents=None):
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             artifact = Path(tmp) / "changes.json"
@@ -30,8 +30,9 @@ class CasePriceDecreaseTest(unittest.TestCase):
             for name, value in {
                 "get_spreadsheet": Mock(), "get_yahoo_access_token": "token",
                 "fetch_target_cases": [{"id": "161883", "caseType": "Change Price", "product": "test"}],
-                "fetch_price_rows": [{"mall": mall, "sku": "test-sku",
-                                      "salesPrice": str(current), "rowIndex": 0}],
+                "fetch_price_rows": [{"mall": mall, "sku": f"test-sku-{i}",
+                                      "salesPrice": str(value), "rowIndex": i}
+                                     for i, value in enumerate(currents or [current])],
                 "check_case": None, "get_case_purchase_price_usd": 35.95,
                 "calc_sell_price": (target, "test"), "get_yahoo_stores": [],
                 "load_reported_anomalies": set(), "rakuten_get_current_prices": {},
@@ -70,7 +71,19 @@ class CasePriceDecreaseTest(unittest.TestCase):
                     self.assertEqual(changes[0]["price"], target)
                     self.assertEqual(changes[0]["case_id"], "161883")
                     self.assertEqual(mocks["update_case"].call_args.args[2],
-                                     "Rakuten/Yahoo prices updated.")
+                                     "Rakuten/Yahoo Lowered" if target < current
+                                     else "Rakuten/Yahoo Raised")
+
+    def test_mixed_changes_are_reported_without_claiming_one_direction(self):
+        mocks, changes = self.run_case(adjust.SHOP_YAHOO, currents=[15690, 9000])
+        self.assertEqual(len(changes), 2)
+        self.assertEqual(mocks["update_case"].call_args.args[2],
+                         "Rakuten/Yahoo Raised and Lowered (varies by item)")
+
+    def test_unknown_previous_price_does_not_claim_a_raise(self):
+        mocks, _ = self.run_case(adjust.SHOP_YAHOO, current=0)
+        self.assertEqual(mocks["update_case"].call_args.args[2],
+                         "Rakuten/Yahoo prices updated.")
 
     def test_equal_price_does_not_claim_an_update(self):
         for mall in (adjust.SHOP_RAKUTEN, adjust.SHOP_YAHOO):

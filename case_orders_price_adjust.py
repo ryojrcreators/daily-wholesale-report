@@ -135,7 +135,28 @@ def load_reported_anomalies(spreadsheet) -> set:
     except Exception:
         return set()
     rows = ws.get_all_values()[1:]
-    return {(row[1], row[2]) for row in rows if len(row) >= 3}
+    reported = set()
+    for row in rows:
+        if len(row) < 3:
+            continue
+        key = row[2]
+        # 旧時間差検証のキーには目標価格が含まれていた。既存履歴も価格に依存させない。
+        parts = key.split(":")
+        if len(parts) == 4 and parts[0] == "delayed" and parts[-1].isdigit():
+            key = ":".join(parts[:3])
+        reported.add((row[1], key))
+    return reported
+
+
+def is_anomaly_reported(reported: set, anomaly: dict) -> bool:
+    identity = (anomaly["case_id"], anomaly["key"])
+    if identity in reported:
+        return True
+    # 店舗情報の無い旧履歴は、その商品全体について通知済みとして引き継ぐ。
+    if anomaly["key"].startswith("delayed:"):
+        legacy_key = ":".join(anomaly["key"].split(":")[:3])
+        return (anomaly["case_id"], legacy_key) in reported
+    return False
 
 
 def mark_anomalies_reported(spreadsheet, anomalies: list, now: str):
@@ -477,7 +498,8 @@ def add_anomaly(anomalies: list, case_id: str, key: str, message: str):
 
 
 def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_price: int, anomalies: list,
-                           expected_purchase_usd: float = None, shop_keyword: str = None):
+                           expected_purchase_usd: float = None, shop_keyword: str = None,
+                           store_names=()):
     """
     楽天SKUを再計算＋API再取得して、書き込んだ値と一致するか確認する。
     shop_keyword は、行自体が楽天ではない（Yahoo行から逆引きした楽天出品など）場合に
@@ -493,6 +515,8 @@ def recheck_rakuten_price(page, case_id: str, row_index: int, sku: str, applied_
 
     actual = rakuten_get_current_prices(sku)
     for store_name, price in actual.items():
+        if store_name not in store_names:
+            continue
         if price is not None and abs(price - applied_price) > PRICE_TOLERANCE_YEN:
             add_anomaly(anomalies, case_id, f"recheck_api:{sku}:{store_name}",
                 f"[楽天] {sku}（{store_name}）: 書き込んだ値 ¥{applied_price:,} だが実際は ¥{price:,}"
@@ -622,6 +646,7 @@ def main():
 
             all_ok = True
             changed_any = False
+            rakuten_updated_stores = {}
 
             rakuten_rows = [r for r in rows if r["mall"] == SHOP_RAKUTEN]
             yahoo_rows = [r for r in rows if r["mall"] == SHOP_YAHOO]
@@ -645,7 +670,9 @@ def main():
                     return True, True
 
                 if mall == SHOP_RAKUTEN:
-                    results = rakuten_update_price(sku, new_price)
+                    updated_stores = []
+                    results = rakuten_update_price(sku, new_price, updated_stores=updated_stores)
+                    rakuten_updated_stores[sku] = updated_stores
                 elif WOWMA_ENABLED and mall == SHOP_WOWMA:
                     ok, message = wowma_update_price(sku, new_price, dry_run=False)
                     results = [("Wowma", message, ok)]
@@ -663,7 +690,8 @@ def main():
                     print(f"      {store_name}: {message}")
                     log_rows.append([now, case_id, case["caseType"], mall, store_name, sku, message])
                     if ok:
-                        changed = True
+                        if mall != SHOP_RAKUTEN or store_name in updated_stores:
+                            changed = True
                     else:
                         ok_all = False
                         if "IE0418" in message or "invalidAllMandatoryAttributes" in message:
@@ -703,11 +731,13 @@ def main():
                 changed_any = changed_any or changed
                 if changed and not DRY_RUN:
                     applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
-                                            "sku": rakuten_sku, "price": new_price})
+                                            "sku": rakuten_sku, "price": new_price,
+                                            "stores": rakuten_updated_stores[rakuten_sku]})
                     # 書き込み直後にもう一度Calcで計算し直し、実際の値もAPIから読み直して
                     # 書き込んだ値と一致するか確認する（2026-08-13の事故を受けて追加）
                     recheck_rakuten_price(page, case_id, row["rowIndex"], rakuten_sku, new_price, anomalies,
-                                           expected_purchase_usd=expected_purchase_usd)
+                                           expected_purchase_usd=expected_purchase_usd,
+                                           store_names=rakuten_updated_stores[rakuten_sku])
 
                 # Wowmaは楽天と同じ商品コード・同じ計算価格を使う（社内ツールに専用のShop設定は無い）。
                 # 出品が無ければ静かにスキップする。
@@ -864,9 +894,11 @@ def main():
                 changed_any = changed_any or changed
                 if changed and not DRY_RUN:
                     applied_changes.append({"case_id": case_id, "mall": SHOP_RAKUTEN,
-                                            "sku": base, "price": new_price_r})
+                                            "sku": base, "price": new_price_r,
+                                            "stores": rakuten_updated_stores[base]})
                     recheck_rakuten_price(page, case_id, row["rowIndex"], base, new_price_r, anomalies,
-                                          expected_purchase_usd=expected_purchase_usd, shop_keyword="楽天")
+                                          expected_purchase_usd=expected_purchase_usd, shop_keyword="楽天",
+                                          store_names=rakuten_updated_stores[base])
 
                 if WOWMA_ENABLED:
                     try:
@@ -932,7 +964,7 @@ def main():
             print(f"  {a['message']}")
 
         reported = load_reported_anomalies(spreadsheet)
-        new_anomalies = [a for a in anomalies if (a["case_id"], a["key"]) not in reported]
+        new_anomalies = [a for a in anomalies if not is_anomaly_reported(reported, a)]
         already_count = len(anomalies) - len(new_anomalies)
         if already_count:
             print(f"  （うち{already_count}件は通知済みのため今回はChatworkへ再送しません）")

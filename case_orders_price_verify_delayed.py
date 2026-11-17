@@ -33,10 +33,11 @@ from case_orders_price_adjust import (
     APPLIED_CHANGES_FILE,
     load_reported_anomalies,
     mark_anomalies_reported,
+    is_anomaly_reported,
 )
 
 
-def check_rakuten(sku: str, expected_price: int) -> list:
+def check_rakuten(sku: str, expected_price: int, store_names=()) -> list:
     """
     出品が見つからない場合は異常扱いしない（意図的にClose・削除された可能性があり、
     書き込んだ価格が反映されているかとは別の話のため）。2026-08-20、ユーザー指示により変更。
@@ -46,6 +47,8 @@ def check_rakuten(sku: str, expected_price: int) -> list:
     if not actual:
         return anomalies
     for store_name, price in actual.items():
+        if store_name not in store_names:
+            continue
         if price is None:
             continue
         if abs(price - expected_price) > PRICE_TOLERANCE_YEN:
@@ -102,19 +105,25 @@ def main():
     for c in changes:
         print(f"  [{c['mall']}] {c['sku']} → ¥{c['price']:,} のはず")
         if c["mall"] == SHOP_RAKUTEN:
-            msgs = check_rakuten(c["sku"], c["price"])
+            # 更新店舗が不明な旧artifactは検証しない。未更新店舗への誤通知を防ぐ。
+            if not c.get("stores"):
+                print("    更新に成功した店舗情報が無いため、検証対象外です。")
+            for store_name in c.get("stores", []):
+                for m in check_rakuten(c["sku"], c["price"], store_names=[store_name]):
+                    found.append({"case_id": str(c.get("case_id", "")),
+                                  "key": f"delayed:{c['mall']}:{c['sku']}:store:{store_name}",
+                                  "message": m})
         else:
-            msgs = check_yahoo(yahoo_token, c["sku"], c["price"])
-        for m in msgs:
-            found.append({"case_id": str(c.get("case_id", "")),
-                          "key": f"delayed:{c['mall']}:{c['sku']}:{c['price']}", "message": m})
+            for m in check_yahoo(yahoo_token, c["sku"], c["price"]):
+                found.append({"case_id": str(c.get("case_id", "")),
+                              "key": f"delayed:{c['mall']}:{c['sku']}", "message": m})
 
     if found:
         print(f"\n⚠️ 異常を検出しました（{len(found)}件）:")
         for a in found:
             print(f"  {a['message']}")
         reported = load_reported_anomalies(spreadsheet)
-        new = [a for a in found if (a["case_id"], a["key"]) not in reported]
+        new = [a for a in found if not is_anomaly_reported(reported, a)]
         if len(found) - len(new):
             print(f"  （うち{len(found) - len(new)}件は通知済みのため再送しません）")
         if new:
@@ -122,8 +131,8 @@ def main():
                 f"{CW_MENTION_RYO}\n"
                 f"[info][title]価格調整の時間差検証で異常を検出（{len(new)}件）[/title]"
                 + "\n".join(a["message"] for a in new)
-                + "\n\n書き込み直後の検証は正常でしたが、時間を置いて確認したところ値が"
-                  "ズレていました。反映の遅延・失敗や、他の処理による上書きが考えられます。"
+                + "\n\n価格更新後、時間を置いて確認したところ値に差がありました。"
+                  "反映の遅延・失敗や、他の処理による上書きが考えられます。"
                   "内容の確認をお願いします。[/info]"
             )
             post_chatwork(body)

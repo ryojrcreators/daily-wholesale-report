@@ -136,10 +136,11 @@ def find_price_targets(values: list) -> list:
 
 
 # ══ 楽天：価格を更新する ══════════════════════════
-def rakuten_update_price(manage_number: str, new_price: int) -> list:
+def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=None) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてでvariantsのstandardPriceを更新する。
     戻り値は [(店舗名, 結果文字列, 成功したか)] のリスト。
+    updated_storesを指定した場合、実際にPATCHが成功した店舗名だけを追加する。
     """
     results = []
     for store in get_rakuten_stores():
@@ -197,6 +198,8 @@ def rakuten_update_price(manage_number: str, new_price: int) -> list:
             patch = requests.patch(url, headers=headers, json={"variants": variant_updates}, timeout=30)
             if patch.status_code == 204:
                 results.append((store["name"], f"¥{new_price:,}に更新しました", True))
+                if updated_stores is not None:
+                    updated_stores.append(store["name"])
             else:
                 results.append((store["name"], f"更新失敗({patch.status_code}) {patch.text[:200]}", False))
         except Exception as e:

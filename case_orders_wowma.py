@@ -329,26 +329,66 @@ WOWMA_CARRIER_CODES = {
 }
 
 
+class WowmaOrderReadError(RuntimeError):
+    """受注取得が失敗した。未取得のまま発送情報を更新してはいけない。"""
+
+
+ORDER_READ_ATTEMPTS = 3
+ORDER_READ_RETRY_DELAYS = (5, 15)
+
+
 def wowma_get_order_info(order_id: str):
     """
-    受注情報取得API（searchTradeInfoProc）。存在しない場合・エラー時は None を返す。
+    受注情報取得API（searchTradeInfoProc）。取得失敗時はWowmaOrderReadErrorを送出する。
     shippingNumber の有無で「既に発送情報が登録済みか」を判定するために使う
     （orderStatus は貴店様カスタムステータスも含む文字列のため、シンプルに追跡番号の
     有無で判定する）。未実機検証。
+
+    読み取りのみ、通信障害・429/5xx・不正XMLは最大3回まで再試行する。
+    応答本文には購入者情報が含まれうるため、例外・ログには本文を載せない。
+    発送情報の更新APIは、二重更新を避けるためここでは再試行しない。
     """
-    res = requests.get(
-        f"{WOWMA_BASE}/searchTradeInfoProc",
-        headers=_headers(),
-        params={"shopId": WOWMA_SHOP_ID, "orderId": order_id},
-        timeout=30,
-    )
-    fields = _parse_xml_flat(res.content)
-    status = fields.get("status")
+    for attempt in range(ORDER_READ_ATTEMPTS):
+        retryable = True
+        try:
+            res = requests.get(
+                f"{WOWMA_BASE}/searchTradeInfoProc",
+                headers=_headers(),
+                params={"shopId": WOWMA_SHOP_ID, "orderId": order_id},
+                timeout=30,
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            reason = f"通信エラー({type(exc).__name__})"
+        else:
+            content_type = res.headers.get("Content-Type", "不明").split(";", 1)[0][:80]
+            detail = f"HTTP {res.status_code}, Content-Type={content_type}"
+            if res.status_code != 200:
+                retryable = res.status_code == 429 or 500 <= res.status_code < 600
+                reason = f"APIのHTTPエラー（{detail}）"
+            else:
+                try:
+                    fields = _parse_xml_flat(res.content)
+                except ElementTree.ParseError as exc:
+                    reason = f"XML解析エラー（{detail}）: {exc}"
+                else:
+                    status = fields.get("status")
+                    if status == "0":
+                        return fields
+                    if status == "1":
+                        # 認証・権限・入力エラーなどは同じ要求を再送しても解決しない。
+                        retryable = False
+                        code = fields.get("code", "不明")
+                        reason = f"APIエラー（{detail}, code={code}）"
+                    else:
+                        # HTMLが整形式XMLとして読めても、受注情報の成功応答ではない。
+                        reason = f"API応答のstatusが不正です（{detail}）"
 
-    if res.status_code >= 400 or status == "1":
-        return None
-
-    return fields
+        if not retryable or attempt == ORDER_READ_ATTEMPTS - 1:
+            raise WowmaOrderReadError(f"searchTradeInfoProc: {reason}（試行{attempt + 1}回）")
+        delay = ORDER_READ_RETRY_DELAYS[attempt]
+        print(f"  受注取得の一時エラー: {reason}。{delay}秒後に再試行します"
+              f"（{attempt + 1}/{ORDER_READ_ATTEMPTS}）")
+        time.sleep(delay)
 
 
 def wowma_update_trade_info(order_id: str, shipping_date: str, carrier_code: str,

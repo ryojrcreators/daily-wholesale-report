@@ -694,15 +694,15 @@ def main():
                             changed = True
                     else:
                         ok_all = False
-                        if "IE0418" in message or "invalidAllMandatoryAttributes" in message:
+                        if "IE0418" in message or "invalidAllMandatoryAttributes" in message or "必須属性" in message:
                             # 販売中の商品で、商品属性（ジャンルごとの必須項目）が未入力のため
-                            # 価格を更新できない。人がRMSで入力するまで直らないので知らせる。
+                            # 価格を更新できず、自動補完でも解決しなかった場合は知らせる。
                             # （倉庫の商品は更新前に対象外としているため、ここには来ない）
                             # add_anomalyは (ケース, キー) 単位で通知済みを記録するため、
                             # 同じ商品については毎時の再実行でも通知は1回だけになる。
                             add_anomaly(anomalies, case_id, f"missing_attrs:{sku}:{store_name}",
-                                f"[楽天] {sku}（{store_name}）: 商品属性（必須項目）が未入力のため価格を更新できません。"
-                                f"販売中の商品です。RMSで商品属性を入力してください（ケース{case_id}）"
+                                f"[楽天] {sku}（{store_name}）: 必須の商品属性の補完・価格更新に失敗しました。"
+                                f"RMSで属性値とAPIの利用権限を確認してください（ケース{case_id}）"
                             )
                 time.sleep(1)
                 return ok_all, changed

@@ -27,6 +27,7 @@ import os
 import re
 import json
 import time
+from copy import deepcopy
 from datetime import datetime
 
 import requests
@@ -136,6 +137,79 @@ def find_price_targets(values: list) -> list:
 
 
 # ══ 楽天：価格を更新する ══════════════════════════
+def build_required_attribute_patch(item: dict, definitions: list, new_price: int) -> tuple:
+    """未入力の必須属性だけを「-」で補い、価格と同時に送るPATCHを作る。
+
+    attributes配列は置き換えになるため、既存の任意属性・値・単位もすべて保持する。
+    SKUごとの値を推測してコピーしたり、数値項目へ仮の1を入力したりはしない。
+    """
+    required = [a for a in definitions if (a.get("properties") or {}).get("rmsMandatoryFlg") is True]
+    if not required or any(not a.get("nameJa") for a in required):
+        raise ValueError("必須の商品属性定義を確認できません")
+    variants = item.get("variants") or {}
+    if not variants:
+        raise ValueError("variantsが空のため補完できません")
+    updates, filled = {}, 0
+    for variant_id, variant in variants.items():
+        update = {"standardPrice": new_price}
+        attributes = deepcopy(variant.get("attributes") or [])
+        changed = False
+        for definition in required:
+            name = definition["nameJa"]
+            matching = [a for a in attributes if a.get("name") == name]
+            if not matching:
+                matching = [{"name": name, "values": []}]
+                attributes.extend(matching)
+            for attribute in matching:
+                values = attribute.get("values") or []
+                if any(value is not None and str(value).strip() for value in values):
+                    continue
+                attribute["values"] = ["-"]
+                if not attribute.get("unit") and definition.get("unit"):
+                    attribute["unit"] = definition["unit"]
+                filled += 1
+                changed = True
+        if changed:
+            update["attributes"] = attributes
+        updates[variant_id] = update
+    if not filled:
+        raise ValueError("補完できる未入力の必須属性がありません。RMSで確認してください")
+    return {"variants": updates}, filled
+
+
+def _retry_price_with_required_attributes(url: str, headers: dict, new_price: int) -> tuple:
+    """属性不足エラー時だけ、最新データを読み直して1回だけ再送する。"""
+    time.sleep(API_INTERVAL)
+    try:
+        current = requests.get(url, headers=headers, timeout=30)
+    finally:
+        time.sleep(API_INTERVAL)
+    if current.status_code != 200:
+        raise RuntimeError(f"商品の再取得失敗({current.status_code})")
+    item = current.json()
+    if item.get("hideItem") is True:
+        raise RuntimeError("商品が倉庫に移動したため、自動補完・価格更新を中止しました")
+    genre_id = int(item.get("genreId") or 0)
+    if genre_id <= 0:
+        raise ValueError("genreIdが未設定のため必須属性を取得できません")
+    try:
+        definition = requests.get(
+            f"https://api.rms.rakuten.co.jp/es/2.0/navigation/genres/{genre_id}/attributes/",
+            headers=headers, timeout=30,
+        )
+    finally:
+        time.sleep(API_INTERVAL)
+    if definition.status_code != 200:
+        raise RuntimeError(f"商品属性定義の取得失敗({definition.status_code})。NavigationAPIの利用権限を確認してください")
+    data = definition.json()
+    if data.get("errors"):
+        raise RuntimeError("商品属性定義APIがエラーを返しました")
+    payload, filled = build_required_attribute_patch(
+        item, (data.get("genre") or {}).get("attributes") or [], new_price,
+    )
+    return requests.patch(url, headers=headers, json=payload, timeout=30), filled
+
+
 def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=None) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてでvariantsのstandardPriceを更新する。
@@ -196,12 +270,21 @@ def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=N
 
         try:
             patch = requests.patch(url, headers=headers, json={"variants": variant_updates}, timeout=30)
+            filled = 0
+            if patch.status_code == 400 and "invalidAllMandatoryAttributes" in patch.text:
+                try:
+                    patch, filled = _retry_price_with_required_attributes(url, headers, new_price)
+                except Exception as e:
+                    results.append((store["name"], f"必須属性の自動補完失敗: {e}（invalidAllMandatoryAttributes）", False))
+                    continue
             if patch.status_code == 204:
-                results.append((store["name"], f"¥{new_price:,}に更新しました", True))
+                note = f"（未入力の必須属性{filled}項目を「-」で補完）" if filled else ""
+                results.append((store["name"], f"¥{new_price:,}に更新しました{note}", True))
                 if updated_stores is not None:
                     updated_stores.append(store["name"])
             else:
-                results.append((store["name"], f"更新失敗({patch.status_code}) {patch.text[:200]}", False))
+                note = "必須属性を「-」で補完しても更新できませんでした。" if filled else ""
+                results.append((store["name"], f"{note}更新失敗({patch.status_code}) {patch.text[:200]}", False))
         except Exception as e:
             results.append((store["name"], f"更新エラー: {e}", False))
         finally:

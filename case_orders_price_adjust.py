@@ -7,7 +7,7 @@
   3. 各ケースの Related Skus から、Shop が「楽天」「Yahoo(new)」の行を取り出す
   4. その行の Calc（社内の価格計算ツール /products/calculator）を開いて計算させ、
      Sell Price を新しい販売価格として読み取る
-  5. 現在価格より高い場合だけ、楽天・Yahooの価格を更新する
+  5. 現在価格と異なる場合、値上げ・値下げの両方で楽天・Yahooの価格を更新する
   6. ケースに Reply を入れ、Case Groups から Rakuten/Yahoo を外す（単独なら In-Progress にして、
      Case Groups を Purchaser にする。2026-09-24追加）
   7. 結果をスプレッドシートの「自動Close_ログ」タブに追記する
@@ -108,7 +108,8 @@ DRY_RUN = os.environ.get("DRY_RUN", "true").lower() == "true"
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "5"))
 
 TARGET_CASE_TYPES = ("Change Price",)
-REPLY_MESSAGE = "Rakuten/yahoo Raised"
+REPLY_MESSAGE = "Rakuten/Yahoo prices updated."
+REPLY_MESSAGE_UNCHANGED = "Rakuten/Yahoo prices checked; no changes made."
 
 CALCULATOR_PATH = "/products/calculator"
 
@@ -363,6 +364,8 @@ def read_sell_price(calc_page):
         price = int(round(float(str(result["sellPrice"]).replace(",", "").replace("¥", "").strip())))
     except (ValueError, TypeError):
         return None, f"Sell Price が数値ではありません: {result['sellPrice']}"
+    if price <= 0:
+        return None, f"Sell Price が0円以下のため更新できません: {price}"
 
     detail = (f"為替={result.get('exchangeRate')} / 利益率={result.get('profit')}% "
               f"/ 送料={result.get('shippingFee')}")
@@ -693,11 +696,16 @@ def main():
                 nonlocal log_rows
                 print(f"    [{mall}] {sku}{store_hint}: 現在 ¥{current:,} → 計算結果 ¥{new_price:,}（{detail}）")
 
-                if current and current >= new_price:
-                    # 値下げはしない。すでに計算結果以上で売れているなら触らない
-                    print("      現在価格が計算結果以上のため、変更しません")
+                if new_price <= 0:
+                    print("      計算価格が0円以下のため、変更しません")
                     log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
-                                     f"変更なし（現在¥{current:,} ≧ 計算¥{new_price:,}）"])
+                                     f"計算失敗（計算価格¥{new_price:,}は0円以下）"])
+                    return False, False
+
+                if current == new_price:
+                    print("      現在価格が計算結果と同じため、変更しません")
+                    log_rows.append([now, case_id, case["caseType"], mall, "-", sku,
+                                     f"変更なし（現在¥{current:,} ＝ 計算¥{new_price:,}）"])
                     return True, False
 
                 if DRY_RUN:
@@ -963,8 +971,9 @@ def main():
                 continue
 
             try:
-                action = update_case(page, case_id, REPLY_MESSAGE, to_purchaser_when_sole=True)
-                print(f"  ✅ {action}／Reply「{REPLY_MESSAGE}」を投稿しました。")
+                reply = REPLY_MESSAGE if changed_any else REPLY_MESSAGE_UNCHANGED
+                action = update_case(page, case_id, reply, to_purchaser_when_sole=True)
+                print(f"  ✅ {action}／Reply「{reply}」を投稿しました。")
                 log_rows.append([now, case_id, case["caseType"], "-", "-", "-", action])
             except Exception as e:
                 print(f"  ⚠️ ケース更新に失敗しました（価格は反映済み）: {e}")

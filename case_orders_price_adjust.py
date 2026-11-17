@@ -117,6 +117,7 @@ PRICE_TOLERANCE_YEN = 50
 
 CW_TOKEN = os.environ.get("CW_TOKEN", "")
 CW_MENTION_RYO = "[To:2618849]Ryo Higuchiさん"
+CW_MENTION_ATTRIBUTE_REVIEWER = "[To:2158846]Yoko Matsusakaさん"
 CW_ROOM_ID = "83994351"
 
 # 次のジョブ（case_orders_price_verify_delayed.py）に渡す、今回書き込んだ内容
@@ -174,7 +175,7 @@ def mark_anomalies_reported(spreadsheet, anomalies: list, now: str):
 def post_chatwork(body: str):
     if not CW_TOKEN:
         print("  CW_TOKENが未設定のため通知しません。")
-        return
+        return False
     try:
         res = requests.post(
             f"https://api.chatwork.com/v2/rooms/{CW_ROOM_ID}/messages",
@@ -185,8 +186,43 @@ def post_chatwork(body: str):
         print(f"  Chatwork通知: status={res.status_code}")
         if res.status_code >= 400:
             print(f"    {res.text[:300]}")
+        return res.status_code == 200
     except Exception as e:
         print(f"  Chatwork通知に失敗しました: {e}")
+        return False
+
+
+def notify_attribute_results(spreadsheet, events: list, now: str):
+    """自動補完・価格更新の成功/失敗をYokoさんへ通知する。価格の変動では再通知しない。"""
+    if DRY_RUN or not events:
+        return
+    try:
+        reported = load_reported_anomalies(spreadsheet)
+        pending = {}
+        for event in events:
+            case_id = str(event["case_id"])
+            outcome = "success" if event["success"] else "failure"
+            key = f"attribute_fill:{event['sku']}:{event['store']}:{outcome}"
+            if (case_id, key) in reported:
+                continue
+            prefix = f"[楽天] {event['sku']}（{event['store']}／ケース{case_id}）"
+            if event["success"]:
+                message = (f"{prefix}\n商品属性を自動補完いたしました。念のため確認をお願いいたします。"
+                           f"\n価格更新も成功しました（¥{event['price']:,}）。")
+            else:
+                message = f"{prefix}\n自動補完失敗のため、手動での更新をお願いします。価格更新は完了していません。"
+            pending[(case_id, key)] = {"case_id": case_id, "key": key, "message": message}
+        if not pending:
+            print("  商品属性の自動補完結果は通知済みのため再送しません。")
+            return
+        notices = list(pending.values())
+        body = (f"{CW_MENTION_ATTRIBUTE_REVIEWER}\n[info][title]楽天 商品属性の自動補完結果[/title]"
+                + "\n\n".join(a["message"] for a in notices) + "[/info]")
+        if post_chatwork(body):
+            mark_anomalies_reported(spreadsheet, notices, now)
+    except Exception as e:
+        # 通知の失敗を、価格更新の失敗として扱わない。
+        print(f"  商品属性の補完結果の通知・記録に失敗しました: {e}")
 
 
 def get_case_purchase_price_usd(page):
@@ -572,6 +608,7 @@ def main():
     log_rows = []
     anomalies = []          # 検証で見つかった異常の説明文リスト（Chatwork報告用）
     applied_changes = []    # {case_id, mall, sku, price}。時間差検証ジョブに渡す
+    attribute_results = []  # 商品属性の自動補完結果（Yokoさん宛て通知用）
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -671,7 +708,10 @@ def main():
 
                 if mall == SHOP_RAKUTEN:
                     updated_stores = []
-                    results = rakuten_update_price(sku, new_price, updated_stores=updated_stores)
+                    attribute_events = []
+                    results = rakuten_update_price(sku, new_price, updated_stores=updated_stores,
+                                                   attribute_results=attribute_events)
+                    attribute_results.extend({**event, "case_id": case_id} for event in attribute_events)
                     rakuten_updated_stores[sku] = updated_stores
                 elif WOWMA_ENABLED and mall == SHOP_WOWMA:
                     ok, message = wowma_update_price(sku, new_price, dry_run=False)
@@ -694,16 +734,14 @@ def main():
                             changed = True
                     else:
                         ok_all = False
-                        if "IE0418" in message or "invalidAllMandatoryAttributes" in message or "必須属性" in message:
-                            # 販売中の商品で、商品属性（ジャンルごとの必須項目）が未入力のため
-                            # 価格を更新できず、自動補完でも解決しなかった場合は知らせる。
-                            # （倉庫の商品は更新前に対象外としているため、ここには来ない）
-                            # add_anomalyは (ケース, キー) 単位で通知済みを記録するため、
-                            # 同じ商品については毎時の再実行でも通知は1回だけになる。
+                        # 自動補完の失敗はattribute_resultsでYokoさんへ通知する。
+                        # 補完を開始していないIE0418などは、従来どおり異常通知の対象に残す。
+                        if (mall == SHOP_RAKUTEN
+                                and ("IE0418" in message or "invalidAllMandatoryAttributes" in message or "必須属性" in message)
+                                and not any(event["store"] == store_name for event in attribute_events)):
                             add_anomaly(anomalies, case_id, f"missing_attrs:{sku}:{store_name}",
-                                f"[楽天] {sku}（{store_name}）: 必須の商品属性の補完・価格更新に失敗しました。"
-                                f"RMSで属性値とAPIの利用権限を確認してください（ケース{case_id}）"
-                            )
+                                f"[楽天] {sku}（{store_name}）: 商品属性に関する価格更新エラーです。"
+                                f"RMSで属性値とAPIの利用権限を確認してください（ケース{case_id}）")
                 time.sleep(1)
                 return ok_all, changed
 
@@ -946,6 +984,8 @@ def main():
         print(f"\nログを{len(log_rows)}行追記しました。")
     except Exception as e:
         print(f"ログ書き込みに失敗しました: {e}")
+
+    notify_attribute_results(spreadsheet, attribute_results, now)
 
     if skipped_cases:
         print(f"\n自動処理の対象外としてスキップしたケース: {len(skipped_cases)}件")

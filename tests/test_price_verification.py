@@ -45,9 +45,10 @@ class PriceVerificationTest(unittest.TestCase):
         self.assertEqual([ok for _, _, ok in results], [True, False, True, True])
         self.assertEqual(self.patch.call_count, 2)
 
-    def run_adjust(self, updated_stores, results):
-        def update(sku, price, *, updated_stores):
+    def run_adjust(self, updated_stores, results, events=()):
+        def update(sku, price, *, updated_stores, attribute_results=None):
             updated_stores.extend(confirmed)
+            attribute_results.extend(events)
             return results
         confirmed = updated_stores
         with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
@@ -90,6 +91,14 @@ class PriceVerificationTest(unittest.TestCase):
         ])
         self.assertEqual(changes[0]["stores"], ["updated"])
         self.assertEqual(recheck.call_args.kwargs["store_names"], ["updated"])
+
+    def test_attribute_result_is_passed_to_notifier_with_case_id(self):
+        event = {"store": "updated", "sku": "test-sku", "success": True,
+                 "price": 200, "filled": 1}
+        with patch.object(adjust, "notify_attribute_results") as notify:
+            self.run_adjust(["updated"], [("updated", "更新しました", True)], events=[event])
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[1], [{**event, "case_id": "123"}])
 
     def test_immediate_and_delayed_checks_ignore_unupdated_store(self):
         actual = {"updated": 200, "failed": 100}

@@ -212,11 +212,13 @@ def _retry_price_with_required_attributes(url: str, headers: dict, new_price: in
     return requests.patch(url, headers=headers, json=payload, timeout=30), filled
 
 
-def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=None) -> list:
+def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=None,
+                         attribute_results=None) -> list:
     """
     2店舗を順に確認し、存在する店舗すべてでvariantsのstandardPriceを更新する。
     戻り値は [(店舗名, 結果文字列, 成功したか)] のリスト。
     updated_storesを指定した場合、実際にPATCHが成功した店舗名だけを追加する。
+    attribute_resultsを指定した場合、自動補完を試みた店舗の最終結果を追加する。
     """
     results = []
     for store in get_rakuten_stores():
@@ -270,16 +272,20 @@ def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=N
             results.append((store["name"], f"【DRY RUN】¥{new_price:,}へ更新の対象", True))
             continue
 
+        attribute_attempted = False
+        attribute_success = False
+        filled = 0
         try:
             patch = requests.patch(url, headers=headers, json={"variants": variant_updates}, timeout=30)
-            filled = 0
             if patch.status_code == 400 and "invalidAllMandatoryAttributes" in patch.text:
+                attribute_attempted = True
                 try:
                     patch, filled = _retry_price_with_required_attributes(url, headers, new_price)
                 except Exception as e:
                     results.append((store["name"], f"必須属性の自動補完失敗: {e}（invalidAllMandatoryAttributes）", False))
                     continue
             if patch.status_code == 204:
+                attribute_success = attribute_attempted
                 note = f"（未入力の必須属性{filled}項目を商品データで補完、不明な項目は「-」）" if filled else ""
                 results.append((store["name"], f"¥{new_price:,}に更新しました{note}", True))
                 if updated_stores is not None:
@@ -291,6 +297,10 @@ def rakuten_update_price(manage_number: str, new_price: int, *, updated_stores=N
             results.append((store["name"], f"更新エラー: {e}", False))
         finally:
             time.sleep(API_INTERVAL)
+            if attribute_attempted and attribute_results is not None:
+                attribute_results.append({"sku": manage_number, "store": store["name"],
+                                          "success": attribute_success, "price": new_price,
+                                          "filled": filled})
 
     if not results:
         results.append(("-", "楽天には出品が見つかりませんでした", True))

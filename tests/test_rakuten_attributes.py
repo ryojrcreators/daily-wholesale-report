@@ -62,7 +62,7 @@ class RequiredAttributesTest(unittest.TestCase):
             with self.subTest(defs=defs), self.assertRaises(ValueError):
                 api.build_required_attribute_patch(self.item, defs, 200)
 
-    def run_update(self, gets, patches, dry_run=False):
+    def run_update(self, gets, patches, dry_run=False, attribute_results=None):
         with patch.object(api, "get_rakuten_stores", return_value=[{"name": "test-shop"}]), \
                 patch.object(api, "rakuten_auth_headers", return_value={}), \
                 patch.object(api, "DRY_RUN", dry_run), \
@@ -70,7 +70,8 @@ class RequiredAttributesTest(unittest.TestCase):
                 patch.object(api.requests, "get", side_effect=gets) as get, \
                 patch.object(api.requests, "patch", side_effect=patches) as update:
             stores = []
-            results = api.rakuten_update_price("test-sku", 200, updated_stores=stores)
+            results = api.rakuten_update_price("test-sku", 200, updated_stores=stores,
+                                               attribute_results=attribute_results)
         return results, stores, get, update
 
     def missing_error(self):
@@ -156,6 +157,31 @@ class RequiredAttributesTest(unittest.TestCase):
                 self.assertEqual(stores, [])
                 get.assert_called_once()
                 update.assert_not_called()
+
+    def test_attribute_result_events_cover_success_and_final_failures(self):
+        for final in (response(204), response(400, text="invalid value")):
+            with self.subTest(status=final.status_code):
+                events = []
+                self.run_update(self.normal_gets(), [self.missing_error(), final], attribute_results=events)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["success"], final.status_code == 204)
+                self.assertEqual(events[0]["store"], "test-shop")
+                self.assertEqual(events[0]["sku"], "test-sku")
+
+    def test_failed_attribute_lookup_also_produces_failure_event(self):
+        events = []
+        gets = self.normal_gets()
+        gets[-1] = response(403)
+        self.run_update(gets, [self.missing_error()], attribute_results=events)
+        self.assertEqual(len(events), 1)
+        self.assertFalse(events[0]["success"])
+
+    def test_normal_price_update_and_dry_run_do_not_produce_attribute_events(self):
+        for dry_run, patches in ((False, [response(204)]), (True, [])):
+            with self.subTest(dry_run=dry_run):
+                events = []
+                self.run_update([response(200, self.item)], patches, dry_run, attribute_results=events)
+                self.assertEqual(events, [])
 
 
 if __name__ == "__main__":
